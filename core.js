@@ -278,11 +278,30 @@ const EducareTrack = {
         try {
             console.log('EducareTrack System Initializing...');
             
-            const savedUser = localStorage.getItem('educareTrack_user');
+            let savedUser = localStorage.getItem('educareTrack_user');
+            if (!savedUser) {
+                const sessionUser = sessionStorage.getItem('educareTrack_user');
+                if (sessionUser) {
+                    localStorage.setItem('educareTrack_user', sessionUser);
+                    savedUser = sessionUser;
+                }
+            }
             if (savedUser) {
                 this.currentUser = JSON.parse(savedUser);
                 this.currentUserRole = this.currentUser.role;
                 console.log(`User session restored: ${this.currentUser.name}`);
+            }
+
+            // Auto-login via URL params if storage is unavailable
+            if (!this.currentUser) {
+                try {
+                    const params = new URLSearchParams(window.location.search);
+                    const uid = params.get('uid');
+                    const role = params.get('role');
+                    if (uid && role) {
+                        await this.login(uid, role);
+                    }
+                } catch (_) {}
             }
 
             this.loadWeekendPolicy();
@@ -351,7 +370,7 @@ const EducareTrack = {
                 </div>
                 <div class="flex items-center space-x-2">
                     <button id="markAllReadBtn" class="text-xs text-blue-600">Mark all read</button>
-                    <a id="viewAllBtn" href="notifications.html" class="text-xs text-gray-600">View page</a>
+                    <a id="viewAllBtn" href="#" class="text-xs text-gray-600">View page</a>
                     <button id="closeSidebarBtn" class="text-xs text-gray-500">Close</button>
                 </div>
             </div>
@@ -388,7 +407,15 @@ const EducareTrack = {
             } catch (_) {}
         };
 
-        viewAllBtn.addEventListener('click', () => {});
+        viewAllBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const role = this.currentUserRole || (this.currentUser && this.currentUser.role);
+            let url = 'notifications.html';
+            if (role === 'teacher') url = 'teacher/teacher-notifications.html';
+            else if (role === 'parent') url = 'parent/parent-notifications.html';
+            else if (role === 'admin') url = 'admin/admin-notifications.html';
+            window.location.href = url;
+        });
         markAllReadBtn.addEventListener('click', async () => {
             try { await this.markAllNotificationsAsRead(); await refresh(); } catch (_) {}
         });
@@ -629,6 +656,7 @@ const EducareTrack = {
             this.currentUserRole = userData.role;
 
             localStorage.setItem('educareTrack_user', JSON.stringify(this.currentUser));
+            sessionStorage.setItem('educareTrack_user', JSON.stringify(this.currentUser));
             
             // Initialize notification permissions and listeners for new user
             if (this.config.enableNotificationPermissionPrompt) { await this.initializeNotificationPermissions(); }

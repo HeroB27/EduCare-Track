@@ -247,7 +247,8 @@
                     // Redirect to dashboard after a short delay
                     setTimeout(() => {
                         const dashboardUrl = getDashboardUrl(selectedRole);
-                        window.location.href = dashboardUrl;
+                        const redirectUrl = `${dashboardUrl}?uid=${encodeURIComponent(userId)}&role=${encodeURIComponent(selectedRole)}`;
+                        window.location.href = redirectUrl;
                     }, 2000);
                     
                 } catch (error) {
