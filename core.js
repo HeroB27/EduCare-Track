@@ -307,6 +307,7 @@ const EducareTrack = {
 
     registerPWA() {
         try {
+            if (!/^https?:$/.test(location.protocol)) return;
             const m = document.querySelector('link[rel="manifest"]');
             if (!m) {
                 const link = document.createElement('link');
