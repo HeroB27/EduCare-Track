@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <style>
+        /* Copy all styles from dashboard-template.html */
+        .sidebar { transition: all 0.3s ease; }
+        .sidebar.collapsed { width: 70px; }
+        .sidebar.collapsed .sidebar-text { display: none; }
+        .main-content { transition: all 0.3s ease; }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); }
+        .status-present { background-color: #d1fae5; color: #065f46; }
+        .status-absent { background-color: #fee2e2; color: #991b1b; }
+        .status-late { background-color: #fef3c7; color: #92400e; }
+        .status-clinic { background-color: #dbeafe; color: #1e40af; }
+        .notification-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 
+            0% { transform: scale(1); opacity: 1; } 
+            50% { transform: scale(1.1); opacity: 0.7; } 
+            100% { transform: scale(1); opacity: 1; } 
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Copy the entire dashboard-template.html structure here -->
+    <!-- Navigation Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+        </div>
+        
+        <!-- User Info -->
+        <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center">
+                <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <span class="text-blue-600 font-semibold" id="userInitials">AD</span>
+                </div>
+                <div class="ml-3 sidebar-text">
+                    <h2 class="font-semibold text-gray-800" id="userName">Admin User</h2>
+                    <p class="text-sm text-gray-600 capitalize" id="userRole">admin</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Menu -->
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2" id="navMenu">
+                <!-- Navigation will be populated by JavaScript -->
+            </ul>
+        </nav>
+        
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-200">
+            <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                </svg>
+                Sign Out
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content ml-64 p-6 fade-in">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800" id="pageTitle">Admin Dashboard</h1>
+                <p class="text-gray-600" id="pageSubtitle">Welcome to your dashboard</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <!-- Notifications -->
+                <div class="relative">
+                    <button id="notificationsBtn" class="p-2 text-gray-600 hover:text-blue-600 relative">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-5 5v-5zM10.5 3.75a6 6 0 0 0-6 6v2.25l-2.47 2.47a.75.75 0 0 0 .53 1.28h15.88a.75.75 0 0 0 .53-1.28L16.5 12V9.75a6 6 0 0 0-6-6z"></path>
+                        </svg>
+                        <span id="notificationCount" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center hidden">0</span>
+                    </button>
+                </div>
+                
+                <!-- Current Time -->
+                <div class="text-sm text-gray-500">
+                    <span id="currentTime">Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Notifications Panel -->
+        <div id="notificationsPanel" class="hidden absolute right-6 top-20 w-80 bg-white rounded-lg shadow-xl z-50 border border-gray-200">
+            <div class="p-4 border-b border-gray-200">
+                <h3 class="font-semibold text-gray-800">Notifications</h3>
+            </div>
+            <div class="max-h-96 overflow-y-auto">
+                <div id="notificationsList" class="p-2">
+                    <!-- Notifications will be loaded here -->
+                </div>
+            </div>
+            <div class="p-4 border-t border-gray-200 text-center">
+                <button id="viewAllNotifications" class="text-blue-600 text-sm hover:underline">View All Notifications</button>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <main id="mainContent">
+            <!-- Content will be loaded here by JavaScript -->
+        </main>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p class="text-gray-600">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Include Core JS -->
+    <script src="core.js"></script>
+    
+    <!-- Admin Dashboard Script -->
+    <script>
+        // Extend the base dashboard with admin-specific functionality
+        class AdminDashboard extends EducareTrackDashboard {
+            constructor() {
+                super();
+            }
+
+            // Admin-specific content loaders
+            async adminLoadDashboard() {
+                // Get statistics for the dashboard
+                const stats = await this.getAdminStats();
+                
+                return `
+                    <div class="space-y-6">
+                        <!-- Stats Cards -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                                <div class="flex items-center">
+                                    <div class="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-2xl font-bold text-gray-800">${stats.totalStudents}</h3>
+                                        <p class="text-gray-600">Total Students</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                                <div class="flex items-center">
+                                    <div class="p-3 rounded-full bg-green-100 text-green-600 mr-4">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-2xl font-bold text-gray-800">${stats.totalTeachers}</h3>
+                                        <p class="text-gray-600">Teachers</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                                <div class="flex items-center">
+                                    <div class="p-3 rounded-full bg-purple-100 text-purple-600 mr-4">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-2xl font-bold text-gray-800">${stats.totalClasses}</h3>
+                                        <p class="text-gray-600">Classes</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                                <div class="flex items-center">
+                                    <div class="p-3 rounded-full bg-yellow-100 text-yellow-600 mr-4">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-2xl font-bold text-gray-800">${stats.todayAttendance}</h3>
+                                        <p class="text-gray-600">Present Today</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Charts and Recent Activity -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Attendance Chart -->
+                            <div class="bg-white rounded-lg shadow-md p-6">
+                                <h3 class="text-lg font-semibold text-gray-800 mb-4">Weekly Attendance</h3>
+                                <div class="h-64">
+                                    <canvas id="attendanceChart"></canvas>
+                                </div>
+                            </div>
+                            
+                            <!-- Recent Activity -->
+                            <div class="bg-white rounded-lg shadow-md p-6">
+                                <h3 class="text-lg font-semibold text-gray-800 mb-4">Recent Activity</h3>
+                                <div class="space-y-4">
+                                    ${stats.recentActivity.map(activity => `
+                                        <div class="flex items-start space-x-3">
+                                            <div class="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
+                                            <div class="flex-1">
+                                                <p class="text-gray-800 text-sm">${activity.message}</p>
+                                                <p class="text-gray-500 text-xs">${EducareTrack.formatTime(activity.timestamp?.toDate())}</p>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Actions -->
+                        <div class="bg-white rounded-lg shadow-md p-6">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Quick Actions</h3>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <button class="p-4 border border-gray-300 rounded-lg text-center hover:bg-blue-50 hover:border-blue-500 transition duration-200">
+                                    <svg class="w-8 h-8 text-blue-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                    </svg>
+                                    <span class="text-sm font-medium text-gray-700">Add Student</span>
+                                </button>
+                                <button class="p-4 border border-gray-300 rounded-lg text-center hover:bg-green-50 hover:border-green-500 transition duration-200">
+                                    <svg class="w-8 h-8 text-green-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                                    </svg>
+                                    <span class="text-sm font-medium text-gray-700">Add Teacher</span>
+                                </button>
+                                <button class="p-4 border border-gray-300 rounded-lg text-center hover:bg-purple-50 hover:border-purple-500 transition duration-200">
+                                    <svg class="w-8 h-8 text-purple-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                    </svg>
+                                    <span class="text-sm font-medium text-gray-700">Manage Classes</span>
+                                </button>
+                                <button class="p-4 border border-gray-300 rounded-lg text-center hover:bg-yellow-50 hover:border-yellow-500 transition duration-200">
+                                    <svg class="w-8 h-8 text-yellow-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                                    </svg>
+                                    <span class="text-sm font-medium text-gray-700">View Reports</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            async adminLoadStudents() {
+                const students = await this.getAllStudents();
+                
+                return `
+                    <div class="bg-white rounded-lg shadow-md">
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex justify-between items-center">
+                                <h2 class="text-xl font-semibold text-gray-800">Student Management</h2>
+                                <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-200">
+                                    Add New Student
+                                </button>
+                            </div>
+                        </div>
+                        <div class="p-6">
+                            <div class="overflow-x-auto">
+                                <table class="w-full">
+                                    <thead>
+                                        <tr class="bg-gray-50">
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-200">
+                                        ${students.map(student => `
+                                            <tr>
+                                                <td class="px-4 py-4">
+                                                    <div class="flex items-center">
+                                                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                                                            <span class="text-blue-600 font-semibold text-sm">
+                                                                ${student.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                                                            </span>
+                                                        </div>
+                                                        <div>
+                                                            <div class="font-medium text-gray-900">${student.name}</div>
+                                                            <div class="text-gray-500 text-sm">${student.studentId}</div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td class="px-4 py-4 text-gray-900">${await this.getClassName(student.classId)}</td>
+                                                <td class="px-4 py-4 text-gray-900">${await this.getParentName(student.parentId)}</td>
+                                                <td class="px-4 py-4">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(student.currentStatus || 'out_school')}">
+                                                        ${student.currentStatus === 'in_school' ? 'Present' : 
+                                                          student.currentStatus === 'in_clinic' ? 'In Clinic' : 'Absent'}
+                                                    </span>
+                                                </td>
+                                                <td class="px-4 py-4">
+                                                    <div class="flex space-x-2">
+                                                        <button class="text-blue-600 hover:text-blue-900 text-sm font-medium">Edit</button>
+                                                        <button class="text-red-600 hover:text-red-900 text-sm font-medium">Deactivate</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Admin-specific methods
+            async getAdminStats() {
+                try {
+                    // Get total students
+                    const studentsSnapshot = await EducareTrack.db.collection('students').where('isActive', '==', true).get();
+                    const totalStudents = studentsSnapshot.size;
+                    
+                    // Get total teachers
+                    const teachersSnapshot = await EducareTrack.db.collection('users').where('role', '==', 'teacher').where('isActive', '==', true).get();
+                    const totalTeachers = teachersSnapshot.size;
+                    
+                    // Get total classes
+                    const classesSnapshot = await EducareTrack.db.collection('classes').get();
+                    const totalClasses = classesSnapshot.size;
+                    
+                    // Get today's attendance (simplified)
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                        .where('timestamp', '>=', today)
+                        .where('entryType', '==', 'entry')
+                        .get();
+                    const todayAttendance = attendanceSnapshot.size;
+                    
+                    // Get recent activity (last 10 attendance records)
+                    const recentActivitySnapshot = await EducareTrack.db.collection('attendance')
+                        .orderBy('timestamp', 'desc')
+                        .limit(10)
+                        .get();
+                    const recentActivity = recentActivitySnapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    
+                    return {
+                        totalStudents,
+                        totalTeachers,
+                        totalClasses,
+                        todayAttendance,
+                        recentActivity
+                    };
+                } catch (error) {
+                    console.error('Error getting admin stats:', error);
+                    return {
+                        totalStudents: 0,
+                        totalTeachers: 0,
+                        totalClasses: 0,
+                        todayAttendance: 0,
+                        recentActivity: []
+                    };
+                }
+            }
+
+            async getAllStudents() {
+                try {
+                    const snapshot = await EducareTrack.db.collection('students').where('isActive', '==', true).get();
+                    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                } catch (error) {
+                    console.error('Error getting students:', error);
+                    return [];
+                }
+            }
+
+            async getClassName(classId) {
+                try {
+                    const classDoc = await EducareTrack.db.collection('classes').doc(classId).get();
+                    return classDoc.exists ? classDoc.data().name : 'Unknown';
+                } catch (error) {
+                    return 'Unknown';
+                }
+            }
+
+            async getParentName(parentId) {
+                try {
+                    const parentDoc = await EducareTrack.db.collection('users').doc(parentId).get();
+                    return parentDoc.exists ? parentDoc.data().name : 'Unknown';
+                } catch (error) {
+                    return 'Unknown';
+                }
+            }
+
+            initPageSpecificFunctionality(page) {
+                if (page === 'dashboard') {
+                    this.initDashboardCharts();
+                }
+            }
+
+            initDashboardCharts() {
+                // Initialize attendance chart
+                const ctx = document.getElementById('attendanceChart');
+                if (ctx) {
+                    new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                            datasets: [{
+                                label: 'Students Present',
+                                data: [65, 59, 80, 81, 56, 55, 40],
+                                backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                                borderColor: 'rgba(59, 130, 246, 1)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 100
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // Initialize admin dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            window.dashboard = new AdminDashboard();
+            window.dashboard.init();
+        });
+    </script>
+</body>
+</html>

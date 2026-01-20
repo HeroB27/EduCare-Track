@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enroll Parent & Student - EducareTrack</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Using qrcode.js from a reliable CDN -->
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+  <header class="bg-blue-600 text-white shadow-lg">
+    <div class="container mx-auto px-4 py-4">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fas fa-graduation-cap text-2xl"></i>
+                <h1 class="text-2xl font-bold">EducareTrack</h1>
+            </div>
+            <nav class="flex space-x-6">
+                <a href="admin-dashboard.html" class="hover:text-blue-200 transition-colors">
+                    <i class="fas fa-tachometer-alt mr-2"></i>Dashboard
+                </a>
+                <a href="user-management.html" class="hover:text-blue-200 transition-colors">
+                    <i class="fas fa-users mr-2"></i>Users
+                </a>
+                <a href="student-management.html" class="hover:text-blue-200 transition-colors">
+                    <i class="fas fa-user-graduate mr-2"></i>Students
+                </a>
+                <a href="#" class="text-blue-200 border-b-2 border-blue-200 pb-1">
+                    <i class="fas fa-user-plus mr-2"></i>Enroll
+                </a>
+            </nav>
+        </div>
+    </div>
+</header>
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
+        <div class="bg-white rounded-lg shadow-lg p-6 max-w-4xl mx-auto">
+            <!-- Progress Steps -->
+            <div class="mb-8">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex-1 text-center">
+                        <div class="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center mx-auto mb-2">
+                            1
+                        </div>
+                        <span class="text-sm font-medium text-blue-600">Parent Information</span>
+                    </div>
+                    <div class="flex-1 border-t-2 border-gray-300"></div>
+                    <div class="flex-1 text-center">
+                        <div class="w-10 h-10 bg-gray-300 text-gray-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                            2
+                        </div>
+                        <span class="text-sm font-medium text-gray-500">Student Information</span>
+                    </div>
+                    <div class="flex-1 border-t-2 border-gray-300"></div>
+                    <div class="flex-1 text-center">
+                        <div class="w-10 h-10 bg-gray-300 text-gray-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                            3
+                        </div>
+                        <span class="text-sm font-medium text-gray-500">ID Generation</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parent Information Form -->
+            <div id="parentForm">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">Parent Information</h2>
+                
+                <form id="parentInfoForm" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label for="parentName" class="block text-sm font-medium text-gray-700 mb-2">
+                                Parent Name *
+                            </label>
+                            <input type="text" id="parentName" name="parentName" 
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                   placeholder="Enter full name" required>
+                        </div>
+                        
+                        <div>
+                            <label for="phoneNumber" class="block text-sm font-medium text-gray-700 mb-2">
+                                Phone Number *
+                            </label>
+                            <input type="tel" id="phoneNumber" name="phoneNumber" 
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                   placeholder="09XXXXXXXXX" required>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="email" class="block text-sm font-medium text-gray-700 mb-2">
+                            Email Address
+                        </label>
+                        <input type="email" id="email" name="email" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                               placeholder="optional@email.com">
+                    </div>
+
+                    <div>
+                        <label for="homeAddress" class="block text-sm font-medium text-gray-700 mb-2">
+                            Home Address *
+                        </label>
+                        <textarea id="homeAddress" name="homeAddress" rows="3"
+                                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                  placeholder="Enter complete home address" required></textarea>
+                    </div>
+
+                    <div>
+                        <label for="relationship" class="block text-sm font-medium text-gray-700 mb-2">
+                            Relationship to Child *
+                        </label>
+                        <select id="relationship" name="relationship" 
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors" required>
+                            <option value="">Select relationship</option>
+                            <option value="parent">Parent</option>
+                            <option value="guardian">Guardian</option>
+                        </select>
+                    </div>
+
+                    <div class="flex justify-end pt-4">
+                        <button type="button" id="nextToStudent" 
+                                class="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center space-x-2">
+                            <span>Next</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Student Information Form (Hidden Initially) -->
+            <div id="studentForm" class="hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">Student Information</h2>
+                
+                <form id="studentInfoForm" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label for="studentName" class="block text-sm font-medium text-gray-700 mb-2">
+                                Student Name *
+                            </label>
+                            <input type="text" id="studentName" name="studentName" 
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                   placeholder="Enter student's full name" required>
+                        </div>
+                        
+                        <div>
+                            <label for="studentLRN" class="block text-sm font-medium text-gray-700 mb-2">
+                                Student LRN *
+                            </label>
+                            <input type="text" id="studentLRN" name="studentLRN" 
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                   placeholder="12-digit LRN" required maxlength="12">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label for="gradeLevel" class="block text-sm font-medium text-gray-700 mb-2">
+                                Grade Level *
+                            </label>
+                            <select id="gradeLevel" name="gradeLevel" 
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors" required>
+                                <option value="">Select grade level</option>
+                                <option value="K">Kindergarten</option>
+                                <option value="1">Grade 1</option>
+                                <option value="2">Grade 2</option>
+                                <option value="3">Grade 3</option>
+                                <option value="4">Grade 4</option>
+                                <option value="5">Grade 5</option>
+                                <option value="6">Grade 6</option>
+                                <option value="7">Grade 7</option>
+                                <option value="8">Grade 8</option>
+                                <option value="9">Grade 9</option>
+                                <option value="10">Grade 10</option>
+                                <option value="11">Grade 11</option>
+                                <option value="12">Grade 12</option>
+                            </select>
+                        </div>
+
+                        <div id="strandField" class="hidden">
+                            <label for="strand" class="block text-sm font-medium text-gray-700 mb-2">
+                                Strand *
+                            </label>
+                            <select id="strand" name="strand" 
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors">
+                                <option value="">Select strand</option>
+                                <option value="STEM">STEM</option>
+                                <option value="ABM">ABM</option>
+                                <option value="HUMSS">HUMSS</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            Student Picture
+                        </label>
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                            <div id="picturePreview" class="mb-4 hidden">
+                                <img id="previewImage" class="w-32 h-32 object-cover rounded-full mx-auto border-4 border-blue-100">
+                            </div>
+                            <div id="uploadArea" class="cursor-pointer">
+                                <i class="fas fa-camera text-4xl text-gray-400 mb-2"></i>
+                                <p class="text-gray-600">Click to upload or use webcam</p>
+                                <p class="text-sm text-gray-500 mt-1">Supports JPG, PNG (Max 2MB)</p>
+                            </div>
+                            <input type="file" id="studentPicture" name="studentPicture" 
+                                   accept="image/*" class="hidden" capture="camera">
+                            <div class="mt-4 flex justify-center space-x-4">
+                                <button type="button" id="uploadBtn" 
+                                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-upload mr-2"></i>Upload Photo
+                                </button>
+                                <button type="button" id="webcamBtn" 
+                                        class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                                    <i class="fas fa-camera mr-2"></i>Take Photo
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between pt-4">
+                        <button type="button" id="backToParent" 
+                                class="bg-gray-500 text-white px-8 py-3 rounded-lg hover:bg-gray-600 transition-colors font-medium flex items-center space-x-2">
+                            <i class="fas fa-arrow-left"></i>
+                            <span>Back</span>
+                        </button>
+                        <button type="button" id="nextToID" 
+                                class="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center space-x-2">
+                            <span>Next</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- ID Generation Preview (Hidden Initially) -->
+            <div id="idPreview" class="hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">ID Generation</h2>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <!-- Student List -->
+                    <div class="bg-gray-50 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4">Students to Enroll</h3>
+                        <div id="studentList" class="space-y-3">
+                            <!-- Student list will be populated here -->
+                        </div>
+                        <button type="button" id="addAnotherStudent" 
+                                class="w-full mt-4 bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center space-x-2">
+                            <i class="fas fa-plus"></i>
+                            <span>Add Another Student</span>
+                        </button>
+                    </div>
+
+                    <!-- ID Preview -->
+                    <div class="bg-white border-2 border-blue-200 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4">ID Card Preview</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- ID Card Front -->
+                        <div class="id-cr80 bg-white border-2 border-gray-300 rounded-lg p-4">
+                            <div class="text-center mb-4">
+                                <h4 class="font-bold text-blue-800 text-lg">Educare Colleges</h4>
+                                <p class="text-sm text-gray-600">Purok 4 Irisan Baguio City</p>
+                            </div>
+                            <div class="flex space-x-4">
+                                <div class="w-24 h-24 bg-gray-200 rounded border flex items-center justify-center">
+                                    <img id="idPreviewImage" class="w-full h-full object-cover rounded hidden">
+                                    <i class="fas fa-user text-gray-400 text-2xl" id="idPlaceholder"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="mb-2">
+                                        <label class="text-xs text-gray-500">Student Name</label>
+                                        <p id="idStudentName" class="font-semibold">-</p>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="text-xs text-gray-500">Address</label>
+                                        <p id="idAddress" class="font-semibold">-</p>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="text-xs text-gray-500">Class</label>
+                                        <p id="idGradeLevel" class="font-semibold">-</p>
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-500">LRN</label>
+                                        <p id="idLRN" class="font-semibold">-</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ID Card Back -->
+                        <div class="id-cr80 bg-gray-800 text-white rounded-lg p-4">
+                            <div class="text-center mb-4">
+                                <div id="qrCode" class="bg-white p-2 rounded inline-block mb-2">
+                                    <!-- QR Code will be generated here -->
+                                    <div class="w-24 h-24 bg-gray-100 flex items-center justify-center">
+                                        <i class="fas fa-qrcode text-gray-400 text-xl"></i>
+                                    </div>
+                                </div>
+                                <p id="idStudentId" class="text-sm font-mono break-all">EDU-0000-0000-0000</p>
+                            </div>
+                            <div class="border-t border-gray-600 pt-3">
+                                <h5 class="font-semibold mb-2">Parent/Guardian</h5>
+                                <div class="text-sm">
+                                    <p id="idParentName"><strong>Parent:</strong> -</p>
+                                    <p id="idParentPhone"><strong>Contact:</strong> -</p>
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-between pt-6">
+                    <button type="button" id="backToStudent" 
+                            class="bg-gray-500 text-white px-8 py-3 rounded-lg hover:bg-gray-600 transition-colors font-medium flex items-center space-x-2">
+                        <i class="fas fa-arrow-left"></i>
+                        <span>Back</span>
+                    </button>
+                    <button type="button" id="saveEnrollment" 
+                            class="bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center space-x-2">
+                        <i class="fas fa-save mr-2"></i>
+                        <span>Save Enrollment</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Webcam Modal -->
+    <div id="webcamModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 class="text-xl font-bold mb-4">Take Student Photo</h3>
+            <div class="bg-gray-200 rounded-lg mb-4">
+                <video id="webcamVideo" autoplay playsinline class="w-full rounded-lg"></video>
+                <canvas id="webcamCanvas" class="hidden"></canvas>
+            </div>
+            <div class="flex justify-end space-x-3">
+                <button type="button" id="cancelWebcam" 
+                        class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
+                    Cancel
+                </button>
+                <button type="button" id="capturePhoto" 
+                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                    Capture
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="successModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md text-center">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-check text-green-600 text-2xl"></i>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Enrollment Successful!</h3>
+            <p class="text-gray-600 mb-6">Parent and student have been successfully enrolled in the system.</p>
+            <div class="flex justify-center space-x-3">
+                <button type="button" id="enrollAnother" 
+                        class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                    Enroll Another
+                </button>
+                <a href="admin-dashboard.html" 
+                   class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 transition-colors">
+                    Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add these scripts -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+    <script src="../core.js"></script>
+    <script src="add-parent-student.js"></script>
+</body>
+</html>
+    <style>
+        .id-cr80 { width: 2.125in; height: 3.375in; border-radius: 0.125in; overflow: hidden; }
+        @media print { .id-cr80 { width: 2.125in; height: 3.375in; } }
+    </style>

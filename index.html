@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+    <style>
+        .login-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+        .role-card {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .role-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        .role-card.selected {
+            border: 2px solid #3b82f6;
+            background-color: #eff6ff;
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .shake {
+            animation: shake 0.5s ease-in-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+    </style>
+</head>
+<body class="login-container flex items-center justify-center p-4">
+    <div class="login-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden fade-in">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 text-white text-center">
+            <div class="w-16 h-16 rounded-full bg-white bg-opacity-20 flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14v6l9-5m-9 5l-9-5m9 5v-6m0 0l-9-5m9 5l9-5"></path>
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold">EducareTrack</h1>
+            <p class="text-blue-100 mt-2">Student Attendance & Safety Monitoring</p>
+        </div>
+        
+        <!-- Login Form -->
+        <div class="p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-6 text-center">Sign In to Your Account</h2>
+            
+            <!-- Role Selection -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 mb-3">I am a:</label>
+                <div class="grid grid-cols-3 gap-3" id="roleSelection">
+                    <!-- Teacher -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center" data-role="teacher">
+                        <svg class="w-8 h-8 text-blue-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14v6l9-5m-9 5l-9-5m9 5v-6m0 0l-9-5m9 5l9-5"></path>
+                        </svg>
+                        <span class="text-sm font-medium">Teacher</span>
+                    </div>
+                    
+                    <!-- Parent -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center" data-role="parent">
+                        <svg class="w-8 h-8 text-green-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                        </svg>
+                        <span class="text-sm font-medium">Parent</span>
+                    </div>
+                    
+                    <!-- Admin -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center" data-role="admin">
+                        <svg class="w-8 h-8 text-purple-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        <span class="text-sm font-medium">Admin</span>
+                    </div>
+                    
+                    <!-- Guard -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center" data-role="guard">
+                        <svg class="w-8 h-8 text-yellow-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                        </svg>
+                        <span class="text-sm font-medium">Guard</span>
+                    </div>
+                    
+                    <!-- Clinic -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center" data-role="clinic">
+                        <svg class="w-8 h-8 text-red-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                        </svg>
+                        <span class="text-sm font-medium">Clinic</span>
+                    </div>
+                    
+                    <!-- Student (Disabled for now) -->
+                    <div class="role-card p-3 border border-gray-300 rounded-lg text-center opacity-50 cursor-not-allowed" data-role="student" title="Student login coming soon">
+                        <svg class="w-8 h-8 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
+                        <span class="text-sm font-medium text-gray-400">Student</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Login Form -->
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label for="loginId" class="block text-sm font-medium text-gray-700 mb-1">
+                        User ID
+                    </label>
+                    <input 
+                        type="text" 
+                        id="loginId" 
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
+                        placeholder="Enter your User ID"
+                        required
+                    >
+                </div>
+                
+                <button 
+                    type="submit" 
+                    id="loginBtn"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-semibold transition duration-300 flex items-center justify-center shadow-md"
+                >
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                    </svg>
+                    Sign In
+                </button>
+            </form>
+            
+            <!-- Available Users from Firebase -->
+            <div class="mt-8 pt-6 border-t border-gray-200">
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Available Users (From Firebase):</h3>
+                <div id="availableUsers" class="space-y-2 text-xs text-gray-600">
+                    <div class="text-center py-4">
+                        <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                        <p class="text-gray-500">Loading users from database...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Modal -->
+    <div id="statusModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+            <div id="statusContent" class="text-center">
+                <!-- Content will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Core JS -->
+    <script src="core.js"></script>
+
+    <script>
+        // DOM Ready
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginForm = document.getElementById('loginForm');
+            const loginBtn = document.getElementById('loginBtn');
+            const loginIdInput = document.getElementById('loginId');
+            const roleCards = document.querySelectorAll('.role-card');
+            const statusModal = document.getElementById('statusModal');
+            const availableUsersDiv = document.getElementById('availableUsers');
+            
+            let selectedRole = null;
+            
+            // Load available users from Firebase
+            loadAvailableUsers();
+            
+            // Role selection
+            roleCards.forEach(card => {
+                card.addEventListener('click', function() {
+                    // Skip if disabled (like student role)
+                    if (this.classList.contains('cursor-not-allowed')) {
+                        return;
+                    }
+                    
+                    // Remove selected class from all cards
+                    roleCards.forEach(c => c.classList.remove('selected'));
+                    
+                    // Add selected class to clicked card
+                    this.classList.add('selected');
+                    
+                    // Store selected role
+                    selectedRole = this.getAttribute('data-role');
+                    
+                    console.log('Selected role:', selectedRole);
+                });
+            });
+            
+            // Form submission
+            loginForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const userId = loginIdInput.value.trim();
+                
+                // Validate inputs
+                if (!userId) {
+                    showError('Please enter your User ID');
+                    loginIdInput.focus();
+                    return;
+                }
+                
+                if (!selectedRole) {
+                    showError('Please select your role');
+                    return;
+                }
+                
+                // Disable login button and show loading
+                loginBtn.disabled = true;
+                loginBtn.innerHTML = `
+                    <div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Signing In...
+                `;
+                
+                // Show loading modal
+                showStatus('loading', 'Verifying your credentials...', false);
+                
+                try {
+                    // Use the login method from core.js
+                    await EducareTrack.login(userId, selectedRole);
+                    
+                    // Show success message
+                    showStatus('success', `Welcome back, ${EducareTrack.currentUser.name}! Redirecting to your dashboard...`);
+                    
+                    // Redirect to dashboard after a short delay
+                    setTimeout(() => {
+                        const dashboardUrl = getDashboardUrl(selectedRole);
+                        window.location.href = dashboardUrl;
+                    }, 2000);
+                    
+                } catch (error) {
+                    // Show error message
+                    showStatus('error', error.message);
+                    
+                    // Re-enable login button
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = `
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                        </svg>
+                        Sign In
+                    `;
+                    
+                    // Add shake animation to form
+                    loginForm.classList.add('shake');
+                    setTimeout(() => {
+                        loginForm.classList.remove('shake');
+                    }, 500);
+                }
+            });
+            
+            // Close modal when clicking outside
+            statusModal.addEventListener('click', function(e) {
+                if (e.target === statusModal) {
+                    statusModal.classList.add('hidden');
+                }
+            });
+            
+            // Helper function to show error (without modal)
+            function showError(message) {
+                // Create temporary error message
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm';
+                errorDiv.textContent = message;
+                
+                // Insert after the form
+                loginForm.parentNode.insertBefore(errorDiv, loginForm);
+                
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    errorDiv.remove();
+                }, 3000);
+            }
+            
+            // Get dashboard URL based on role
+            function getDashboardUrl(role) {
+                const dashboards = {
+                    'admin': 'admin/admin-dashboard.html',
+                    'teacher': 'teacher/teacher-dashboard.html',
+                    'guard': 'guard/guard-dashboard.html',
+                    'clinic': 'clinic/clinic-dashboard.html',
+                    'parent': 'parent/parent-dashboard.html',
+                    'student': 'student-dashboard.html'
+                };
+                return dashboards[role] || 'dashboard.html';
+            }
+            
+            // Show status modal
+            function showStatus(type, message, autoClose = true) {
+                const modal = document.getElementById('statusModal');
+                const content = document.getElementById('statusContent');
+                
+                let icon, color;
+                
+                switch(type) {
+                    case 'success':
+                        icon = `
+                            <svg class="w-12 h-12 text-green-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        `;
+                        color = 'text-green-700';
+                        break;
+                    case 'error':
+                        icon = `
+                            <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        `;
+                        color = 'text-red-700';
+                        break;
+                    case 'loading':
+                        icon = `
+                            <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        `;
+                        color = 'text-blue-700';
+                        break;
+                }
+                
+                content.innerHTML = `
+                    ${icon}
+                    <h3 class="text-lg font-semibold ${color} mb-2">${type === 'loading' ? 'Please Wait' : type === 'success' ? 'Success!' : 'Error'}</h3>
+                    <p class="text-gray-600">${message}</p>
+                `;
+                
+                modal.classList.remove('hidden');
+                
+                if (autoClose && type !== 'loading') {
+                    setTimeout(() => {
+                        modal.classList.add('hidden');
+                    }, 3000);
+                }
+                
+                return modal;
+            }
+
+            // Load available users from Firebase
+            async function loadAvailableUsers() {
+                try {
+                    const usersSnapshot = await EducareTrack.db.collection('users')
+                        .where('isActive', '==', true)
+                        .get();
+                    
+                    if (usersSnapshot.empty) {
+                        availableUsersDiv.innerHTML = `
+                            <div class="text-center py-4">
+                                <p class="text-gray-500">No active users found in database</p>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    const usersByRole = {
+                        admin: [],
+                        teacher: [],
+                        guard: [],
+                        clinic: [],
+                        parent: []
+                    };
+                    
+                    usersSnapshot.forEach(doc => {
+                        const user = doc.data();
+                        if (usersByRole[user.role]) {
+                            usersByRole[user.role].push(user);
+                        }
+                    });
+                    
+                    let usersHTML = '';
+                    
+                    // Display users by role
+                    for (const [role, users] of Object.entries(usersByRole)) {
+                        if (users.length > 0) {
+                            usersHTML += `<div class="mb-3">`;
+                            usersHTML += `<h4 class="text-xs font-semibold text-gray-700 mb-1 uppercase">${role}s</h4>`;
+                            
+                            users.forEach(user => {
+                                const roleColor = {
+                                    'admin': 'bg-purple-100 text-purple-800',
+                                    'teacher': 'bg-blue-100 text-blue-800',
+                                    'guard': 'bg-yellow-100 text-yellow-800',
+                                    'clinic': 'bg-red-100 text-red-800',
+                                    'parent': 'bg-green-100 text-green-800'
+                                }[user.role] || 'bg-gray-100 text-gray-800';
+                                
+                                usersHTML += `
+                                    <div class="flex justify-between items-center p-2 hover:bg-gray-50 rounded cursor-pointer available-user" 
+                                         data-userid="${user.id}" data-role="${user.role}">
+                                        <div class="flex items-center">
+                                            <span class="w-2 h-2 rounded-full ${roleColor.split(' ')[0]} mr-2"></span>
+                                            <span class="text-xs">${user.name}</span>
+                                        </div>
+                                        <span class="font-mono text-xs ${roleColor} px-2 py-1 rounded">${user.id}</span>
+                                    </div>
+                                `;
+                            });
+                            
+                            usersHTML += `</div>`;
+                        }
+                    }
+                    
+                    availableUsersDiv.innerHTML = usersHTML;
+                    
+                    // Add click handlers to available users
+                    document.querySelectorAll('.available-user').forEach(userElement => {
+                        userElement.addEventListener('click', function() {
+                            const userId = this.getAttribute('data-userid');
+                            const role = this.getAttribute('data-role');
+                            
+                            // Auto-fill user ID
+                            loginIdInput.value = userId;
+                            
+                            // Auto-select role
+                            selectRole(role);
+                        });
+                    });
+                    
+                } catch (error) {
+                    console.error('Error loading users:', error);
+                    availableUsersDiv.innerHTML = `
+                        <div class="text-center py-4">
+                            <p class="text-red-500">Error loading users from database</p>
+                        </div>
+                    `;
+                }
+            }
+
+            // Helper function to select role
+            function selectRole(role) {
+                roleCards.forEach(card => {
+                    if (card.getAttribute('data-role') === role) {
+                        card.classList.add('selected');
+                        selectedRole = role;
+                    } else {
+                        card.classList.remove('selected');
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
