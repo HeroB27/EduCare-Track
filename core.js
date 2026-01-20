@@ -1664,25 +1664,16 @@ const EducareTrack = {
     // Show urgent notification (high priority)
     showUrgentNotification(notification) {
         this.updateNotificationBadge();
-        if (window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('educareTrack:newNotifications'));
-        }
     },
 
     // Show normal notification
     showNormalNotification(notification) {
         this.updateNotificationBadge();
-        if (window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('educareTrack:newNotifications'));
-        }
     },
 
     // Show batch notification for multiple notifications
     showBatchNotification(count) {
         this.updateNotificationBadge();
-        if (window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('educareTrack:newNotifications'));
-        }
     },
 
     // Handle notification action
