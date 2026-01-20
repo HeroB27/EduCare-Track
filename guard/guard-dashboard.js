@@ -128,6 +128,13 @@ class GuardDashboard {
     }
 
     initEventListeners() {
+        const bell = document.getElementById('notificationBell');
+        if (bell) {
+            bell.addEventListener('click', () => {
+                window.location.href = '../notifications.html';
+            });
+        }
+
         // Manual entry modal
         document.getElementById('studentSearch').addEventListener('input', (e) => {
             this.searchStudents(e.target.value);
@@ -139,6 +146,12 @@ class GuardDashboard {
 
         // Demo controls
         this.initDemoControls();
+
+        window.addEventListener('educareTrack:newNotifications', () => {
+            if (window.EducareTrack && typeof window.EducareTrack.updateNotificationBadge === 'function') {
+                window.EducareTrack.updateNotificationBadge();
+            }
+        });
     }
 
     async searchStudents(searchTerm) {

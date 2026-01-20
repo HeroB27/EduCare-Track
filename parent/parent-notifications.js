@@ -241,7 +241,6 @@ class ParentNotifications {
             const notification = this.notifications.find(n => n.id === notificationId);
             if (!notification) return;
 
-            // Mark as read if not already read
             if (!notification.readBy || !notification.readBy.includes(this.currentUser.id)) {
                 await EducareTrack.markNotificationAsRead(notificationId);
                 notification.readBy = notification.readBy || [];
@@ -249,72 +248,6 @@ class ParentNotifications {
                 this.applyFilter();
                 this.updateNotificationBadge();
             }
-
-            const modal = document.getElementById('notificationModal');
-            const content = document.getElementById('notificationContent');
-
-            let icon = 'fas fa-bell';
-            let iconColor = 'text-blue-500';
-            
-            switch (notification.type) {
-                case 'attendance':
-                    icon = 'fas fa-clipboard-check';
-                    iconColor = 'text-green-500';
-                    break;
-                case 'clinic':
-                    icon = 'fas fa-heartbeat';
-                    iconColor = 'text-red-500';
-                    break;
-                case 'announcement':
-                    icon = 'fas fa-bullhorn';
-                    iconColor = 'text-yellow-500';
-                    break;
-                case 'excuse':
-                    icon = 'fas fa-file-medical';
-                    iconColor = 'text-purple-500';
-                    break;
-            }
-
-            content.innerHTML = `
-                <div class="space-y-4">
-                    <div class="flex items-center">
-                        <div class="w-12 h-12 rounded-full ${iconColor} bg-${iconColor.split('-')[1]}-100 flex items-center justify-center mr-4">
-                            <i class="${icon} text-lg"></i>
-                        </div>
-                        <div>
-                            <h3 class="text-xl font-bold text-gray-800">${notification.title}</h3>
-                            <p class="text-gray-600">${EducareTrack.formatDate(notification.createdAt?.toDate())} at ${EducareTrack.formatTime(notification.createdAt?.toDate())}</p>
-                        </div>
-                    </div>
-
-                    <div class="bg-gray-50 rounded-lg p-4">
-                        <p class="text-gray-700">${notification.message}</p>
-                    </div>
-
-                    ${notification.studentName ? `
-                    <div class="border-t border-gray-200 pt-4">
-                        <h4 class="font-semibold text-gray-700 mb-2">Related Student</h4>
-                        <div class="flex items-center text-gray-600">
-                            <i class="fas fa-user-graduate mr-2"></i>
-                            ${notification.studentName}
-                        </div>
-                    </div>
-                    ` : ''}
-
-                    ${notification.isUrgent ? `
-                    <div class="border-t border-gray-200 pt-4">
-                        <div class="flex items-center text-red-600">
-                            <i class="fas fa-exclamation-triangle mr-2"></i>
-                            <span class="font-semibold">This is an urgent notification</span>
-                        </div>
-                    </div>
-                    ` : ''}
-                </div>
-            `;
-
-            modal.classList.remove('hidden');
-            this.currentNotificationId = notificationId;
-
         } catch (error) {
             console.error('Error viewing notification:', error);
             this.showNotification('Error loading notification details', 'error');
@@ -452,19 +385,7 @@ class ParentNotifications {
             this.loadNotifications(true);
         });
 
-        // Close modals on outside click
-        document.getElementById('notificationModal').addEventListener('click', (e) => {
-            if (e.target.id === 'notificationModal') {
-                this.closeNotificationModal();
-            }
-        });
-
-        // Escape key to close modal
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.closeNotificationModal();
-            }
-        });
+        
 
         // Listen for new notifications
         window.addEventListener('educareTrack:newNotifications', (event) => {
@@ -477,10 +398,7 @@ class ParentNotifications {
         });
     }
 
-    closeNotificationModal() {
-        document.getElementById('notificationModal').classList.add('hidden');
-        this.currentNotificationId = null;
-    }
+    
 
     toggleSidebar() {
         const sidebar = document.querySelector('.sidebar');
@@ -515,10 +433,4 @@ class ParentNotifications {
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
     window.parentNotifications = new ParentNotifications();
-    window.addEventListener('educareTrack:openNotifications', () => {
-        const modal = document.getElementById('notificationModal');
-        if (modal) {
-            modal.classList.remove('hidden');
-        }
-    });
 });

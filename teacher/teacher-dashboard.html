@@ -319,29 +319,7 @@
         </div>
     </div>
 
-    <!-- Notifications Modal -->
-    <div id="notificationsModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div class="bg-blue-600 text-white p-4 rounded-t-lg flex justify-between items-center">
-                <h3 class="text-lg font-semibold">Notifications</h3>
-                <button id="closeNotifications" class="text-white hover:text-gray-200">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            
-            <div class="p-4 max-h-96 overflow-y-auto">
-                <div id="notificationsList" class="space-y-3">
-                    <!-- Notifications will be loaded here -->
-                </div>
-            </div>
-            
-            <div class="bg-gray-50 px-6 py-3 rounded-b-lg flex justify-center">
-                <button id="markAllRead" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                    Mark All as Read
-                </button>
-            </div>
-        </div>
-    </div>
+    
 
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50 hidden">
@@ -644,29 +622,7 @@
 
                 // Notifications
                 document.getElementById('notificationsBtn').addEventListener('click', () => {
-                    this.showNotifications();
-                });
-
-                document.getElementById('closeNotifications').addEventListener('click', () => {
-                    this.hideNotifications();
-                });
-
-                document.getElementById('markAllRead').addEventListener('click', () => {
-                    this.markAllNotificationsRead();
-                });
-
-                // Close modals on outside click
-                document.getElementById('notificationsModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'notificationsModal') {
-                        this.hideNotifications();
-                    }
-                });
-
-                // Escape key to close modals
-                document.addEventListener('keydown', (e) => {
-                    if (e.key === 'Escape') {
-                        this.hideNotifications();
-                    }
+                    window.location.href = 'teacher-notifications.html';
                 });
             }
 
