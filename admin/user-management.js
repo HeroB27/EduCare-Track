@@ -710,18 +710,22 @@ class UserManagement {
                 isHomeroom: document.getElementById('teacherHomeroom').checked,
                 role: 'teacher',
                 isActive: true,
-                createdAt: this.currentEditingUser ? undefined : firebase.firestore.FieldValue.serverTimestamp(),
                 createdBy: window.EducareTrack.currentUser.id
             };
 
             if (this.currentEditingUser) {
-                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update(userData);
+                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
+                    ...userData,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: window.EducareTrack.currentUser.id
+                });
                 this.showNotification('Teacher updated successfully', 'success');
             } else {
                 const teacherId = window.EducareTrack.generateUserId('teacher');
                 const teacherData = {
                     ...userData,
-                    id: teacherId
+                    id: teacherId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(teacherId).set(teacherData);
@@ -795,8 +799,7 @@ class UserManagement {
                 email: document.getElementById('userEmail').value || '',
                 phone: document.getElementById('userPhone').value || '',
                 role: this.currentRole,
-                isActive: true,
-                createdAt: this.currentEditingUser ? undefined : firebase.firestore.FieldValue.serverTimestamp()
+                isActive: true
             };
 
             // Add employee ID for guard and clinic staff
@@ -806,14 +809,19 @@ class UserManagement {
 
             if (this.currentEditingUser) {
                 // Update existing user
-                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update(userData);
+                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
+                    ...userData,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: window.EducareTrack.currentUser.id
+                });
                 this.showNotification('User updated successfully', 'success');
             } else {
                 // Create new user - generate ID using EducareTrack method
                 const userId = window.EducareTrack.generateUserId(this.currentRole);
                 const newUserData = {
                     ...userData,
-                    id: userId
+                    id: userId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(userId).set(newUserData);
@@ -842,20 +850,24 @@ class UserManagement {
                 emergencyContact: document.getElementById('emergencyContact').value || '',
                 children: this.currentEditingUser?.children || [],
                 role: 'parent',
-                isActive: true,
-                createdAt: this.currentEditingUser ? undefined : firebase.firestore.FieldValue.serverTimestamp()
+                isActive: true
             };
 
             if (this.currentEditingUser) {
                 // Update existing parent
-                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update(userData);
+                await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
+                    ...userData,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: window.EducareTrack.currentUser.id
+                });
                 this.showNotification('Parent updated successfully', 'success');
             } else {
                 // Create new parent - generate ID using EducareTrack method
                 const parentId = window.EducareTrack.generateUserId('parent');
                 const parentData = {
                     ...userData,
-                    id: parentId
+                    id: parentId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(parentId).set(parentData);

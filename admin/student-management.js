@@ -32,6 +32,7 @@ class StudentManagement {
             await this.loadStudents();
             this.populateClassFilters();
             this.setupEventListeners();
+            this.populateLevelDependentFields();
             
             this.hideLoading();
         } catch (error) {
@@ -152,7 +153,6 @@ class StudentManagement {
         this.currentEditingStudent = null;
         document.getElementById('studentModalTitle').textContent = 'Enroll New Student';
         document.getElementById('studentForm').reset();
-        this.populateLevelDependentFields();
         this.openModal();
     }
 
@@ -183,7 +183,8 @@ class StudentManagement {
             if (level) {
                 const grades = window.EducareTrack.getGradeLevels(level);
                 grades.forEach(grade => {
-                    gradeSelect.innerHTML += `<option value="${grade}">${grade}</option>`;
+                    const gradeValue = grade.replace('Grade ', '');
+                    gradeSelect.innerHTML += `<option value="${gradeValue}">${gradeValue}</option>`;
                 });
             }
 
@@ -237,25 +238,7 @@ class StudentManagement {
                     updatedBy: window.EducareTrack.currentUser.id
                 });
                 this.showNotification('Student updated successfully', 'success');
-            } else {
-                // Create new student
-                const studentId = window.EducareTrack.generateStudentId(studentData.lrn);
-                const newStudentData = {
-                    ...studentData,
-                    id: studentId,
-                    studentId: studentId,
-                    parentId: '', // Would normally link to parent
-                    qrCode: studentId,
-                    currentStatus: 'out_school',
-                    isActive: true,
-                    subjects: window.EducareTrack.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade),
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    createdBy: window.EducareTrack.currentUser.id
-                };
-
-                await window.EducareTrack.db.collection('students').doc(studentId).set(newStudentData);
-                this.showNotification('Student enrolled successfully', 'success');
-            }
+            } 
 
             this.closeModal();
             await this.loadStudents();
@@ -299,22 +282,235 @@ class StudentManagement {
         
         // Set grade after level has populated options
         setTimeout(() => {
-            document.getElementById('studentGrade').value = student.grade || '';
+            const grade = student.grade || '';
+            document.getElementById('studentGrade').value = grade.replace('Grade ', '');
         }, 100);
     }
 
     async viewStudent(studentId) {
         try {
+            this.showLoading();
             const student = await window.EducareTrack.getStudentById(studentId);
-            if (student) {
-                this.showNotification(`Viewing student: ${student.name}`, 'info');
-                // In a real implementation, you would open a detailed view modal
-                console.log('Student details:', student);
+            
+            if (!student) {
+                throw new Error('Student not found');
             }
+
+            // Load additional student data
+            const [attendanceRecords, clinicVisits, parentInfo] = await Promise.all([
+                this.getAttendanceByStudent(studentId),
+                this.getClinicVisitsByStudent(studentId),
+                student.parentId ? window.EducareTrack.getUserById(student.parentId) : Promise.resolve(null)
+            ]);
+
+            const schoolDays = this.countUniqueEntryDays(attendanceRecords);
+            const lateArrivals = this.countUniqueLateDays(attendanceRecords);
+            const modalContent = document.getElementById('studentDetailContent');
+            
+            modalContent.innerHTML = `
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Student Info -->
+                    <div class="lg:col-span-1">
+                        <div class="text-center">
+                            <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4 overflow-hidden">
+                                ${student.photoUrl ? 
+                                    `<img src="${student.photoUrl}" alt="${student.name}" class="w-24 h-24 rounded-full object-cover">` :
+                                    `<span class="text-blue-600 font-semibold text-2xl">${student.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
+                                }
+                            </div>
+                            <h3 class="text-xl font-bold text-gray-800">${student.name}</h3>
+                            <p class="text-gray-600">${student.grade} • ${student.level || 'N/A'}</p>
+                            ${student.strand ? `<p class="text-gray-600">${student.strand}</p>` : ''}
+                            <div class="mt-2">
+                                <span class="px-3 py-1 rounded-full text-sm font-medium ${this.getStatusColor(student.currentStatus)}">
+                                    ${this.getStatusText(student.currentStatus)}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="mt-6 space-y-3">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">LRN:</span>
+                                <span class="font-medium">${student.lrn || 'N/A'}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Student ID:</span>
+                                <span class="font-medium">${student.studentId || 'N/A'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Parent & Contact Info -->
+                    <div class="lg:col-span-2">
+                        <div class="bg-gray-50 rounded-lg p-4 mb-6">
+                            <h4 class="font-semibold text-gray-800 mb-3">Parent/Guardian Information</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <p class="text-sm text-gray-600">Name</p>
+                                    <p class="font-medium">${parentInfo?.name || 'N/A'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-600">Relationship</p>
+                                    <p class="font-medium">${parentInfo?.relationship || 'Parent'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-600">Phone</p>
+                                    <p class="font-medium">${parentInfo?.phone || 'N/A'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-600">Emergency Contact</p>
+                                    <p class="font-medium">${parentInfo?.emergencyContact || parentInfo?.phone || 'N/A'}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Stats -->
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-blue-600">${schoolDays}</div>
+                                <div class="text-sm text-gray-600">School Days</div>
+                            </div>
+                            <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-yellow-600">${lateArrivals}</div>
+                                <div class="text-sm text-gray-600">Late Arrivals</div>
+                            </div>
+                            <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-blue-600">${clinicVisits.filter(v => v.checkIn).length}</div>
+                                <div class="text-sm text-gray-600">Clinic Visits</div>
+                            </div>
+                            <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+                                <div class="text-2xl font-bold text-green-600">${this.calculateAttendanceRate(attendanceRecords)}%</div>
+                                <div class="text-sm text-gray-600">Attendance Rate</div>
+                            </div>
+                        </div>
+
+                        <!-- Recent Activity -->
+                        <div>
+                            <h4 class="font-semibold text-gray-800 mb-3">Recent Activity</h4>
+                            <div class="space-y-2 max-h-40 overflow-y-auto">
+                                ${this.getRecentActivity(attendanceRecords, clinicVisits)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('studentDetailModal').classList.remove('hidden');
+            document.getElementById('studentDetailModal').classList.add('flex');
+            this.hideLoading();
         } catch (error) {
             console.error('Error viewing student:', error);
             this.showNotification('Error loading student details', 'error');
+            this.hideLoading();
         }
+    }
+
+    closeViewModal() {
+        document.getElementById('studentDetailModal').classList.add('hidden');
+        document.getElementById('studentDetailModal').classList.remove('flex');
+    }
+
+    // Helper methods for viewStudent
+    async getAttendanceByStudent(studentId) {
+        try {
+            const snapshot = await window.EducareTrack.db.collection('attendance')
+                .where('studentId', '==', studentId)
+                .orderBy('timestamp', 'desc')
+                .limit(50)
+                .get();
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error('Error getting attendance:', error);
+            return [];
+        }
+    }
+
+    async getClinicVisitsByStudent(studentId) {
+        try {
+            const snapshot = await window.EducareTrack.db.collection('clinic_visits')
+                .where('studentId', '==', studentId)
+                .orderBy('checkIn', 'desc')
+                .limit(20)
+                .get();
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error('Error getting clinic visits:', error);
+            return [];
+        }
+    }
+
+    calculateAttendanceRate(attendanceRecords) {
+        const entryDays = new Set();
+        const presentLateDays = new Set();
+        attendanceRecords.forEach(a => {
+            const ts = a.timestamp;
+            if (ts && a.entryType === 'entry') {
+                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                const key = d.toDateString();
+                entryDays.add(key);
+                if (a.status === 'present' || a.status === 'late') {
+                    presentLateDays.add(key);
+                }
+            }
+        });
+        const total = entryDays.size;
+        const present = presentLateDays.size;
+        return total > 0 ? Math.round((present / total) * 100) : 0;
+    }
+
+    countUniqueEntryDays(attendanceRecords) {
+        const days = new Set();
+        attendanceRecords.forEach(a => {
+            const ts = a.timestamp;
+            if (ts && a.entryType === 'entry') {
+                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                days.add(d.toDateString());
+            }
+        });
+        return days.size;
+    }
+
+    countUniqueLateDays(attendanceRecords) {
+        const days = new Set();
+        attendanceRecords.forEach(a => {
+            const ts = a.timestamp;
+            if (ts && a.entryType === 'entry' && a.status === 'late') {
+                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                days.add(d.toDateString());
+            }
+        });
+        return days.size;
+    }
+
+    getRecentActivity(attendance, clinic) {
+        const activities = [
+            ...attendance.map(a => ({
+                type: 'attendance',
+                date: a.timestamp.toDate(),
+                details: `${a.entryType === 'entry' ? 'In' : 'Out'} - ${this.getStatusText(a.status)}`
+            })),
+            ...clinic.map(c => ({
+                type: 'clinic',
+                date: c.checkIn.toDate(),
+                details: `Clinic Visit - ${c.complaint || 'No details'}`
+            }))
+        ].sort((a, b) => b.date - a.date).slice(0, 5);
+
+        if (activities.length === 0) {
+            return '<p class="text-sm text-gray-500 italic">No recent activity</p>';
+        }
+
+        return activities.map(a => `
+            <div class="flex items-start space-x-3 text-sm">
+                <div class="min-w-20 text-gray-500">${window.EducareTrack.formatDate(a.date)}</div>
+                <div class="flex-1">
+                    <span class="font-medium ${a.type === 'clinic' ? 'text-red-600' : 'text-blue-600'}">
+                        ${a.type === 'clinic' ? 'Clinic' : 'Attendance'}
+                    </span>
+                    <span class="text-gray-600"> - ${a.details}</span>
+                </div>
+            </div>
+        `).join('');
     }
 
     async toggleStudentStatus(studentId) {
