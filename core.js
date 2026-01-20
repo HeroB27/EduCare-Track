@@ -359,56 +359,7 @@ const EducareTrack = {
 
     initNotificationBox() {
         if (this.notificationBoxInitialized) return;
-        const sidebar = document.createElement('div');
-        sidebar.id = 'notificationSidebar';
-        sidebar.className = 'fixed top-0 right-0 h-full w-96 max-w-full bg-white shadow-2xl border-l border-gray-200 z-50 hidden';
-        sidebar.innerHTML = `
-            <div class="flex items-center justify-between px-4 py-3 border-b">
-                <div class="flex items-center space-x-3">
-                    <i class="fas fa-bell text-gray-700"></i>
-                    <span class="text-sm font-semibold">Notifications</span>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <button id="markAllReadBtn" class="text-xs text-blue-600">Mark all read</button>
-                    <a id="viewAllBtn" href="#" class="text-xs text-gray-600">View page</a>
-                    <button id="closeSidebarBtn" class="text-xs text-gray-500">Close</button>
-                </div>
-            </div>
-            <div id="notificationItems" class="overflow-y-auto h-full divide-y"></div>
-        `;
-        document.body.appendChild(sidebar);
-        const panel = sidebar;
-        const viewAllBtn = sidebar.querySelector('#viewAllBtn');
-        const markAllReadBtn = sidebar.querySelector('#markAllReadBtn');
-        const closeBtn = sidebar.querySelector('#closeSidebarBtn');
-        const itemsEl = sidebar.querySelector('#notificationItems');
-
-        const refresh = async () => {
-            try {
-                if (!this.currentUser) return;
-                const list = await this.getNotificationsForUser(this.currentUser.id, false, 50);
-                itemsEl.innerHTML = '';
-                list.forEach(n => {
-                    const item = document.createElement('div');
-                    const unread = !n.readBy || !n.readBy.includes(this.currentUser.id);
-                    const bg = unread ? 'bg-gray-50' : 'bg-white';
-                    item.className = `px-4 py-3 ${bg}`;
-                    const t = n.title || 'Notification';
-                    const m = n.message || '';
-                    const dt = `${n.formattedDate || ''} ${n.formattedTime || ''}`.trim();
-                    item.innerHTML = `
-                        <div class="text-sm font-medium text-gray-800">${t}</div>
-                        <div class="text-xs text-gray-600">${m}</div>
-                        <div class="text-[10px] text-gray-400 mt-1">${dt}</div>
-                    `;
-                    itemsEl.appendChild(item);
-                });
-                this.updateNotificationBadge();
-            } catch (_) {}
-        };
-
-        viewAllBtn.addEventListener('click', (e) => {
-            e.preventDefault();
+        window.addEventListener('educareTrack:openNotifications', () => {
             const role = this.currentUserRole || (this.currentUser && this.currentUser.role);
             let url = 'notifications.html';
             if (role === 'teacher') url = 'teacher/teacher-notifications.html';
@@ -416,38 +367,11 @@ const EducareTrack = {
             else if (role === 'admin') url = 'admin/admin-notifications.html';
             window.location.href = url;
         });
-        markAllReadBtn.addEventListener('click', async () => {
-            try { await this.markAllNotificationsAsRead(); await refresh(); } catch (_) {}
-        });
-        closeBtn.addEventListener('click', () => { panel.classList.add('hidden'); });
-        window.addEventListener('educareTrack:openNotifications', async () => {
-            panel.classList.remove('hidden');
-            await refresh();
-        });
-        window.addEventListener('educareTrack:newNotifications', async () => { await refresh(); });
+        window.addEventListener('educareTrack:newNotifications', () => { this.updateNotificationBadge(); });
         this.notificationBoxInitialized = true;
     },
 
     appendToNotificationBox(notification) {
-        if (!notification || !document.getElementById('notificationItems')) return;
-        const key = `${notification.title || ''}|${notification.message || ''}|${notification.type || ''}|${notification.studentId || ''}`;
-        const now = Date.now();
-        const last = this.recentNotificationKeys[key] || 0;
-        if (now - last < this.popupThrottleMs) return;
-        this.recentNotificationKeys[key] = now;
-        const items = document.getElementById('notificationItems');
-        const item = document.createElement('div');
-        const t = notification.title || 'Notification';
-        const m = notification.message || '';
-        const time = new Date().toLocaleTimeString();
-        const color = notification.type === 'urgent' ? 'bg-red-50' : 'bg-white';
-        item.className = `px-3 py-2 ${color}`;
-        item.innerHTML = `
-            <div class="text-sm font-medium text-gray-800">${t}</div>
-            <div class="text-xs text-gray-600">${m}</div>
-            <div class="text-[10px] text-gray-400 mt-1">${time}</div>
-        `;
-        items.prepend(item);
         this.updateNotificationBadge();
     },
 
@@ -1741,10 +1665,12 @@ const EducareTrack = {
 
     // Utility method to open notifications panel
     openNotificationsPanel() {
-        // Dispatch event to open notifications panel in UI
-        if (window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('educareTrack:openNotifications'));
-        }
+        const role = this.currentUserRole || (this.currentUser && this.currentUser.role);
+        let url = 'notifications.html';
+        if (role === 'teacher') url = 'teacher/teacher-notifications.html';
+        else if (role === 'parent') url = 'parent/parent-notifications.html';
+        else if (role === 'admin') url = 'admin/admin-notifications.html';
+        window.location.href = url;
     },
 
     // Utility navigation methods (to be implemented in UI)

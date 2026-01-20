@@ -431,9 +431,7 @@ class TeacherDashboard {
 
         // Notifications
         document.getElementById('notificationsBtn').addEventListener('click', () => {
-            if (window.EducareTrack && typeof window.EducareTrack.openNotificationsPanel === 'function') {
-                window.EducareTrack.openNotificationsPanel();
-            }
+            window.location.href = 'teacher-notifications.html';
         });
 
         const closeBtn = document.getElementById('closeNotifications');
@@ -451,25 +449,13 @@ class TeacherDashboard {
             });
         }
 
-        // Close modals on outside click
-        document.getElementById('notificationsModal').addEventListener('click', (e) => {
-            if (e.target.id === 'notificationsModal') {
-                this.hideNotifications();
-            }
-        });
-
-        // Escape key to close modals
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.hideNotifications();
-            }
-        });
+        
 
         // Quick action links
         this.setupQuickActions();
 
         // Core navigation events
-        window.addEventListener('educareTrack:openNotifications', () => this.showNotifications());
+        
         window.addEventListener('educareTrack:navigateToAnnouncements', () => {
             window.location.href = 'teacher-announcements.html';
         });
