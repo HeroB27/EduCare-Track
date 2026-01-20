@@ -488,42 +488,99 @@ async loadNotificationCount() {
     async rejectExcuse(excuseId) {
         try {
             this.showLoading();
-            
             const excuse = this.excuseLetters.find(e => e.id === excuseId);
             if (!excuse) {
                 throw new Error('Excuse letter not found');
             }
-
-            const reviewerNotes = prompt('Please provide a reason for rejection:');
-            if (reviewerNotes === null) return; // User cancelled
-
-            await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
-                status: 'rejected',
-                reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                reviewedBy: this.currentUser.id,
-                reviewedByName: this.currentUser.name,
-                reviewerNotes: reviewerNotes
-            });
-
-            // Create notification for parent
-            await EducareTrack.createNotification({
-                type: 'excuse',
-                title: 'Excuse Letter Rejected',
-                message: `Your excuse letter for ${this.formatExcuseDate(excuse)} has been rejected. Reason: ${reviewerNotes}`,
-                targetUsers: [excuse.parentId],
-                studentId: excuse.studentId,
-                studentName: this.classStudents.find(s => s.id === excuse.studentId)?.name || 'Student',
-                relatedRecord: excuseId
-            });
-
-            await this.loadExcuseLetters();
-            this.hideExcuseDetails();
             this.hideLoading();
-            this.showNotification('Excuse letter rejected', 'success');
+
+            let overlay = document.getElementById('teacherRejectModal');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'teacherRejectModal';
+                overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4';
+                const container = document.createElement('div');
+                container.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full';
+                const header = document.createElement('div');
+                header.className = 'px-6 py-4 border-b';
+                const titleEl = document.createElement('h3');
+                titleEl.className = 'text-lg font-semibold text-gray-800';
+                titleEl.textContent = 'Reject Excuse Letter';
+                header.appendChild(titleEl);
+                const body = document.createElement('div');
+                body.id = 'teacherRejectBody';
+                body.className = 'px-6 py-4';
+                const footer = document.createElement('div');
+                footer.className = 'px-6 py-4 border-t flex justify-end space-x-2';
+                const rejectBtn = document.createElement('button');
+                rejectBtn.id = 'teacherRejectSave';
+                rejectBtn.className = 'px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700';
+                rejectBtn.textContent = 'Reject';
+                const cancelBtn = document.createElement('button');
+                cancelBtn.id = 'teacherRejectCancel';
+                cancelBtn.className = 'px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200';
+                cancelBtn.textContent = 'Cancel';
+                footer.appendChild(rejectBtn);
+                footer.appendChild(cancelBtn);
+                container.appendChild(header);
+                container.appendChild(body);
+                container.appendChild(footer);
+                overlay.appendChild(container);
+                document.body.appendChild(overlay);
+            }
+
+            const body = document.getElementById('teacherRejectBody');
+            body.innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Reason for rejection</label>
+                        <textarea id="teacherRejectNotes" class="w-full border rounded px-3 py-2 h-24 focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
+                    </div>
+                </div>`;
+
+            const rejectBtnEl = document.getElementById('teacherRejectSave');
+            const cancelBtnEl = document.getElementById('teacherRejectCancel');
+            cancelBtnEl.onclick = () => overlay.classList.add('hidden');
+            rejectBtnEl.onclick = async () => {
+                const reviewerNotes = document.getElementById('teacherRejectNotes').value.trim();
+                if (!reviewerNotes) {
+                    this.showNotification('Please provide a reason for rejection', 'error');
+                    return;
+                }
+                try {
+                    this.showLoading();
+                    await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
+                        status: 'rejected',
+                        reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        reviewedBy: this.currentUser.id,
+                        reviewedByName: this.currentUser.name,
+                        reviewerNotes: reviewerNotes
+                    });
+                    await EducareTrack.createNotification({
+                        type: 'excuse',
+                        title: 'Excuse Letter Rejected',
+                        message: `Your excuse letter for ${this.formatExcuseDate(excuse)} has been rejected. Reason: ${reviewerNotes}`,
+                        targetUsers: [excuse.parentId],
+                        studentId: excuse.studentId,
+                        studentName: this.classStudents.find(s => s.id === excuse.studentId)?.name || 'Student',
+                        relatedRecord: excuseId
+                    });
+                    await this.loadExcuseLetters();
+                    this.hideExcuseDetails();
+                    this.hideLoading();
+                    this.showNotification('Excuse letter rejected', 'success');
+                    overlay.classList.add('hidden');
+                } catch (error) {
+                    console.error('Error rejecting excuse:', error);
+                    this.hideLoading();
+                    this.showNotification('Error rejecting excuse letter', 'error');
+                }
+            };
+            overlay.classList.remove('hidden');
         } catch (error) {
-            console.error('Error rejecting excuse:', error);
+            console.error('Error initializing rejection modal:', error);
             this.hideLoading();
-            this.showNotification('Error rejecting excuse letter', 'error');
+            this.showNotification('Failed to open rejection modal', 'error');
         }
     }
 
@@ -629,8 +686,11 @@ async loadNotificationCount() {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 EducareTrack.logout();
                 window.location.href = '../index.html';
             }
@@ -673,7 +733,7 @@ async loadNotificationCount() {
 async testAddSampleExcuse() {
     try {
         if (!this.classStudents || this.classStudents.length === 0) {
-            alert('No students found in your class. Please make sure you have students assigned.');
+            this.showNotification('No students found in your class. Please make sure you have students assigned.', 'warning');
             return;
         }
 
@@ -724,11 +784,11 @@ async checkFirestoreData() {
         const myClassExcuses = allExcuses.filter(excuse => excuse.classId === this.currentUser.classId);
         console.log(`Excuse letters for class ${this.currentUser.classId}:`, myClassExcuses);
         
-        alert(`Found ${myClassExcuses.length} excuse letters for your class in Firestore. Check console for details.`);
+        this.showNotification(`Found ${myClassExcuses.length} excuse letters for your class in Firestore. Check console for details.`, 'info');
         
     } catch (error) {
         console.error('Error checking Firestore data:', error);
-        alert('Error checking Firestore data. See console.');
+        this.showNotification('Error checking Firestore data. See console.', 'error');
     }
 }
 }

@@ -27,7 +27,9 @@ class ParentExcuse {
             
             // Verify user is a parent
             if (this.currentUser.role !== 'parent') {
-                alert('Access denied. Parent role required.');
+                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                    window.EducareTrack.showNormalNotification({ title: 'Access Denied', message: 'Parent role required.', type: 'error' });
+                }
                 window.location.href = '../index.html';
                 return;
             }
@@ -394,22 +396,30 @@ async loadChildren() {
 
         // Validate form
         if (!childId) {
-            alert('Please select a child');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Missing Information', message: 'Please select a child', type: 'warning' });
+            }
             return;
         }
 
         if (!type) {
-            alert('Please select an excuse type');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Missing Information', message: 'Please select an excuse type', type: 'warning' });
+            }
             return;
         }
         
         if (dates.length === 0) {
-            alert('Please add at least one absence date');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Missing Dates', message: 'Please add at least one absence date', type: 'warning' });
+            }
             return;
         }
         
         if (!reason) {
-            alert('Please provide a reason for absence');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Missing Reason', message: 'Please provide a reason for absence', type: 'warning' });
+            }
             return;
         }
 
@@ -463,9 +473,13 @@ async loadChildren() {
             if (file) {
                 const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
                 if (!allowedTypes.includes(file.type)) {
-                    alert('Invalid file type. Please upload a JPG or PNG image.');
+                    if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                        window.EducareTrack.showNormalNotification({ title: 'Invalid Attachment', message: 'Please upload a JPG or PNG image.', type: 'warning' });
+                    }
                 } else if (file.size > 5 * 1024 * 1024) {
-                    alert('File size too large. Maximum allowed is 5MB.');
+                    if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                        window.EducareTrack.showNormalNotification({ title: 'File Too Large', message: 'Maximum allowed is 5MB.', type: 'warning' });
+                    }
                 } else {
                     if (!EducareTrack.storage) {
                         throw new Error('File upload not available. Firebase Storage not initialized.');
@@ -726,9 +740,10 @@ async loadChildren() {
     }
 
     async cancelExcuseLetter(excuseId) {
-        if (!confirm('Are you sure you want to cancel this excuse letter? This action cannot be undone.')) {
-            return;
-        }
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('Are you sure you want to cancel this excuse letter? This action cannot be undone.', 'Cancel Excuse Letter', 'Cancel', 'Back')
+            : true;
+        if (!ok) return;
 
         try {
             await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
@@ -786,8 +801,11 @@ async loadNotificationCount() {
         // Logout
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
-            logoutBtn.addEventListener('click', () => {
-                if (confirm('Are you sure you want to logout?')) {
+            logoutBtn.addEventListener('click', async () => {
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                    : true;
+                if (ok) {
                     EducareTrack.logout();
                     window.location.href = '../index.html';
                 }

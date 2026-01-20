@@ -581,9 +581,12 @@
                     this.toggleSidebar();
                 });
 
-                // Logout
-                document.getElementById('logoutBtn').addEventListener('click', () => {
-                    if (confirm('Are you sure you want to logout?')) {
+                // Logout via modal
+                document.getElementById('logoutBtn').addEventListener('click', async () => {
+                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                        : true;
+                    if (ok) {
                         localStorage.removeItem('educareTrack_user');
                         window.location.href = '../index.html';
                     }
@@ -722,9 +725,10 @@
             async deleteAnnouncement() {
                 if (!this.selectedAnnouncement) return;
 
-                if (!confirm('Are you sure you want to delete this announcement? This action cannot be undone.')) {
-                    return;
-                }
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to delete this announcement? This action cannot be undone.', 'Delete Announcement', 'Delete', 'Cancel')
+                    : true;
+                if (!ok) return;
 
                 try {
                     if (!window.EducareTrack) {

@@ -27,7 +27,9 @@ class ParentChildren {
             
             // Verify user is a parent
             if (this.currentUser.role !== 'parent') {
-                alert('Access denied. Parent role required.');
+                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                    window.EducareTrack.showNormalNotification({ title: 'Access Denied', message: 'Parent role required.', type: 'error' });
+                }
                 window.location.href = '../index.html';
                 return;
             }
@@ -360,8 +362,11 @@ class ParentChildren {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 EducareTrack.logout();
                 window.location.href = '../index.html';
             }

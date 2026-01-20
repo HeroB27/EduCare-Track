@@ -422,16 +422,40 @@ class TeacherDashboard {
 
         // Logout
         document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
-                this.cleanup();
-                localStorage.removeItem('educareTrack_user');
-                window.location.href = '../index.html';
+            const existing = document.getElementById('confirmLogoutModal');
+            if (!existing) {
+                const overlay = document.createElement('div');
+                overlay.id = 'confirmLogoutModal';
+                overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+                overlay.innerHTML = `
+                    <div class=\"bg-white rounded-lg shadow-xl max-w-md w-full\">\n
+                        <div class=\"px-6 py-4 border-b\">\n
+                            <h3 class=\"text-lg font-semibold text-gray-800\">Confirm Logout</h3>\n
+                        </div>\n
+                        <div class=\"px-6 py-4\">\n
+                            <p class=\"text-sm text-gray-700\">Are you sure you want to logout?</p>\n
+                        </div>\n
+                        <div class=\"px-6 py-4 border-t flex justify-end space-x-2\">\n
+                            <button id=\"logoutConfirmBtn\" class=\"px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700\">Logout</button>\n
+                            <button id=\"logoutCancelBtn\" class=\"px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200\">Cancel</button>\n
+                        </div>\n
+                    </div>`;
+                document.body.appendChild(overlay);
+                document.getElementById('logoutCancelBtn').addEventListener('click', () => {
+                    overlay.remove();
+                });
+                document.getElementById('logoutConfirmBtn').addEventListener('click', () => {
+                    overlay.remove();
+                    this.cleanup();
+                    localStorage.removeItem('educareTrack_user');
+                    window.location.href = '../index.html';
+                });
             }
         });
 
         // Notifications
         document.getElementById('notificationsBtn').addEventListener('click', () => {
-            window.location.href = 'teacher-notifications.html';
+            this.showNotifications();
         });
 
         const closeBtn = document.getElementById('closeNotifications');
@@ -799,9 +823,42 @@ class TeacherDashboard {
     }
 
     showNotification(message, type = 'info') {
-        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-            window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info'), message, type });
+        let overlay = document.getElementById('inlineNotificationOverlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'inlineNotificationOverlay';
+            overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+            const container = document.createElement('div');
+            container.className = 'bg-white rounded-lg shadow-xl max-w-md w-full';
+            const header = document.createElement('div');
+            header.className = 'px-6 py-4 border-b';
+            const titleEl = document.createElement('h3');
+            titleEl.id = 'inlineNotificationTitleJS';
+            titleEl.className = 'text-lg font-semibold text-gray-800';
+            header.appendChild(titleEl);
+            const body = document.createElement('div');
+            body.className = 'px-6 py-4';
+            const msgEl = document.createElement('p');
+            msgEl.id = 'inlineNotificationMessageJS';
+            msgEl.className = 'text-sm text-gray-700';
+            body.appendChild(msgEl);
+            const footer = document.createElement('div');
+            footer.className = 'px-6 py-4 border-t flex justify-end';
+            const okBtn = document.createElement('button');
+            okBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700';
+            okBtn.textContent = 'OK';
+            okBtn.addEventListener('click', () => overlay.remove());
+            footer.appendChild(okBtn);
+            container.appendChild(header);
+            container.appendChild(body);
+            container.appendChild(footer);
+            overlay.appendChild(container);
+            document.body.appendChild(overlay);
         }
+        const titleEl = document.getElementById('inlineNotificationTitleJS');
+        const msgEl = document.getElementById('inlineNotificationMessageJS');
+        titleEl.textContent = type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info');
+        msgEl.textContent = message;
     }
 
     cleanup() {

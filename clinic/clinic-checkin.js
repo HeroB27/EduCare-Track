@@ -835,17 +835,19 @@ class ClinicCheckin {
     }
 
     async quickCheckout(studentId) {
-        if (confirm('Are you sure you want to check out this student?')) {
-            try {
-                await this.recordClinicVisit(studentId, 'Quick Checkout', 'Checked out from current patients list', false);
-                await this.loadCurrentPatients();
-                await this.loadRecentVisits();
-                await this.loadStatistics();
-                this.showNotification('Student checked out successfully', 'success');
-            } catch (error) {
-                console.error('Error during quick checkout:', error);
-                this.showNotification('Failed to check out student', 'error');
-            }
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('Are you sure you want to check out this student?', 'Confirm Checkout', 'Checkout', 'Cancel')
+            : true;
+        if (!ok) return;
+        try {
+            await this.recordClinicVisit(studentId, 'Quick Checkout', 'Checked out from current patients list', false);
+            await this.loadCurrentPatients();
+            await this.loadRecentVisits();
+            await this.loadStatistics();
+            this.showNotification('Student checked out successfully', 'success');
+        } catch (error) {
+            console.error('Error during quick checkout:', error);
+            this.showNotification('Failed to check out student', 'error');
         }
     }
 

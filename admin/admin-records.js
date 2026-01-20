@@ -209,8 +209,11 @@ class AdminRecords {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
             }
@@ -347,7 +350,9 @@ class AdminRecords {
         const endDateInput = document.getElementById('endDate').value;
 
         if (!startDateInput || !endDateInput) {
-            alert('Please select both start and end dates');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Please select both start and end dates' });
+            }
             return;
         }
 
@@ -356,7 +361,9 @@ class AdminRecords {
         endDate.setHours(23, 59, 59, 999);
 
         if (startDate > endDate) {
-            alert('Start date cannot be after end date');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Start date cannot be after end date' });
+            }
             return;
         }
 

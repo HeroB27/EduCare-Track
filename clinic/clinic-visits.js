@@ -231,20 +231,58 @@ class ClinicVisits {
 
     viewVisitDetails(visitId) {
         const visit = this.visits.find(v => v.id === visitId);
-        if (visit) {
-            const time = new Date(visit.timestamp).toLocaleTimeString('en-PH', {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-            const date = new Date(visit.timestamp).toLocaleDateString('en-PH', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-
-            alert(`Visit Details:\n\nStudent: ${visit.studentName}\nDate: ${date}\nTime: ${time}\nType: ${visit.checkIn ? 'Check-in' : 'Check-out'}\nReason: ${visit.reason}\nNotes: ${visit.notes || 'None'}\nStaff: ${visit.staffName}`);
+        if (!visit) return;
+        const time = new Date(visit.timestamp).toLocaleTimeString('en-PH', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        const date = new Date(visit.timestamp).toLocaleDateString('en-PH', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        let overlay = document.getElementById('clinicVisitDetailsModal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'clinicVisitDetailsModal';
+            overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4';
+            const container = document.createElement('div');
+            container.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full';
+            const header = document.createElement('div');
+            header.className = 'px-6 py-4 border-b';
+            const titleEl = document.createElement('h3');
+            titleEl.className = 'text-lg font-semibold text-gray-800';
+            titleEl.textContent = 'Visit Details';
+            header.appendChild(titleEl);
+            const body = document.createElement('div');
+            body.id = 'clinicVisitDetailsBody';
+            body.className = 'px-6 py-4 text-sm text-gray-700';
+            const footer = document.createElement('div');
+            footer.className = 'px-6 py-4 border-t flex justify-end';
+            const okBtn = document.createElement('button');
+            okBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700';
+            okBtn.textContent = 'Close';
+            okBtn.onclick = () => overlay.classList.add('hidden');
+            footer.appendChild(okBtn);
+            container.appendChild(header);
+            container.appendChild(body);
+            container.appendChild(footer);
+            overlay.appendChild(container);
+            document.body.appendChild(overlay);
         }
+        const body = document.getElementById('clinicVisitDetailsBody');
+        body.innerHTML = `
+            <div class="space-y-2">
+                <div><span class="font-semibold">Student:</span> ${visit.studentName}</div>
+                <div><span class="font-semibold">Date:</span> ${date}</div>
+                <div><span class="font-semibold">Time:</span> ${time}</div>
+                <div><span class="font-semibold">Type:</span> ${visit.checkIn ? 'Check-in' : 'Check-out'}</div>
+                <div><span class="font-semibold">Reason:</span> ${visit.reason}</div>
+                <div><span class="font-semibold">Notes:</span> ${visit.notes || 'None'}</div>
+                <div><span class="font-semibold">Staff:</span> ${visit.staffName || 'N/A'}</div>
+            </div>`;
+        overlay.classList.remove('hidden');
     }
 
     async editVisit(visitId) {
@@ -254,28 +292,84 @@ class ClinicVisits {
                 this.showError('Visit not found');
                 return;
             }
-
-            const newReason = prompt('Update reason', visit.reason || '');
-            if (newReason === null) return;
-
-            const newNotes = prompt('Update notes', visit.notes || '');
-            if (newNotes === null) return;
-
-            await firebase.firestore().collection('clinicVisits').doc(visitId).update({
-                reason: newReason,
-                notes: newNotes,
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                updatedBy: this.currentUser.id,
-                updatedByName: this.currentUser.name
-            });
-
-            visit.reason = newReason;
-            visit.notes = newNotes;
-            this.applyFilters();
-            this.showNotification('Clinic visit updated', 'success');
+            let overlay = document.getElementById('clinicVisitEditModal');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'clinicVisitEditModal';
+                overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4';
+                const container = document.createElement('div');
+                container.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full';
+                const header = document.createElement('div');
+                header.className = 'px-6 py-4 border-b';
+                const titleEl = document.createElement('h3');
+                titleEl.className = 'text-lg font-semibold text-gray-800';
+                titleEl.textContent = 'Edit Visit';
+                header.appendChild(titleEl);
+                const body = document.createElement('div');
+                body.id = 'clinicVisitEditBody';
+                body.className = 'px-6 py-4';
+                const footer = document.createElement('div');
+                footer.className = 'px-6 py-4 border-t flex justify-end space-x-2';
+                const saveBtn = document.createElement('button');
+                saveBtn.id = 'clinicVisitEditSave';
+                saveBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700';
+                saveBtn.textContent = 'Save';
+                const cancelBtn = document.createElement('button');
+                cancelBtn.id = 'clinicVisitEditCancel';
+                cancelBtn.className = 'px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200';
+                cancelBtn.textContent = 'Cancel';
+                footer.appendChild(saveBtn);
+                footer.appendChild(cancelBtn);
+                container.appendChild(header);
+                container.appendChild(body);
+                container.appendChild(footer);
+                overlay.appendChild(container);
+                document.body.appendChild(overlay);
+            }
+            const body = document.getElementById('clinicVisitEditBody');
+            body.innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                        <input id="clinicVisitEditReason" type="text" class="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" value="${visit.reason || ''}">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                        <textarea id="clinicVisitEditNotes" class="w-full border rounded px-3 py-2 h-24 focus:outline-none focus:ring-2 focus:ring-blue-500">${visit.notes || ''}</textarea>
+                    </div>
+                </div>`;
+            const saveBtnEl = document.getElementById('clinicVisitEditSave');
+            const cancelBtnEl = document.getElementById('clinicVisitEditCancel');
+            cancelBtnEl.onclick = () => overlay.classList.add('hidden');
+            saveBtnEl.onclick = async () => {
+                const newReason = document.getElementById('clinicVisitEditReason').value.trim();
+                const newNotes = document.getElementById('clinicVisitEditNotes').value.trim();
+                if (!newReason) {
+                    this.showError('Reason is required');
+                    return;
+                }
+                try {
+                    await firebase.firestore().collection('clinicVisits').doc(visitId).update({
+                        reason: newReason,
+                        notes: newNotes,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedBy: this.currentUser.id,
+                        updatedByName: this.currentUser.name
+                    });
+                    visit.reason = newReason;
+                    visit.notes = newNotes;
+                    this.applyFilters();
+                    this.showNotification('Clinic visit updated', 'success');
+                    overlay.classList.add('hidden');
+                } catch (error) {
+                    console.error('Error updating clinic visit:', error);
+                    this.showError('Failed to update clinic visit');
+                }
+            };
+            overlay.classList.remove('hidden');
         } catch (error) {
-            console.error('Error updating clinic visit:', error);
-            this.showError('Failed to update clinic visit');
+            console.error('Error initializing edit modal:', error);
+            this.showError('Failed to open edit modal');
         }
     }
 

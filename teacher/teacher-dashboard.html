@@ -319,6 +319,39 @@
         </div>
     </div>
 
+    <!-- Notifications Modal -->
+    <div id="notificationsModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-xl w-full">
+            <div class="px-6 py-4 border-b flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-800">Notifications</h3>
+                <button onclick="window.teacherDashboard.hideNotifications()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="notificationsList" class="max-h-96 overflow-y-auto">
+            </div>
+            <div class="px-6 py-4 border-t flex justify-end space-x-2">
+                <button onclick="window.teacherDashboard.markAllNotificationsRead()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Mark all as read</button>
+                <button onclick="window.teacherDashboard.hideNotifications()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inline Notification Modal -->
+    <div id="inlineNotificationModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="px-6 py-4 border-b">
+                <h3 id="inlineNotificationTitle" class="text-lg font-semibold text-gray-800">Info</h3>
+            </div>
+            <div class="px-6 py-4">
+                <p id="inlineNotificationMessage" class="text-sm text-gray-700"></p>
+            </div>
+            <div class="px-6 py-4 border-t flex justify-end">
+                <button onclick="document.getElementById('inlineNotificationModal').classList.add('hidden')" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">OK</button>
+            </div>
+        </div>
+    </div>
+
     
 
     <!-- Loading Spinner -->
@@ -612,9 +645,12 @@
                     this.toggleSidebar();
                 });
 
-                // Logout
-                document.getElementById('logoutBtn').addEventListener('click', () => {
-                    if (confirm('Are you sure you want to logout?')) {
+                // Logout via modal
+                document.getElementById('logoutBtn').addEventListener('click', async () => {
+                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                        : true;
+                    if (ok) {
                         localStorage.removeItem('educareTrack_user');
                         window.location.href = '../index.html';
                     }
@@ -622,7 +658,7 @@
 
                 // Notifications
                 document.getElementById('notificationsBtn').addEventListener('click', () => {
-                    window.location.href = 'teacher-notifications.html';
+                    this.showNotifications();
                 });
             }
 
@@ -748,9 +784,12 @@
             }
 
             showNotification(message, type = 'info') {
-                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-                    window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : 'Info', message, type });
-                }
+                const modal = document.getElementById('inlineNotificationModal');
+                const titleEl = document.getElementById('inlineNotificationTitle');
+                const msgEl = document.getElementById('inlineNotificationMessage');
+                titleEl.textContent = type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info');
+                msgEl.textContent = message;
+                modal.classList.remove('hidden');
             }
         }
 

@@ -409,7 +409,10 @@ class EnrollmentSystem {
             for (const field of requiredFields) {
                 const value = document.getElementById(field).value.trim();
                 if (!value) {
-                    alert(`Please fill in ${field.replace('parent', '').replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+                    if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                        const label = field.replace('parent', '').replace(/([A-Z])/g, ' $1').toLowerCase();
+                        window.EducareTrack.showNormalNotification({ title: 'Missing Information', message: `Please fill in ${label}` });
+                    }
                     return false;
                 }
             }
@@ -419,7 +422,10 @@ class EnrollmentSystem {
             for (const field of requiredFields) {
                 const value = document.getElementById(field).value.trim();
                 if (!value) {
-                    alert(`Please fill in ${field.replace('student', '').replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+                    if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                        const label = field.replace('student', '').replace(/([A-Z])/g, ' $1').toLowerCase();
+                        window.EducareTrack.showNormalNotification({ title: 'Missing Information', message: `Please fill in ${label}` });
+                    }
                     return false;
                 }
             }
@@ -567,15 +573,18 @@ class EnrollmentSystem {
                 null // No photo file
             );
             
-            // Show success message
-            alert('Student enrolled successfully!');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Success', message: 'Student enrolled successfully!' });
+            }
             
             // Move to ID card step
             this.nextStep();
             
         } catch (error) {
             console.error('Enrollment error:', error);
-            alert('Error enrolling student: ' + error.message);
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Error enrolling student: ' + error.message });
+            }
             
             // Reset button state
             const enrollBtn = document.getElementById('enrollBtn');
@@ -589,7 +598,9 @@ class EnrollmentSystem {
         const idCardBack = document.querySelectorAll('.bg-white.border-2.border-gray-300.rounded-lg.p-6.w-80')[1];
 
         if (!idCardFront || !idCardBack) {
-            alert('ID card elements not found');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Error', message: 'ID card elements not found' });
+            }
             return;
         }
 
@@ -632,10 +643,20 @@ class EnrollmentSystem {
                 });
             }).catch(error => {
                 console.error('Print error:', error);
-                alert('Printing failed. Please try taking a screenshot instead.');
+                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                    window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Printing failed. Please try taking a screenshot instead.' });
+                }
             });
         } else {
-            alert('Print feature not available. Please take a screenshot of the ID card.');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Info', message: 'Print feature not available. Please take a screenshot of the ID card.' });
+            }
+        }
+    }
+
+    showNotification(message, type = 'info') {
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : type === 'success' ? 'Success' : 'Info', message, type });
         }
     }
 

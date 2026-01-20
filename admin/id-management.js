@@ -105,8 +105,11 @@ class IDManagement {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
             }
@@ -680,9 +683,10 @@ class IDManagement {
 
     async reissueID() {
         try {
-            if (!confirm('Are you sure you want to reissue this ID? This will generate a new student ID.')) {
-                return;
-            }
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to reissue this ID? This will generate a new student ID.', 'Reissue ID', 'Reissue', 'Cancel')
+                : true;
+            if (!ok) return;
 
             this.showLoading();
 
@@ -997,11 +1001,17 @@ class IDManagement {
     }
 
     cancelEdit() {
-        if (confirm('Are you sure you want to cancel? Any unsaved changes will be lost.')) {
-            document.getElementById('studentInfoForm').classList.add('hidden');
-            document.getElementById('searchResults').classList.remove('hidden');
-            this.clearForm();
-        }
+        window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? window.EducareTrack.confirmAction('Are you sure you want to cancel? Any unsaved changes will be lost.', 'Cancel Edit', 'Discard', 'Back').then(ok => { if (ok) {
+                document.getElementById('studentInfoForm').classList.add('hidden');
+                document.getElementById('searchResults').classList.remove('hidden');
+                this.clearForm();
+            } })
+            : (function(){
+                document.getElementById('studentInfoForm').classList.add('hidden');
+                document.getElementById('searchResults').classList.remove('hidden');
+                this.clearForm();
+            }).call(this);
     }
 
     clearForm() {
@@ -1029,7 +1039,9 @@ class IDManagement {
     }
 
     showError(message) {
-        alert('Error: ' + message);
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Error', message: message });
+        }
     }
 
     closeSuccessModal() {

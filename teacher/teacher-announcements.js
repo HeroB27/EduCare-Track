@@ -444,8 +444,11 @@ class TeacherAnnouncements {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
             }

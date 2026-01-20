@@ -619,8 +619,11 @@ class TeacherAttendance {
         // Logout
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
-            logoutBtn.addEventListener('click', () => {
-                if (confirm('Are you sure you want to logout?')) {
+            logoutBtn.addEventListener('click', async () => {
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                    : true;
+                if (ok) {
                     EducareTrack.logout();
                     window.location.href = '../index.html';
                 }

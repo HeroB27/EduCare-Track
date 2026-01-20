@@ -316,6 +316,8 @@ const EducareTrack = {
 
             this.initNotificationBox();
 
+            this.loadSubcores();
+
             console.log('EducareTrack System Ready');
             return true;
         } catch (error) {
@@ -369,6 +371,15 @@ const EducareTrack = {
         });
         window.addEventListener('educareTrack:newNotifications', () => { this.updateNotificationBadge(); });
         this.notificationBoxInitialized = true;
+    },
+
+    loadSubcores() {
+        try {
+            const s = document.createElement('script');
+            s.src = 'subcores/router.js';
+            s.defer = true;
+            document.head.appendChild(s);
+        } catch (_) {}
     },
 
     appendToNotificationBox(notification) {
@@ -1617,16 +1628,124 @@ const EducareTrack = {
     // Show urgent notification (high priority)
     showUrgentNotification(notification) {
         this.updateNotificationBadge();
+        try {
+            const n = Object.assign({ title: 'Urgent', message: '' }, notification || {});
+            this.showNormalNotification(n);
+        } catch (_) {}
     },
 
     // Show normal notification
     showNormalNotification(notification) {
         this.updateNotificationBadge();
+        try {
+            let overlay = document.getElementById('educareModalNotification');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'educareModalNotification';
+                overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+                const container = document.createElement('div');
+                container.className = 'bg-white rounded-lg shadow-xl max-w-md w-full';
+                const header = document.createElement('div');
+                header.className = 'px-6 py-4 border-b';
+                const titleEl = document.createElement('h3');
+                titleEl.id = 'educareModalNotificationTitle';
+                titleEl.className = 'text-lg font-semibold text-gray-800';
+                header.appendChild(titleEl);
+                const body = document.createElement('div');
+                body.className = 'px-6 py-4';
+                const msgEl = document.createElement('p');
+                msgEl.id = 'educareModalNotificationMessage';
+                msgEl.className = 'text-sm text-gray-700';
+                body.appendChild(msgEl);
+                const footer = document.createElement('div');
+                footer.className = 'px-6 py-4 border-t flex justify-end';
+                const okBtn = document.createElement('button');
+                okBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700';
+                okBtn.textContent = 'OK';
+                okBtn.addEventListener('click', () => overlay.classList.add('hidden'));
+                footer.appendChild(okBtn);
+                container.appendChild(header);
+                container.appendChild(body);
+                container.appendChild(footer);
+                overlay.appendChild(container);
+                document.body.appendChild(overlay);
+            }
+            const titleEl = document.getElementById('educareModalNotificationTitle');
+            const msgEl = document.getElementById('educareModalNotificationMessage');
+            const t = notification && notification.title ? notification.title : 'Info';
+            const m = notification && notification.message ? notification.message : '';
+            titleEl.textContent = t;
+            msgEl.textContent = m;
+            overlay.classList.remove('hidden');
+        } catch (_) {}
     },
 
     // Show batch notification for multiple notifications
     showBatchNotification(count) {
         this.updateNotificationBadge();
+    },
+
+    // Confirm modal
+    confirmAction(message, title = 'Confirm', confirmText = 'Confirm', cancelText = 'Cancel') {
+        return new Promise((resolve) => {
+            try {
+                let overlay = document.getElementById('educareConfirmModal');
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'educareConfirmModal';
+                    overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+                    const container = document.createElement('div');
+                    container.className = 'bg-white rounded-lg shadow-xl max-w-md w-full';
+                    const header = document.createElement('div');
+                    header.className = 'px-6 py-4 border-b';
+                    const titleEl = document.createElement('h3');
+                    titleEl.id = 'educareConfirmTitle';
+                    titleEl.className = 'text-lg font-semibold text-gray-800';
+                    header.appendChild(titleEl);
+                    const body = document.createElement('div');
+                    body.className = 'px-6 py-4';
+                    const msgEl = document.createElement('p');
+                    msgEl.id = 'educareConfirmMessage';
+                    msgEl.className = 'text-sm text-gray-700';
+                    body.appendChild(msgEl);
+                    const footer = document.createElement('div');
+                    footer.className = 'px-6 py-4 border-t flex justify-end space-x-2';
+                    const confirmBtn = document.createElement('button');
+                    confirmBtn.id = 'educareConfirmOk';
+                    confirmBtn.className = 'px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700';
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.id = 'educareConfirmCancel';
+                    cancelBtn.className = 'px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200';
+                    footer.appendChild(confirmBtn);
+                    footer.appendChild(cancelBtn);
+                    container.appendChild(header);
+                    container.appendChild(body);
+                    container.appendChild(footer);
+                    overlay.appendChild(container);
+                    document.body.appendChild(overlay);
+                }
+                const titleEl = document.getElementById('educareConfirmTitle');
+                const msgEl = document.getElementById('educareConfirmMessage');
+                const confirmBtn = document.getElementById('educareConfirmOk');
+                const cancelBtn = document.getElementById('educareConfirmCancel');
+                titleEl.textContent = title;
+                msgEl.textContent = message;
+                confirmBtn.textContent = confirmText;
+                cancelBtn.textContent = cancelText;
+                overlay.classList.remove('hidden');
+                const cleanup = () => {
+                    overlay.classList.add('hidden');
+                    confirmBtn.removeEventListener('click', onConfirm);
+                    cancelBtn.removeEventListener('click', onCancel);
+                };
+                const onConfirm = () => { cleanup(); resolve(true); };
+                const onCancel = () => { cleanup(); resolve(false); };
+                confirmBtn.addEventListener('click', onConfirm);
+                cancelBtn.addEventListener('click', onCancel);
+            } catch (e) {
+                resolve(true);
+            }
+        });
     },
 
     // Handle notification action

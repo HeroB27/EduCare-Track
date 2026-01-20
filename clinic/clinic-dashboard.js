@@ -19,7 +19,9 @@ class ClinicDashboard {
             this.currentUser = JSON.parse(savedUser);
             
             if (this.currentUser.role !== 'clinic') {
-                alert('Access denied. Clinic role required.');
+                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                    window.EducareTrack.showNormalNotification({ title: 'Access Denied', message: 'Clinic role required.' });
+                }
                 window.location.href = '../index.html';
                 return;
             }
@@ -363,25 +365,22 @@ class ClinicDashboard {
     }
 
     async quickCheckout(studentId) {
-        if (confirm('Are you sure you want to check out this student?')) {
-            try {
-                // Use the core EducareTrack system if available
-                if (window.EducareTrack) {
-                    await window.EducareTrack.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
-                } else {
-                    // Fallback direct implementation
-                    await this.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
-                }
-                
-                // Reload dashboard data
-                await this.loadDashboardData();
-                await this.loadPage(this.currentPage);
-                
-                this.showNotification('Student checked out successfully', 'success');
-            } catch (error) {
-                console.error('Error during quick checkout:', error);
-                this.showNotification('Failed to check out student', 'error');
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('Are you sure you want to check out this student?', 'Confirm Checkout', 'Checkout', 'Cancel')
+            : true;
+        if (!ok) return;
+        try {
+            if (window.EducareTrack) {
+                await window.EducareTrack.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
+            } else {
+                await this.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
             }
+            await this.loadDashboardData();
+            await this.loadPage(this.currentPage);
+            this.showNotification('Student checked out successfully', 'success');
+        } catch (error) {
+            console.error('Error during quick checkout:', error);
+            this.showNotification('Failed to check out student', 'error');
         }
     }
 
@@ -391,23 +390,21 @@ class ClinicDashboard {
             return;
         }
 
-        if (confirm(`Are you sure you want to check out all ${this.currentPatients.length} patients?`)) {
-            try {
-                const checkoutPromises = this.currentPatients.map(patient => 
-                    this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false)
-                );
-
-                await Promise.all(checkoutPromises);
-                
-                // Reload dashboard data
-                await this.loadDashboardData();
-                await this.loadPage(this.currentPage);
-                
-                this.showNotification(`All ${this.currentPatients.length} patients checked out successfully`, 'success');
-            } catch (error) {
-                console.error('Error during batch checkout:', error);
-                this.showNotification('Failed to check out all patients', 'error');
-            }
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction(`Are you sure you want to check out all ${this.currentPatients.length} patients?`, 'Confirm Checkout All', 'Checkout All', 'Cancel')
+            : true;
+        if (!ok) return;
+        try {
+            const checkoutPromises = this.currentPatients.map(patient => 
+                this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false)
+            );
+            await Promise.all(checkoutPromises);
+            await this.loadDashboardData();
+            await this.loadPage(this.currentPage);
+            this.showNotification(`All ${this.currentPatients.length} patients checked out successfully`, 'success');
+        } catch (error) {
+            console.error('Error during batch checkout:', error);
+            this.showNotification('Failed to check out all patients', 'error');
         }
     }
 
@@ -471,8 +468,11 @@ class ClinicDashboard {
             });
         });
 
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
             }

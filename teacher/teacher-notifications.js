@@ -139,7 +139,7 @@ class TeacherNotifications {
             const typeIcon = this.getTypeIcon(n.type, n.isUrgent);
             const bg = unread ? 'bg-blue-50' : 'bg-white';
             return `
-                <div class="${bg} p-4 flex items-start justify-between">
+                <div class="${bg} p-4 flex items-start justify-between notification-item" data-id="${n.id}">
                     <div class="flex items-start space-x-3">
                         <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
                             <i class="${typeIcon} text-gray-700"></i>
@@ -173,6 +173,19 @@ class TeacherNotifications {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
                 try { await EducareTrack.deleteNotification(id); await this.loadNotifications(); } catch (_) {}
+            });
+        });
+        document.querySelectorAll('.notification-item').forEach(item => {
+            item.addEventListener('click', async (e) => {
+                const id = item.getAttribute('data-id');
+                const n = this.notifications.find(x => x.id === id);
+                if (!n) return;
+                try {
+                    await EducareTrack.markNotificationAsRead(id);
+                } catch (_) {}
+                if (window.EducareTrack && typeof window.EducareTrack.handleNotificationAction === 'function') {
+                    window.EducareTrack.handleNotificationAction(n);
+                }
             });
         });
     }
@@ -236,8 +249,11 @@ class TeacherNotifications {
 
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
-            logoutBtn.addEventListener('click', () => {
-                if (confirm('Are you sure you want to logout?')) {
+            logoutBtn.addEventListener('click', async () => {
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                    : true;
+                if (ok) {
                     EducareTrack.logout();
                     window.location.href = '../index.html';
                 }
@@ -247,6 +263,22 @@ class TeacherNotifications {
         window.addEventListener('educareTrack:newNotifications', async () => {
             await this.loadNotificationCount();
             await this.loadNotifications();
+        });
+
+        window.addEventListener('educareTrack:navigateToAnnouncements', () => {
+            window.location.href = 'teacher-announcements.html';
+        });
+        window.addEventListener('educareTrack:navigateToStudent', (e) => {
+            const studentId = e.detail && e.detail.studentId;
+            if (studentId) {
+                window.location.href = `teacher-students.html?studentId=${studentId}`;
+            }
+        });
+        window.addEventListener('educareTrack:navigateToClinic', (e) => {
+            const studentId = e.detail && e.detail.studentId;
+            if (studentId) {
+                window.location.href = `clinic-visits.html?studentId=${studentId}`;
+            }
         });
     }
 

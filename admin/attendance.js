@@ -551,9 +551,10 @@ class AttendanceManager {
     }
 
     async deleteRecord(recordId) {
-        if (!confirm('Are you sure you want to delete this attendance record?')) {
-            return;
-        }
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('Are you sure you want to delete this attendance record?', 'Delete Record', 'Delete', 'Cancel')
+            : true;
+        if (!ok) return;
 
         try {
             this.showLoading();
@@ -575,8 +576,11 @@ class AttendanceManager {
         });
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            if (confirm('Are you sure you want to logout?')) {
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                : true;
+            if (ok) {
                 localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
             }

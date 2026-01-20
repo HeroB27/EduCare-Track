@@ -521,7 +521,10 @@ class StudentManagement {
                 'Are you sure you want to activate this student?' : 
                 'Are you sure you want to deactivate this student?';
             
-            if (confirm(confirmMessage)) {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction(confirmMessage, 'Confirm Status Change', newStatus ? 'Activate' : 'Deactivate', 'Cancel')
+                : true;
+            if (ok) {
                 try {
                     this.showLoading();
                     await window.EducareTrack.db.collection('students').doc(studentId).update({

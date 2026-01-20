@@ -1128,12 +1128,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     initButton.style.cursor = 'pointer';
     
     initButton.addEventListener('click', async function() {
-        if (confirm('This will initialize dummy data. Continue?')) {
-            const success = await DataInitializer.initializeDummyData();
-            if (success) {
-                alert('✅ Dummy data initialized successfully!');
-            } else {
-                alert('❌ Failed to initialize dummy data');
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('This will initialize dummy data. Continue?', 'Initialize Data', 'Initialize', 'Cancel')
+            : true;
+        if (!ok) return;
+        const success = await DataInitializer.initializeDummyData();
+        if (success) {
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Success', message: 'Dummy data initialized successfully!' });
+            }
+        } else {
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Failed to initialize dummy data' });
             }
         }
     });

@@ -213,7 +213,9 @@ function validateParentForm() {
     const phone = document.getElementById('phoneNumber').value;
     const phoneRegex = /^09[0-9]{9}$/;
     if (!phoneRegex.test(phone)) {
-        alert('Please enter a valid Philippine phone number (09XXXXXXXXX).');
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Invalid Phone', message: 'Please enter a valid Philippine phone number (09XXXXXXXXX).' });
+        }
         return false;
     }
     
@@ -234,12 +236,16 @@ function validateStudentForm() {
     // Validate LRN format (12 digits)
     const lrnRegex = /^[0-9]{12}$/;
     if (!lrnRegex.test(lrn)) {
-        alert('Please enter a valid 12-digit LRN.');
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Invalid LRN', message: 'Please enter a valid 12-digit LRN.' });
+        }
         return false;
     }
     
     if ((gradeLevel === '11' || gradeLevel === '12') && !strand) {
-        alert('Please select a strand for Senior High School students.');
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Strand Required', message: 'Please select a strand for Senior High School students.' });
+        }
         return false;
     }
     
@@ -579,12 +585,16 @@ function handleImageUpload(event) {
     const file = event.target.files[0];
     if (file) {
         if (file.size > 2 * 1024 * 1024) {
-            alert('File size must be less than 2MB');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'File Too Large', message: 'File size must be less than 2MB' });
+            }
             return;
         }
         
         if (!file.type.startsWith('image/')) {
-            alert('Please select an image file');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Invalid File', message: 'Please select an image file' });
+            }
             return;
         }
         
@@ -595,7 +605,9 @@ function handleImageUpload(event) {
             document.getElementById('uploadArea').classList.add('hidden');
         };
         reader.onerror = function() {
-            alert('Error reading file. Please try another image.');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'File Error', message: 'Error reading file. Please try another image.' });
+            }
         };
         reader.readAsDataURL(file);
     }
@@ -625,11 +637,15 @@ function openWebcam() {
         })
         .catch(error => {
             console.error('Error accessing webcam:', error);
-            alert('Cannot access webcam. Please check permissions or try uploading a photo instead.');
+            if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                window.EducareTrack.showNormalNotification({ title: 'Webcam Error', message: 'Cannot access webcam. Please check permissions or try uploading a photo instead.' });
+            }
             closeWebcam();
         });
     } else {
-        alert('Webcam not supported in this browser. Please upload a photo instead.');
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Webcam Unsupported', message: 'Webcam not supported in this browser. Please upload a photo instead.' });
+        }
         closeWebcam();
     }
 }
@@ -718,7 +734,9 @@ async function saveEnrollment() {
         
     } catch (error) {
         console.error('Error saving enrollment:', error);
-        alert('Error saving enrollment: ' + error.message);
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Error', message: 'Error saving enrollment: ' + error.message });
+        }
         
         // Restore button state
         const saveBtn = document.getElementById('saveEnrollment');
