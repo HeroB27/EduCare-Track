@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EducareTrack - Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
     <style>
         .login-container {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -148,9 +144,9 @@
                 </button>
             </form>
             
-            <!-- Available Users from Firebase -->
+            <!-- Available Users -->
             <div class="mt-8 pt-6 border-t border-gray-200">
-                <h3 class="text-sm font-medium text-gray-700 mb-3">Available Users (From Firebase):</h3>
+                <h3 class="text-sm font-medium text-gray-700 mb-3">Available Users:</h3>
                 <div id="availableUsers" class="space-y-2 text-xs text-gray-600">
                     <div class="text-center py-4">
                         <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
@@ -170,10 +166,8 @@
         </div>
     </div>
 
-    <!-- Firebase SDK (v8) must load before core.js -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <!-- Include Core JS -->
     <script src="core.js"></script>
 
@@ -365,7 +359,7 @@
             async function loadAvailableUsers() {
                 try {
                     const usersSnapshot = await EducareTrack.db.collection('users')
-                        .where('isActive', '==', true)
+                        .where('is_active', '==', true)
                         .get();
                     
                     if (usersSnapshot.empty) {

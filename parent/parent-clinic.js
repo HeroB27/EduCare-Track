@@ -501,8 +501,22 @@ class ParentClinic {
 
     // Real-time listeners
     initRealTimeListeners() {
-        this.setupClinicVisitsListener();
-        this.setupNotificationsListener();
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            if (this.pollTimer) {
+                clearInterval(this.pollTimer);
+            }
+            this.pollTimer = setInterval(async () => {
+                try {
+                    await this.applyFilters();
+                    await this.loadNotificationCount();
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 15000);
+        } else {
+            this.setupClinicVisitsListener();
+            this.setupNotificationsListener();
+        }
     }
 
     setupClinicVisitsListener() {
@@ -513,42 +527,46 @@ class ParentClinic {
         
         if (childIds.length === 0) return;
 
-        this.clinicVisitsListener = firebase.firestore()
-            .collection('clinicVisits')
-            .where('studentId', 'in', childIds)
-            .orderBy('timestamp', 'desc')
-            .limit(10)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        const visit = { id: change.doc.id, ...change.doc.data() };
-                        this.handleNewClinicVisit(visit);
-                    }
+        if (!window.USE_SUPABASE || !window.supabaseClient) {
+            this.clinicVisitsListener = firebase.firestore()
+                .collection('clinicVisits')
+                .where('studentId', 'in', childIds)
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            const visit = { id: change.doc.id, ...change.doc.data() };
+                            this.handleNewClinicVisit(visit);
+                        }
+                    });
+                }, error => {
+                    console.error('Clinic visits listener error:', error);
                 });
-            }, error => {
-                console.error('Clinic visits listener error:', error);
-            });
+        }
     }
 
     setupNotificationsListener() {
         if (!this.currentUser) return;
 
-        this.notificationsListener = firebase.firestore()
-            .collection('notifications')
-            .where('targetUsers', 'array-contains', this.currentUser.id)
-            .where('type', '==', 'clinic')
-            .orderBy('createdAt', 'desc')
-            .limit(5)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        const notification = { id: change.doc.id, ...change.doc.data() };
-                        this.handleNewNotification(notification);
-                    }
+        if (!window.USE_SUPABASE || !window.supabaseClient) {
+            this.notificationsListener = firebase.firestore()
+                .collection('notifications')
+                .where('targetUsers', 'array-contains', this.currentUser.id)
+                .where('type', '==', 'clinic')
+                .orderBy('createdAt', 'desc')
+                .limit(5)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            const notification = { id: change.doc.id, ...change.doc.data() };
+                            this.handleNewNotification(notification);
+                        }
+                    });
+                }, error => {
+                    console.error('Notifications listener error:', error);
                 });
-            }, error => {
-                console.error('Notifications listener error:', error);
-            });
+        }
     }
 
     handleNewClinicVisit(visit) {

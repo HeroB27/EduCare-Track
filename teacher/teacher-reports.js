@@ -116,15 +116,27 @@ class TeacherReports {
 
     async getAttendanceReport(startDate, endDate, limit = 100) {
         try {
-            let query = EducareTrack.db.collection('attendance')
-                .where('classId', '==', this.currentUser.classId)
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .limit(limit);
-
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('attendance')
+                    .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
+                    .eq('classId', this.currentUser.classId)
+                    .gte('timestamp', startDate)
+                    .lte('timestamp', endDate)
+                    .order('timestamp', { ascending: false })
+                    .limit(limit);
+                if (error || !data) return [];
+                return data;
+            } else {
+                let query = EducareTrack.db.collection('attendance')
+                    .where('classId', '==', this.currentUser.classId)
+                    .where('timestamp', '>=', startDate)
+                    .where('timestamp', '<=', endDate)
+                    .orderBy('timestamp', 'desc')
+                    .limit(limit);
+                const snapshot = await query.get();
+                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
         } catch (error) {
             console.error('Error getting attendance report:', error);
             return [];

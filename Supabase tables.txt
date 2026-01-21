@@ -1,0 +1,273 @@
+
+
+CREATE TABLE public.attendance (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  studentId text,
+  classId text,
+  entryType text,
+  timestamp timestamp with time zone,
+  time text,
+  session text,
+  status text,
+  remarks text,
+  timeIn text,
+  timeOut text,
+  method text,
+  recordedBy text,
+  recordedByName text,
+  manualEntry boolean,
+  CONSTRAINT attendance_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.classes (
+  id text NOT NULL,
+  name text,
+  grade text,
+  level text,
+  subjects ARRAY,
+  strand text,
+  teacherId text,
+  isActive boolean DEFAULT true,
+  createdAt timestamp with time zone DEFAULT now(),
+  CONSTRAINT classes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.clinicPasses (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  studentId text,
+  classId text,
+  reason text,
+  status text,
+  requestTime timestamp with time zone,
+  verifiedBy text,
+  createdAt timestamp with time zone DEFAULT now(),
+  CONSTRAINT clinicPasses_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.clinicVisits (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  studentId text,
+  studentName text,
+  classId text,
+  reason text,
+  checkIn boolean,
+  timestamp timestamp with time zone,
+  notes text,
+  treatedBy text,
+  outcome text,
+  CONSTRAINT clinicVisits_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.excuseLetters (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  studentId text,
+  parentId text,
+  reason text,
+  type text,
+  dates jsonb,
+  status text,
+  submittedAt timestamp with time zone,
+  reviewedBy text,
+  reviewedAt timestamp with time zone,
+  feedback text,
+  CONSTRAINT excuseLetters_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.notifications (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  targetUsers ARRAY,
+  title text,
+  message text,
+  type text,
+  isActive boolean DEFAULT true,
+  createdAt timestamp with time zone DEFAULT now(),
+  readBy ARRAY,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.schoolCalendar (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  type text,
+  title text,
+  start timestamp with time zone,
+  end timestamp with time zone,
+  notes text,
+  createdAt timestamp with time zone DEFAULT now(),
+  createdBy text,
+  CONSTRAINT schoolCalendar_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.students (
+  id text NOT NULL,
+  lrn text,
+  firstName text,
+  lastName text,
+  gender text,
+  birthDate timestamp with time zone,
+  address text,
+  classId text,
+  parentId text,
+  strand text,
+  currentStatus text,
+  createdAt timestamp with time zone DEFAULT now(),
+  CONSTRAINT students_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.users (
+  id text NOT NULL,
+  email text,
+  name text,
+  role text,
+  phone text,
+  isActive boolean DEFAULT true,
+  createdAt timestamp with time zone DEFAULT now(),
+  children ARRAY,
+  classId text,
+  isHomeroom boolean,
+  assignedClasses ARRAY,
+  assignedSubjects ARRAY,
+  CONSTRAINT users_pkey PRIMARY KEY (id)
+);
+
+Better:
+
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.attendance (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  student_id text,
+  class_id text,
+  entry_type text,
+  timestamp timestamp with time zone,
+  time text,
+  session text,
+  status text,
+  remarks text,
+  time_in text,
+  time_out text,
+  method text,
+  recorded_by text,
+  recorded_by_name text,
+  manual_entry boolean,
+  CONSTRAINT attendance_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.classes (
+  id text NOT NULL,
+  name text,
+  grade text,
+  level text,
+  subjects ARRAY,
+  strand text,
+  teacher_id text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT classes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.clinicPasses (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  student_id text,
+  class_id text,
+  reason text,
+  status text,
+  request_time timestamp with time zone,
+  verified_by text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT clinicPasses_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.clinicVisits (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  student_id text,
+  student_name text,
+  class_id text,
+  reason text,
+  check_in boolean,
+  timestamp timestamp with time zone,
+  notes text,
+  treated_by text,
+  outcome text,
+  CONSTRAINT clinicVisits_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.excuseLetters (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  student_id text,
+  parent_id text,
+  reason text,
+  type text,
+  dates jsonb,
+  status text,
+  submitted_at timestamp with time zone,
+  reviewed_by text,
+  reviewed_at timestamp with time zone,
+  feedback text,
+  CONSTRAINT excuseLetters_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.notifications (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  targetUsers ARRAY,
+  title text,
+  message text,
+  type text,
+  is_active boolean DEFAULT true,
+  createdAt timestamp with time zone DEFAULT now(),
+  readBy ARRAY,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.qrCodes (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  student_id text,
+  qr_hash text NOT NULL UNIQUE,
+  qr_payload jsonb,
+  issued_at timestamp with time zone DEFAULT now(),
+  expires_at timestamp with time zone,
+  is_active boolean DEFAULT true,
+  reissued_from uuid,
+  reissued_at timestamp with time zone,
+  reason text,
+  created_by text,
+  verified_at timestamp with time zone,
+  CONSTRAINT qrCodes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.schoolCalendar (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  type text,
+  title text,
+  start timestamp with time zone,
+  end timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by text,
+  CONSTRAINT schoolCalendar_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.students (
+  id text NOT NULL,
+  lrn text,
+  first_name text,
+  last_name text,
+  gender text,
+  birth_date timestamp with time zone,
+  address text,
+  class_id text,
+  parent_id text,
+  strand text,
+  current_status text,
+  photo_url text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT students_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.users (
+  id text NOT NULL,
+  username text UNIQUE,
+  email text NOT NULL UNIQUE,
+  password text,
+  name text,
+  role text CHECK (role = ANY (ARRAY['admin'::text, 'teacher'::text, 'parent'::text, 'guard'::text, 'clinic'::text])),
+  phone text,
+  photo_url text,
+  is_active boolean DEFAULT true,
+  last_login timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  children ARRAY,
+  class_id text,
+  is_homeroom boolean,
+  assigned_classes ARRAY,
+  assigned_subjects ARRAY,
+  password_changed_at timestamp with time zone,
+  login_attempts integer DEFAULT 0,
+  locked_until timestamp with time zone,
+  CONSTRAINT users_pkey PRIMARY KEY (id)
+);

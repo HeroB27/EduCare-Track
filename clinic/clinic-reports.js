@@ -40,19 +40,33 @@ class ClinicReports {
 
     async loadVisits() {
         try {
-            const snapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .orderBy('timestamp', 'desc')
-                .get();
-
-            this.visits = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    timestamp: data.timestamp?.toDate() || new Date()
-                };
-            });
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .select('id,studentId,classId,checkIn,timestamp,reason,notes')
+                    .order('timestamp', { ascending: false });
+                if (error) {
+                    throw error;
+                }
+                this.visits = (data || []).map(v => ({
+                    id: v.id,
+                    ...v,
+                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
+                }));
+            } else {
+                const snapshot = await firebase.firestore()
+                    .collection('clinicVisits')
+                    .orderBy('timestamp', 'desc')
+                    .get();
+                this.visits = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        ...data,
+                        timestamp: data.timestamp?.toDate() || new Date()
+                    };
+                });
+            }
         } catch (error) {
             console.error('Error loading visits:', error);
             this.showError('Failed to load clinic visits');

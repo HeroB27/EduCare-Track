@@ -45,36 +45,66 @@ class ClinicDashboard {
             const tomorrow = new Date(today);
             tomorrow.setDate(tomorrow.getDate() + 1);
 
-            const [visitsSnapshot, patientsSnapshot, statsSnapshot] = await Promise.all([
-                firebase.firestore().collection('clinicVisits')
-                    .where('timestamp', '>=', today)
-                    .where('timestamp', '<', tomorrow)
-                    .orderBy('timestamp', 'desc')
-                    .limit(10)
-                    .get(),
-                
-                firebase.firestore().collection('students')
-                    .where('currentStatus', '==', 'in_clinic')
-                    .get(),
-                
-                this.getClinicStats()
-            ]);
-
-            this.recentVisits = visitsSnapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const [{ data: visits, error: vErr }, { data: patients, error: pErr }, statsSnapshot] = await Promise.all([
+                    window.supabaseClient.from('clinicVisits')
+                        .select('id,studentId,studentName,classId,checkIn,timestamp,reason,notes')
+                        .gte('timestamp', today.toISOString())
+                        .lt('timestamp', tomorrow.toISOString())
+                        .order('timestamp', { ascending: false })
+                        .limit(10),
+                    window.supabaseClient.from('students')
+                        .select('id,firstName,lastName,classId,currentStatus,parentId')
+                        .eq('currentStatus', 'in_clinic'),
+                    this.getClinicStats()
+                ]);
+                if (vErr) throw vErr;
+                if (pErr) throw pErr;
+                this.recentVisits = (visits || []).map(v => ({
+                    id: v.id,
+                    ...v,
+                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
+                }));
+                this.currentPatients = (patients || []).map(s => ({
+                    id: s.id,
+                    firstName: s.firstName,
+                    lastName: s.lastName,
+                    name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
+                    classId: s.classId,
+                    currentStatus: s.currentStatus,
+                    parentId: s.parentId,
+                    grade: s.grade || ''
+                }));
+                this.stats = statsSnapshot;
+            } else {
+                const [visitsSnapshot, patientsSnapshot, statsSnapshot] = await Promise.all([
+                    firebase.firestore().collection('clinicVisits')
+                        .where('timestamp', '>=', today)
+                        .where('timestamp', '<', tomorrow)
+                        .orderBy('timestamp', 'desc')
+                        .limit(10)
+                        .get(),
+                    
+                    firebase.firestore().collection('students')
+                        .where('currentStatus', '==', 'in_clinic')
+                        .get(),
+                    
+                    this.getClinicStats()
+                ]);
+                this.recentVisits = visitsSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        ...data,
+                        timestamp: data.timestamp?.toDate() || new Date()
+                    };
+                });
+                this.currentPatients = patientsSnapshot.docs.map(doc => ({
                     id: doc.id,
-                    ...data,
-                    timestamp: data.timestamp?.toDate() || new Date()
-                };
-            });
-
-            this.currentPatients = patientsSnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            this.stats = statsSnapshot;
+                    ...doc.data()
+                }));
+                this.stats = statsSnapshot;
+            }
 
         } catch (error) {
             console.error('Error loading dashboard data:', error);
@@ -88,38 +118,65 @@ class ClinicDashboard {
             const tomorrow = new Date(today);
             tomorrow.setDate(tomorrow.getDate() + 1);
 
-            const [todayVisits, currentPatients, totalStudents] = await Promise.all([
-                firebase.firestore().collection('clinicVisits')
-                    .where('timestamp', '>=', today)
-                    .where('timestamp', '<', tomorrow)
-                    .get(),
-                
-                firebase.firestore().collection('students')
-                    .where('currentStatus', '==', 'in_clinic')
-                    .get(),
-                
-                firebase.firestore().collection('students')
-                    .where('isActive', '==', true)
-                    .get()
-            ]);
-
-            // Calculate common reasons
-            const reasonCounts = {};
-            todayVisits.docs.forEach(doc => {
-                const reason = doc.data().reason;
-                reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
-            });
-
-            const topReason = Object.keys(reasonCounts).reduce((a, b) => 
-                reasonCounts[a] > reasonCounts[b] ? a : b, 'N/A'
-            );
-
-            return {
-                todayVisits: todayVisits.size,
-                currentPatients: currentPatients.size,
-                totalStudents: totalStudents.size,
-                topReason: this.capitalizeFirstLetter(topReason)
-            };
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const [{ data: visits, error: vErr }, { data: patients, error: pErr }, { count, error: cErr }] = await Promise.all([
+                    window.supabaseClient.from('clinicVisits')
+                        .select('id,reason,timestamp', { count: 'exact' })
+                        .gte('timestamp', today.toISOString())
+                        .lt('timestamp', tomorrow.toISOString()),
+                    window.supabaseClient.from('students')
+                        .select('id', { count: 'exact' })
+                        .eq('currentStatus', 'in_clinic'),
+                    window.supabaseClient.from('students')
+                        .select('id', { count: 'exact', head: true })
+                ]);
+                if (vErr) throw vErr;
+                if (pErr) throw pErr;
+                if (cErr) throw cErr;
+                const reasonCounts = {};
+                (visits || []).forEach(v => {
+                    const reason = v.reason;
+                    reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+                });
+                const topReason = Object.keys(reasonCounts).reduce((a, b) =>
+                    (reasonCounts[a] || 0) > (reasonCounts[b] || 0) ? a : b, 'N/A'
+                );
+                return {
+                    todayVisits: (visits || []).length,
+                    currentPatients: patients ? (patients.length ?? patients.count ?? 0) : 0,
+                    totalStudents: count ?? 0,
+                    topReason: this.capitalizeFirstLetter(topReason)
+                };
+            } else {
+                const [todayVisits, currentPatients, totalStudents] = await Promise.all([
+                    firebase.firestore().collection('clinicVisits')
+                        .where('timestamp', '>=', today)
+                        .where('timestamp', '<', tomorrow)
+                        .get(),
+                    
+                    firebase.firestore().collection('students')
+                        .where('currentStatus', '==', 'in_clinic')
+                        .get(),
+                    
+                    firebase.firestore().collection('students')
+                        .where('isActive', '==', true)
+                        .get()
+                ]);
+                const reasonCounts = {};
+                todayVisits.docs.forEach(doc => {
+                    const reason = doc.data().reason;
+                    reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+                });
+                const topReason = Object.keys(reasonCounts).reduce((a, b) => 
+                    reasonCounts[a] > reasonCounts[b] ? a : b, 'N/A'
+                );
+                return {
+                    todayVisits: todayVisits.size,
+                    currentPatients: currentPatients.size,
+                    totalStudents: totalStudents.size,
+                    topReason: this.capitalizeFirstLetter(topReason)
+                };
+            }
 
         } catch (error) {
             console.error('Error getting clinic stats:', error);

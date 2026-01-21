@@ -19,58 +19,51 @@ function initializeDatabase() {
     try {
         if (typeof EducareTrack !== 'undefined' && EducareTrack.db) {
             enrollmentDb = EducareTrack.db;
-            console.log('Using Firebase from core.js');
+            console.log('Using Supabase database from core.js');
             return;
         }
-        
-        // Initialize Firebase directly if not available through EducareTrack
-        if (typeof firebase !== 'undefined' && firebase.apps.length > 0) {
-            enrollmentDb = firebase.firestore();
-            console.log('Using direct Firebase initialization');
-        } else {
-            // Mock database for demo purposes (fallback)
-            enrollmentDb = {
-                collection: function(name) {
-                    console.log('Using mock collection:', name);
-                    return {
-                        add: function(data) {
-                            console.log('Mock add:', data);
-                            return Promise.resolve({ id: 'mock-id-' + Date.now() });
-                        },
-                        doc: function(id) {
-                            return {
-                                set: function(data) {
-                                    console.log('Mock set:', data);
-                                    return Promise.resolve();
-                                },
-                                update: function(data) {
-                                    console.log('Mock update:', data);
-                                    return Promise.resolve();
-                                },
-                                get: function() {
-                                    return Promise.resolve({
-                                        exists: true,
-                                        data: function() { return {}; }
-                                    });
-                                }
-                            };
-                        },
-                        where: function() { return this; },
-                        get: function() {
-                            return Promise.resolve({ empty: true });
-                        }
-                    };
-                },
-                batch: function() {
-                    return {
-                        set: function(ref, data) { return this; },
-                        update: function(ref, data) { return this; },
-                        commit: function() { return Promise.resolve(); }
-                    };
-                }
-            };
-            console.log('Using mock database - Firebase not available');
-        }
+        // Mock database for demo purposes (fallback)
+        enrollmentDb = {
+            collection: function(name) {
+                console.log('Using mock collection:', name);
+                return {
+                    add: function(data) {
+                        console.log('Mock add:', data);
+                        return Promise.resolve({ id: 'mock-id-' + Date.now() });
+                    },
+                    doc: function(id) {
+                        return {
+                            set: function(data) {
+                                console.log('Mock set:', data);
+                                return Promise.resolve();
+                            },
+                            update: function(data) {
+                                console.log('Mock update:', data);
+                                return Promise.resolve();
+                            },
+                            get: function() {
+                                return Promise.resolve({
+                                    exists: true,
+                                    data: function() { return {}; }
+                                });
+                            }
+                        };
+                    },
+                    where: function() { return this; },
+                    get: function() {
+                        return Promise.resolve({ empty: true });
+                    }
+                };
+            },
+            batch: function() {
+                return {
+                    set: function(ref, data) { return this; },
+                    update: function(ref, data) { return this; },
+                    commit: function() { return Promise.resolve(); }
+                };
+            }
+        };
+        console.log('Using mock database - Supabase client not available');
     } catch (error) {
         console.error('Error initializing database:', error);
     }
@@ -780,7 +773,7 @@ async function getOrCreateClassId(grade, strand) {
             strand: strand || null,
             subjects: typeof EducareTrack !== 'undefined' ? EducareTrack.getSubjectsForLevel(level, strand, grade) : [],
             studentCount: 0,
-            isActive: true,
+            is_active: true,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         };
 
@@ -814,7 +807,7 @@ async function saveToFirestoreDirect() {
             relationship: enrollmentData.parent.relationship,
             role: 'parent',
             children: [],
-            isActive: true,
+            is_active: true,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         };
         
@@ -844,7 +837,7 @@ async function saveToFirestoreDirect() {
                 currentStatus: 'out_school',
                 lastAttendance: null,
                 lastClinicVisit: null,
-                isActive: true,
+                is_active: true,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             };
             

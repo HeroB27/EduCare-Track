@@ -186,31 +186,65 @@ class TeacherDashboard {
 
     async loadRecentActivity() {
         try {
-            // Get recent attendance records for this class
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('classId', '==', this.currentUser.classId)
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .get();
-
-            // Get recent clinic visits for this class
-            const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('classId', '==', this.currentUser.classId)
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .get();
-
-            const attendanceActivities = attendanceSnapshot.docs.map(doc => ({
-                id: doc.id,
-                type: 'attendance',
-                ...doc.data()
-            }));
-
-            const clinicActivities = clinicSnapshot.docs.map(doc => ({
-                id: doc.id,
-                type: 'clinic',
-                ...doc.data()
-            }));
+            let attendanceActivities = [];
+            let clinicActivities = [];
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const classId = this.currentUser.classId;
+                const [{ data: attendance, error: aErr }, { data: clinic, error: cErr }, { data: students, error: sErr }] = await Promise.all([
+                    window.supabaseClient.from('attendance')
+                        .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks')
+                        .eq('classId', classId)
+                        .order('timestamp', { ascending: false })
+                        .limit(10),
+                    window.supabaseClient.from('clinicVisits')
+                        .select('id,studentId,classId,checkIn,timestamp,reason,notes')
+                        .eq('classId', classId)
+                        .order('timestamp', { ascending: false })
+                        .limit(10),
+                    window.supabaseClient.from('students')
+                        .select('id,firstName,lastName')
+                        .eq('classId', classId)
+                ]);
+                if (aErr) throw aErr;
+                if (cErr) throw cErr;
+                if (sErr) throw sErr;
+                const nameById = new Map((students || []).map(s => [s.id, `${s.firstName || ''} ${s.lastName || ''}`.trim()]));
+                attendanceActivities = (attendance || []).map(r => ({
+                    id: r.id,
+                    type: 'attendance',
+                    ...r,
+                    studentName: nameById.get(r.studentId) || 'Student',
+                    timestamp: r.timestamp ? new Date(r.timestamp) : new Date()
+                }));
+                clinicActivities = (clinic || []).map(r => ({
+                    id: r.id,
+                    type: 'clinic',
+                    ...r,
+                    studentName: nameById.get(r.studentId) || 'Student',
+                    timestamp: r.timestamp ? new Date(r.timestamp) : new Date()
+                }));
+            } else {
+                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                    .where('classId', '==', this.currentUser.classId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(10)
+                    .get();
+                const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                    .where('classId', '==', this.currentUser.classId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(10)
+                    .get();
+                attendanceActivities = attendanceSnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    type: 'attendance',
+                    ...doc.data()
+                }));
+                clinicActivities = clinicSnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    type: 'clinic',
+                    ...doc.data()
+                }));
+            }
 
             // Combine and sort by timestamp
             const allActivities = [...attendanceActivities, ...clinicActivities]
@@ -307,40 +341,50 @@ class TeacherDashboard {
     }
 
     setupRealTimeListeners() {
-        // Listen for new attendance records
-        const attendanceListener = EducareTrack.db.collection('attendance')
-            .where('classId', '==', this.currentUser.classId)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        this.handleNewActivity(change.doc.data());
-                    }
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            this.realTimeListeners = [];
+            if (this.pollTimer) {
+                clearInterval(this.pollTimer);
+            }
+            this.pollTimer = setInterval(async () => {
+                try {
+                    await this.loadRecentActivity();
+                    await this.loadNotifications();
+                    await this.refreshDashboardStats();
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 15000);
+        } else {
+            const attendanceListener = EducareTrack.db.collection('attendance')
+                .where('classId', '==', this.currentUser.classId)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            this.handleNewActivity(change.doc.data());
+                        }
+                    });
                 });
-            });
-
-        // Listen for clinic visits
-        const clinicListener = EducareTrack.db.collection('clinicVisits')
-            .where('classId', '==', this.currentUser.classId)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added' || change.type === 'modified') {
-                        this.refreshDashboardStats();
-                    }
+            const clinicListener = EducareTrack.db.collection('clinicVisits')
+                .where('classId', '==', this.currentUser.classId)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added' || change.type === 'modified') {
+                            this.refreshDashboardStats();
+                        }
+                    });
                 });
-            });
-
-        // Listen for notifications
-        const notificationListener = EducareTrack.db.collection('notifications')
-            .where('targetUsers', 'array-contains', this.currentUser.id)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        this.handleNewNotification(change.doc.data());
-                    }
+            const notificationListener = EducareTrack.db.collection('notifications')
+                .where('targetUsers', 'array-contains', this.currentUser.id)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            this.handleNewNotification(change.doc.data());
+                        }
+                    });
                 });
-            });
-
-        this.realTimeListeners = [attendanceListener, clinicListener, notificationListener];
+            this.realTimeListeners = [attendanceListener, clinicListener, notificationListener];
+        }
     }
 
     handleNewActivity(activity) {

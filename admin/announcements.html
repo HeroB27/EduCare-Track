@@ -328,9 +328,8 @@
     </div>
 
     <!-- Include Core JS -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
     <script src="../core.js"></script>
     
     <!-- Announcements Script -->
@@ -523,7 +522,7 @@
 
             updateStats() {
                 const total = this.announcements.length;
-                const active = this.announcements.filter(a => a.isActive !== false).length;
+                const active = this.announcements.filter(a => a.is_active !== false).length;
                 const urgent = this.announcements.filter(a => a.isUrgent === true).length;
 
                 document.getElementById('totalAnnouncements').textContent = total;

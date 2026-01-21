@@ -78,29 +78,40 @@ class TeacherClinicDashboard {
     }
 
     setupRealTimeListeners() {
-        // Listen for active clinic visits for students in this class
-        firebase.firestore()
-            .collection('clinicVisits')
-            .where('studentId', 'in', this.students.map(s => s.id))
-            .where('checkIn', '==', true)
-            .onSnapshot(snapshot => {
-                this.handleActiveVisitsUpdate(snapshot);
-            }, error => {
-                console.error('Error listening to clinic visits:', error);
-            });
-
-        // Listen for clinic notifications
-        firebase.firestore()
-            .collection('notifications')
-            .where('targetUsers', 'array-contains', this.teacher.id)
-            .where('type', '==', 'clinic')
-            .orderBy('createdAt', 'desc')
-            .limit(10)
-            .onSnapshot(snapshot => {
-                this.handleNotificationsUpdate(snapshot);
-            }, error => {
-                console.error('Error listening to notifications:', error);
-            });
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            if (this.pollTimer) {
+                clearInterval(this.pollTimer);
+            }
+            this.pollTimer = setInterval(async () => {
+                try {
+                    await this.loadInitialData();
+                    await this.loadTeacherData();
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 15000);
+        } else {
+            firebase.firestore()
+                .collection('clinicVisits')
+                .where('studentId', 'in', this.students.map(s => s.id))
+                .where('checkIn', '==', true)
+                .onSnapshot(snapshot => {
+                    this.handleActiveVisitsUpdate(snapshot);
+                }, error => {
+                    console.error('Error listening to clinic visits:', error);
+                });
+            firebase.firestore()
+                .collection('notifications')
+                .where('targetUsers', 'array-contains', this.teacher.id)
+                .where('type', '==', 'clinic')
+                .orderBy('createdAt', 'desc')
+                .limit(10)
+                .onSnapshot(snapshot => {
+                    this.handleNotificationsUpdate(snapshot);
+                }, error => {
+                    console.error('Error listening to notifications:', error);
+                });
+        }
     }
 
     async loadInitialData() {

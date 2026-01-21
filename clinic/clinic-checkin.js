@@ -110,28 +110,40 @@ class ClinicCheckin {
     }
 
     setupRealTimeListeners() {
-        // Listen for new clinic visits
-        this.clinicVisitsListener = firebase.firestore()
-            .collection('clinicVisits')
-            .orderBy('timestamp', 'desc')
-            .limit(10)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        this.loadRecentVisits();
-                        this.loadStatistics();
-                    }
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            if (this.pollTimer) {
+                clearInterval(this.pollTimer);
+            }
+            this.pollTimer = setInterval(async () => {
+                try {
+                    await this.loadRecentVisits();
+                    await this.loadCurrentPatients();
+                    await this.loadStatistics();
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 15000);
+        } else {
+            this.clinicVisitsListener = firebase.firestore()
+                .collection('clinicVisits')
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            this.loadRecentVisits();
+                            this.loadStatistics();
+                        }
+                    });
                 });
-            });
-
-        // Listen for student status changes
-        this.studentsListener = firebase.firestore()
-            .collection('students')
-            .where('currentStatus', '==', 'in_clinic')
-            .onSnapshot(snapshot => {
-                this.loadCurrentPatients();
-                this.loadStatistics();
-            });
+            this.studentsListener = firebase.firestore()
+                .collection('students')
+                .where('currentStatus', '==', 'in_clinic')
+                .onSnapshot(snapshot => {
+                    this.loadCurrentPatients();
+                    this.loadStatistics();
+                });
+        }
     }
 
     // Switch between Check-in and Check-out modes
@@ -573,12 +585,23 @@ class ClinicCheckin {
         }
 
         try {
-            // Check if student is already in clinic for check-in
             if (checkIn) {
-                const studentDoc = await firebase.firestore().collection('students').doc(this.selectedStudent.id).get();
-                if (studentDoc.exists && studentDoc.data().currentStatus === 'in_clinic') {
-                    this.showNotification('Student is already in clinic', 'warning');
-                    return;
+                if (window.USE_SUPABASE && window.supabaseClient) {
+                    const { data: s, error } = await window.supabaseClient
+                        .from('students')
+                        .select('id,currentStatus')
+                        .eq('id', this.selectedStudent.id)
+                        .single();
+                    if (!error && s && s.currentStatus === 'in_clinic') {
+                        this.showNotification('Student is already in clinic', 'warning');
+                        return;
+                    }
+                } else {
+                    const studentDoc = await firebase.firestore().collection('students').doc(this.selectedStudent.id).get();
+                    if (studentDoc.exists && studentDoc.data().currentStatus === 'in_clinic') {
+                        this.showNotification('Student is already in clinic', 'warning');
+                        return;
+                    }
                 }
             }
 
@@ -619,45 +642,76 @@ class ClinicCheckin {
 
     async recordClinicVisit(studentId, reason, notes, checkIn, medicalData = {}) {
         try {
-            const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
-            
-            if (!studentDoc.exists) {
-                throw new Error('Student not found');
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data: student, error: sErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id,firstName,lastName,classId,parentId')
+                    .eq('id', studentId)
+                    .single();
+                if (sErr || !student) throw new Error('Student not found');
+                const timestamp = new Date();
+                const timeStr = timestamp.toTimeString().split(' ')[0].substring(0, 5);
+                const insertData = {
+                    studentId: studentId,
+                    studentName: [student.firstName, student.lastName].filter(Boolean).join(' '),
+                    classId: student.classId || '',
+                    reason: reason,
+                    checkIn: !!checkIn,
+                    timestamp: timestamp,
+                    notes: notes || '',
+                    treatedBy: this.currentUser.name || this.currentUser.id,
+                    outcome: medicalData.recommendations || medicalData.treatmentGiven || ''
+                };
+                const { data: inserted, error } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .insert(insertData)
+                    .select('id')
+                    .single();
+                if (error) throw error;
+                const newStatus = checkIn ? 'in_clinic' : 'in_school';
+                await window.supabaseClient.from('students').update({ currentStatus: newStatus }).eq('id', studentId);
+                await this.sendEnhancedClinicNotifications(
+                    { id: studentId, parentId: student.parentId, classId: student.classId, name: insertData.studentName },
+                    checkIn,
+                    reason,
+                    notes,
+                    medicalData,
+                    timeStr
+                );
+                return inserted.id;
+            } else {
+                const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
+                if (!studentDoc.exists) {
+                    throw new Error('Student not found');
+                }
+                const student = studentDoc.data();
+                const timestamp = new Date();
+                const clinicData = {
+                    studentId: studentId,
+                    studentName: student.name,
+                    classId: student.classId || '',
+                    checkIn: checkIn,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    time: timestamp.toTimeString().split(' ')[0].substring(0, 5),
+                    reason: reason,
+                    notes: notes,
+                    staffId: this.currentUser.id,
+                    staffName: this.currentUser.name,
+                    medicalFindings: medicalData.medicalFindings || '',
+                    treatmentGiven: medicalData.treatmentGiven || '',
+                    recommendations: medicalData.recommendations || '',
+                    additionalNotes: medicalData.additionalNotes || '',
+                    teacherValidationStatus: checkIn ? 'pending' : 'n_a',
+                    requiresTeacherValidation: !!checkIn
+                };
+                const clinicRef = await firebase.firestore().collection('clinicVisits').add(clinicData);
+                await firebase.firestore().collection('students').doc(studentId).update({
+                    currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                    lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                await this.sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData, clinicData.time);
+                return clinicRef.id;
             }
-
-            const student = studentDoc.data();
-            const timestamp = new Date();
-
-            const clinicData = {
-                studentId: studentId,
-                studentName: student.name,
-                classId: student.classId || '',
-                checkIn: checkIn,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                time: timestamp.toTimeString().split(' ')[0].substring(0, 5),
-                reason: reason,
-                notes: notes,
-                staffId: this.currentUser.id,
-                staffName: this.currentUser.name,
-                medicalFindings: medicalData.medicalFindings || '',
-                treatmentGiven: medicalData.treatmentGiven || '',
-                recommendations: medicalData.recommendations || '',
-                additionalNotes: medicalData.additionalNotes || '',
-                teacherValidationStatus: checkIn ? 'pending' : 'n_a',
-                requiresTeacherValidation: !!checkIn
-            };
-
-            const clinicRef = await firebase.firestore().collection('clinicVisits').add(clinicData);
-
-            // Update student status
-            await firebase.firestore().collection('students').doc(studentId).update({
-                currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            await this.sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData, clinicData.time);
-
-            return clinicRef.id;
         } catch (error) {
             console.error('Error recording clinic visit:', error);
             throw error;
@@ -666,21 +720,33 @@ class ClinicCheckin {
 
     async sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData = {}, timeStr = '') {
         try {
-            // Get parent and teacher IDs for notifications
             const parentId = student.parentId;
             let teacherId = null;
-            
-            if (student.classId) {
-                const teacherQuery = await firebase.firestore()
-                    .collection('users')
-                    .where('role', '==', 'teacher')
-                    .where('classId', '==', student.classId)
-                    .where('isHomeroom', '==', true)
-                    .limit(1)
-                    .get();
-                    
-                if (!teacherQuery.empty) {
-                    teacherId = teacherQuery.docs[0].id;
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                if (student.classId) {
+                    const { data: homeroom, error: hrErr } = await window.supabaseClient
+                        .from('users')
+                        .select('id')
+                        .eq('role', 'teacher')
+                        .eq('classId', student.classId)
+                        .eq('isHomeroom', true)
+                        .limit(1);
+                    if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
+                        teacherId = homeroom[0].id;
+                    }
+                }
+            } else {
+                if (student.classId) {
+                    const teacherQuery = await firebase.firestore()
+                        .collection('users')
+                        .where('role', '==', 'teacher')
+                        .where('classId', '==', student.classId)
+                        .where('isHomeroom', '==', true)
+                        .limit(1)
+                        .get();
+                    if (!teacherQuery.empty) {
+                        teacherId = teacherQuery.docs[0].id;
+                    }
                 }
             }
 
@@ -733,16 +799,16 @@ class ClinicCheckin {
                 type: 'clinic',
                 title: notificationTitle,
                 message: message,
-                targetUsers: targetUsers,
-                studentId: student.id,
-                studentName: student.name,
-                isUrgent: checkIn && (medicalData.recommendations === 'fetch_child' || 
-                                    medicalData.recommendations === 'immediate_pickup' ||
-                                    medicalData.recommendations === 'medical_attention'),
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                targetUsers: targetUsers
             };
-
-            await firebase.firestore().collection('notifications').add(notificationData);
+            if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
+                await window.EducareTrack.createNotification(notificationData);
+            } else {
+                await firebase.firestore().collection('notifications').add({
+                    ...notificationData,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
             
             console.log(`Enhanced notifications sent for ${student.name}'s clinic ${checkIn ? 'check-in' : 'check-out'}`);
             
@@ -772,18 +838,33 @@ class ClinicCheckin {
         }
 
         try {
-            const snapshot = await firebase.firestore()
-                .collection('students')
-                .where('isActive', '==', true)
-                .get();
-
-            const students = snapshot.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(student => 
-                    student.name.toLowerCase().includes(query.toLowerCase()) || 
-                    (student.studentId && student.studentId.toLowerCase().includes(query.toLowerCase()))
-                )
-                .slice(0, 5);
+            let students = [];
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const term = `%${query}%`;
+                const { data, error } = await window.supabaseClient
+                    .from('students')
+                    .select('id,firstName,lastName,currentStatus,studentId')
+                    .or(`firstName.ilike.${term},lastName.ilike.${term},studentId.ilike.${term}`);
+                if (error) throw error;
+                students = (data || []).map(s => ({
+                    id: s.id,
+                    name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
+                    currentStatus: s.currentStatus,
+                    studentId: s.studentId
+                })).slice(0, 5);
+            } else {
+                const snapshot = await firebase.firestore()
+                    .collection('students')
+                    .where('isActive', '==', true)
+                    .get();
+                students = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(student => 
+                        student.name.toLowerCase().includes(query.toLowerCase()) || 
+                        (student.studentId && student.studentId.toLowerCase().includes(query.toLowerCase()))
+                    )
+                    .slice(0, 5);
+            }
 
             if (students.length === 0) {
                 resultsContainer.innerHTML = '<div class="p-3 text-gray-500 text-sm">No students found</div>';
@@ -853,12 +934,25 @@ class ClinicCheckin {
 
     async loadCurrentPatients() {
         try {
-            const snapshot = await firebase.firestore()
-                .collection('students')
-                .where('currentStatus', '==', 'in_clinic')
-                .get();
-
-            this.currentPatients = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('students')
+                    .select('id,firstName,lastName,classId,currentStatus')
+                    .eq('currentStatus', 'in_clinic');
+                if (error) throw error;
+                this.currentPatients = (data || []).map(s => ({
+                    id: s.id,
+                    name: [s.firstName, s.lastName].filter(Boolean).join(' ').trim(),
+                    classId: s.classId || '',
+                    grade: ''
+                }));
+            } else {
+                const snapshot = await firebase.firestore()
+                    .collection('students')
+                    .where('currentStatus', '==', 'in_clinic')
+                    .get();
+                this.currentPatients = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
             this.updateCurrentPatientsDisplay();
         } catch (error) {
             console.error('Error loading current patients:', error);
@@ -867,20 +961,41 @@ class ClinicCheckin {
 
     async loadRecentVisits() {
         try {
-            const snapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .get();
-
-            this.recentVisits = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    timestamp: data.timestamp?.toDate() || new Date()
-                };
-            });
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
+                    .order('timestamp', { ascending: false })
+                    .limit(10);
+                if (error) throw error;
+                this.recentVisits = (data || []).map(v => ({
+                    id: v.id,
+                    studentId: v.studentId,
+                    studentName: v.studentName,
+                    classId: v.classId,
+                    checkIn: !!v.checkIn,
+                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
+                    reason: v.reason || '',
+                    notes: v.notes || '',
+                    staffName: v.treatedBy || '',
+                    medicalFindings: '',
+                    recommendations: v.outcome || ''
+                }));
+            } else {
+                const snapshot = await firebase.firestore()
+                    .collection('clinicVisits')
+                    .orderBy('timestamp', 'desc')
+                    .limit(10)
+                    .get();
+                this.recentVisits = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        ...data,
+                        timestamp: data.timestamp?.toDate() || new Date()
+                    };
+                });
+            }
             this.updateRecentVisitsDisplay();
         } catch (error) {
             console.error('Error loading recent visits:', error);
@@ -889,36 +1004,45 @@ class ClinicCheckin {
 
     async loadStatistics() {
         try {
-            // Current patients count
             const currentPatientsCount = this.currentPatients.length;
             document.getElementById('currentPatientsCount').textContent = currentPatientsCount;
-
-            // Today's visits count
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             const tomorrow = new Date(today);
             tomorrow.setDate(tomorrow.getDate() + 1);
-
-            const todaySnapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .where('timestamp', '>=', today)
-                .where('timestamp', '<', tomorrow)
-                .get();
-
-            this.todayVisits = todaySnapshot.size;
-            document.getElementById('todayVisits').textContent = this.todayVisits;
-
-            // Urgent cases count (check-ins with urgent recommendations)
-            const urgentSnapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .where('timestamp', '>=', today)
-                .where('checkIn', '==', true)
-                .where('recommendations', 'in', ['fetch_child', 'immediate_pickup', 'medical_attention'])
-                .get();
-
-            this.urgentCases = urgentSnapshot.size;
-            document.getElementById('urgentCases').textContent = this.urgentCases;
-
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { count: visitsCount } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .select('id', { count: 'exact', head: true })
+                    .gte('timestamp', today.toISOString())
+                    .lt('timestamp', tomorrow.toISOString());
+                this.todayVisits = visitsCount || 0;
+                document.getElementById('todayVisits').textContent = this.todayVisits;
+                const { count: urgentCount } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .select('id', { count: 'exact', head: true })
+                    .gte('timestamp', today.toISOString())
+                    .eq('checkIn', true)
+                    .in('outcome', ['fetch_child', 'immediate_pickup', 'medical_attention']);
+                this.urgentCases = urgentCount || 0;
+                document.getElementById('urgentCases').textContent = this.urgentCases;
+            } else {
+                const todaySnapshot = await firebase.firestore()
+                    .collection('clinicVisits')
+                    .where('timestamp', '>=', today)
+                    .where('timestamp', '<', tomorrow)
+                    .get();
+                this.todayVisits = todaySnapshot.size;
+                document.getElementById('todayVisits').textContent = this.todayVisits;
+                const urgentSnapshot = await firebase.firestore()
+                    .collection('clinicVisits')
+                    .where('timestamp', '>=', today)
+                    .where('checkIn', '==', true)
+                    .where('recommendations', 'in', ['fetch_child', 'immediate_pickup', 'medical_attention'])
+                    .get();
+                this.urgentCases = urgentSnapshot.size;
+                document.getElementById('urgentCases').textContent = this.urgentCases;
+            }
         } catch (error) {
             console.error('Error loading statistics:', error);
         }

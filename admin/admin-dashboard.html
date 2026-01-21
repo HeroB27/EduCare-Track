@@ -396,9 +396,9 @@
     </div>
 
     <!-- Include Core JS -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+    <!-- Database: Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
     <script src="../core.js"></script>
     
     <!-- Dashboard Script -->
@@ -576,7 +576,7 @@
             async updateActiveUsers() {
                 try {
                     const users = await EducareTrack.getUsers();
-                    const activeUsers = users.filter(user => user.isActive !== false).length;
+                    const activeUsers = users.filter(user => user.is_active !== false).length;
                     const activeUsersEl = document.getElementById('activeUsers');
                     if (activeUsersEl) {
                         activeUsersEl.textContent = activeUsers;
