@@ -31,6 +31,7 @@
         .id-cr80 { width: 2.125in; height: 3.375in; border-radius: 0.125in; overflow: hidden; }
         .print-only { display: none; }
         @media print {
+            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .no-print { display: none !important; }
             .print-only { display: block; }
             body { margin: 0; padding: 0; background: white; }
@@ -360,54 +361,54 @@
                 </div>
 
                 <!-- ID Preview -->
-                <div class="bg-white border-2 border-blue-200 rounded-lg p-6 flex-1">
+                <div class="bg-white rounded-xl p-6 flex-1 shadow-lg ring-1 ring-blue-200/60">
                     <h3 class="text-lg font-semibold text-gray-800 mb-4">ID Card Preview</h3>
                     
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <!-- ID Card Front -->
-                    <div class="id-cr80 bg-white border-2 border-gray-300 rounded-lg p-4">
+                    <div class="id-cr80 bg-white rounded-xl p-4 shadow-md ring-1 ring-gray-200">
                         <div class="text-center mb-4">
-                            <h4 class="font-bold text-blue-800 text-lg">Educare Colleges</h4>
+                            <h4 class="font-bold text-blue-900 text-lg tracking-wide">Educare Colleges</h4>
                             <p class="text-sm text-gray-600">Purok 4 Irisan Baguio City</p>
                         </div>
                         <div class="flex space-x-4">
-                            <div class="w-24 h-24 bg-gray-200 rounded border flex items-center justify-center">
-                                <img id="idPreviewImage" class="w-full h-full object-cover rounded hidden">
+                            <div class="w-24 h-24 bg-gray-100 rounded-lg ring-1 ring-gray-300 flex items-center justify-center overflow-hidden">
+                                <img id="idPreviewImage" class="w-full h-full object-cover hidden">
                                 <i class="fas fa-user text-gray-400 text-2xl" id="idPlaceholder"></i>
                             </div>
                             <div class="flex-1">
                                 <div class="mb-2">
-                                    <label class="text-xs text-gray-500">Student Name</label>
-                                    <p id="idStudentName" class="font-semibold">-</p>
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Student Name</label>
+                                    <p id="idStudentName" class="font-semibold text-gray-800">-</p>
                                 </div>
                                 <div class="mb-2">
-                                    <label class="text-xs text-gray-500">Address</label>
-                                    <p id="idAddress" class="font-semibold">-</p>
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Address</label>
+                                    <p id="idAddress" class="font-semibold text-gray-800">-</p>
                                 </div>
                                 <div class="mb-2">
-                                    <label class="text-xs text-gray-500">Class</label>
-                                    <p id="idGradeLevel" class="font-semibold">-</p>
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Class</label>
+                                    <p id="idGradeLevel" class="font-semibold text-gray-800">-</p>
                                 </div>
                                 <div>
-                                    <label class="text-xs text-gray-500">LRN</label>
-                                    <p id="idLRN" class="font-semibold">-</p>
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">LRN</label>
+                                    <p id="idLRN" class="font-semibold text-gray-800">-</p>
                                 </div>
                         </div>
                     </div>
                     </div>
 
                     <!-- ID Card Back -->
-                    <div class="id-cr80 bg-gray-800 text-white rounded-lg p-4">
+                    <div class="id-cr80 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-md ring-1 ring-slate-700">
                         <div class="text-center mb-4">
-                            <div id="qrCode" class="bg-white p-2 rounded inline-block mb-2">
+                            <div id="qrCode" class="bg-white p-2 rounded-lg inline-block mb-2 shadow-sm ring-1 ring-gray-200">
                                 <!-- QR Code will be generated here -->
                                 <div class="w-24 h-24 bg-gray-100 flex items-center justify-center">
                                     <i class="fas fa-qrcode text-gray-400 text-xl"></i>
                                 </div>
                             </div>
-                            <p id="idStudentId" class="text-sm font-mono break-all">EDU-0000-0000-0000</p>
+                            <p id="idStudentId" class="text-sm font-mono break-all tracking-wider">EDU-0000-0000-0000</p>
                         </div>
-                        <div class="border-t border-gray-600 pt-3">
+                        <div class="border-t border-slate-600 pt-3 mt-2">
                             <h5 class="font-semibold mb-2">Parent/Guardian</h5>
                             <div class="text-sm">
                                 <p id="idParentName"><strong>Parent:</strong> -</p>
@@ -500,31 +501,31 @@
     <div id="printIDCard" class="hidden print-only">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <!-- ID Card Front -->
-            <div class="id-cr80 bg-white border-2 border-gray-300 rounded-lg p-4">
+            <div class="id-cr80 bg-white rounded-xl p-4 shadow-md ring-1 ring-gray-200">
                 <div class="text-center mb-4">
-                    <h4 class="font-bold text-blue-800 text-lg">Educare Colleges</h4>
+                    <h4 class="font-bold text-blue-900 text-lg tracking-wide">Educare Colleges</h4>
                     <p class="text-sm text-gray-600">Purok 4 Irisan Baguio City</p>
                 </div>
                 <div class="flex space-x-4">
-                    <div class="w-24 h-24 bg-gray-200 rounded border flex items-center justify-center">
-                        <img id="printPreviewImage" class="w-full h-full object-cover rounded hidden">
+                    <div class="w-24 h-24 bg-gray-100 rounded-lg ring-1 ring-gray-300 flex items-center justify-center overflow-hidden">
+                        <img id="printPreviewImage" class="w-full h-full object-cover hidden">
                         <i class="fas fa-user text-gray-400 text-2xl" id="printPlaceholder"></i>
                     </div>
                     <div class="flex-1">
                         <div class="mb-2">
-                            <label class="text-xs text-gray-500">Student Name</label>
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Student Name</label>
                             <p id="printStudentName" class="font-semibold">-</p>
                         </div>
                         <div class="mb-2">
-                            <label class="text-xs text-gray-500">Address</label>
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Address</label>
                             <p id="printAddress" class="font-semibold">-</p>
                         </div>
                         <div class="mb-2">
-                            <label class="text-xs text-gray-500">Class</label>
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Class</label>
                             <p id="printGradeLevel" class="font-semibold">-</p>
                         </div>
                         <div>
-                            <label class="text-xs text-gray-500">LRN</label>
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">LRN</label>
                             <p id="printLRN" class="font-semibold">-</p>
                         </div>
                     </div>
@@ -532,17 +533,17 @@
             </div>
 
             <!-- ID Card Back -->
-            <div class="id-cr80 bg-gray-800 text-white rounded-lg p-4">
+            <div class="id-cr80 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-md ring-1 ring-slate-700">
                 <div class="text-center mb-4">
-                    <div id="printQrCode" class="bg-white p-2 rounded inline-block mb-2">
+                    <div id="printQrCode" class="bg-white p-2 rounded-lg inline-block mb-2 shadow-sm ring-1 ring-gray-200">
                         <!-- QR Code will be generated here -->
                         <div class="w-24 h-24 bg-gray-100 flex items-center justify-center">
                             <i class="fas fa-qrcode text-gray-400 text-xl"></i>
                         </div>
                     </div>
-                    <p id="printStudentId" class="text-sm font-mono break-all">EDU-0000-0000-0000</p>
+                    <p id="printStudentId" class="text-sm font-mono break-all tracking-wider">EDU-0000-0000-0000</p>
                 </div>
-                <div class="border-t border-gray-600 pt-3">
+                <div class="border-t border-slate-600 pt-3 mt-2">
                     <h5 class="font-semibold mb-2">Parent/Guardian</h5>
                     <div class="text-sm">
                         <p id="printParentName"><strong>Parent:</strong> -</p>
