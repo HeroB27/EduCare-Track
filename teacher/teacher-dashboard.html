@@ -486,37 +486,70 @@
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
 
-                    // Get today's attendance
-                    const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                        .where('timestamp', '>=', today)
-                        .where('class_id', '==', this.currentUser.class_id)
-                        .get();
+                    let presentStudents = new Set();
+                    let lateStudents = new Set();
+                    let clinicStudents = new Set();
 
-                    const presentStudents = new Set();
-                    const lateStudents = new Set();
-                    const clinicStudents = new Set();
+                    // Get today's attendance using Supabase
+                    if (window.USE_SUPABASE && window.supabaseClient) {
+                        const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                            .from('attendance')
+                            .select('student_id,entry_type,status,timestamp')
+                            .eq('class_id', this.currentUser.class_id)
+                            .gte('timestamp', today.toISOString());
 
-                    attendanceSnapshot.forEach(doc => {
-                        const record = doc.data();
-                        if (record.entryType === 'entry') {
-                            if (record.status === 'late') {
-                                lateStudents.add(record.studentId);
-                            } else if (record.status === 'present') {
-                                presentStudents.add(record.studentId);
-                            }
+                        if (!attendanceError && attendanceData) {
+                            attendanceData.forEach(record => {
+                                if (record.entry_type === 'entry') {
+                                    if (record.status === 'late') {
+                                        lateStudents.add(record.student_id);
+                                    } else if (record.status === 'present') {
+                                        presentStudents.add(record.student_id);
+                                    }
+                                }
+                            });
                         }
-                    });
 
-                    // Get current clinic visits
-                    const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                        .where('check_in', '==', true)
-                        .where('class_id', '==', this.currentUser.class_id)
-                        .get();
+                        // Get current clinic visits using Supabase
+                        const { data: clinicData, error: clinicError } = await window.supabaseClient
+                            .from('clinicVisits')
+                            .select('student_id,check_in')
+                            .eq('class_id', this.currentUser.class_id)
+                            .eq('check_in', true);
 
-                    clinicSnapshot.forEach(doc => {
-                        const visit = doc.data();
-                        clinicStudents.add(visit.studentId);
-                    });
+                        if (!clinicError && clinicData) {
+                            clinicData.forEach(visit => {
+                                clinicStudents.add(visit.student_id);
+                            });
+                        }
+                    } else {
+                        // Fallback to Firestore
+                        const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                            .where('timestamp', '>=', today)
+                            .where('class_id', '==', this.currentUser.class_id)
+                            .get();
+
+                        attendanceSnapshot.forEach(doc => {
+                            const record = doc.data();
+                            if (record.entry_type === 'entry') {
+                                if (record.status === 'late') {
+                                    lateStudents.add(record.student_id);
+                                } else if (record.status === 'present') {
+                                    presentStudents.add(record.student_id);
+                                }
+                            }
+                        });
+
+                        const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                            .where('check_in', '==', true)
+                            .where('class_id', '==', this.currentUser.class_id)
+                            .get();
+
+                        clinicSnapshot.forEach(doc => {
+                            const visit = doc.data();
+                            clinicStudents.add(visit.student_id);
+                        });
+                    }
 
                     // Update UI
                     document.getElementById('totalStudents').textContent = this.classStudents.length;
@@ -530,9 +563,9 @@
             }
 
             updateStudentStatus() {
-                const inClassCount = this.classStudents.filter(s => s.currentStatus === 'in_school').length;
-                const inClinicCount = this.classStudents.filter(s => s.currentStatus === 'in_clinic').length;
-                const absentCount = this.classStudents.filter(s => s.currentStatus === 'out_school').length;
+                const inClassCount = this.classStudents.filter(s => s.current_status === 'in_school').length;
+                const inClinicCount = this.classStudents.filter(s => s.current_status === 'in_clinic').length;
+                const absentCount = this.classStudents.filter(s => s.current_status === 'out_school').length;
                 
                 // Count late students (this would need additional logic based on today's attendance)
                 const lateCount = 0; // Placeholder
@@ -566,11 +599,11 @@
                     container.innerHTML = classActivity.slice(0, 5).map(item => `
                         <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                             <div class="flex items-center">
-                                <div class="w-8 h-8 ${this.getActivityColor(item.entryType, item.status)} rounded-full flex items-center justify-center mr-3">
-                                    <i class="${this.getActivityIcon(item.entryType, item.status)} text-sm"></i>
+                                <div class="w-8 h-8 ${this.getActivityColor(item.entry_type, item.status)} rounded-full flex items-center justify-center mr-3">
+                                    <i class="${this.getActivityIcon(item.entry_type, item.status)} text-sm"></i>
                                 </div>
                                 <div>
-                                    <p class="text-sm font-medium">${item.studentName}</p>
+                                    <p class="text-sm font-medium">${item.studentName || item.student_name}</p>
                                     <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
                                 </div>
                             </div>
@@ -588,7 +621,7 @@
 
                     const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true, 10);
                     const unreadCount = notifications.filter(n => 
-                        !n.readBy || !n.readBy.includes(this.currentUser.id)
+                        !n.read_by || !n.read_by.includes(this.currentUser.id)
                     ).length;
 
                     // Update notification badge
@@ -626,7 +659,7 @@
                 } else if (activity.status === 'in_clinic') {
                     return `Checked into clinic`;
                 } else {
-                    return `${activity.entryType === 'entry' ? 'Arrived' : 'Left'} at ${activity.time}`;
+                    return `${activity.entry_type === 'entry' ? 'Arrived' : 'Left'} at ${activity.time}`;
                 }
             }
 
@@ -715,9 +748,9 @@
                                 <div class="flex-1">
                                     <h4 class="font-semibold text-gray-800">${notification.title}</h4>
                                     <p class="text-sm text-gray-600 mt-1">${notification.message}</p>
-                                    <p class="text-xs text-gray-500 mt-2">${this.formatTime(notification.createdAt?.toDate())}</p>
+                                    <p class="text-xs text-gray-500 mt-2">${this.formatTime(notification.created_at)}</p>
                                 </div>
-                                ${!notification.readBy || !notification.readBy.includes(this.currentUser.id) ? 
+                                ${!notification.read_by || !notification.read_by.includes(this.currentUser.id) ? 
                                     '<span class="w-2 h-2 bg-blue-500 rounded-full ml-2 mt-1"></span>' : ''}
                             </div>
                         </div>
