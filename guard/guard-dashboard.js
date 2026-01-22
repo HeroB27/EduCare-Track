@@ -111,7 +111,7 @@ class GuardDashboard {
             };
 
             students.forEach(student => {
-                statusCounts[student.currentStatus] = (statusCounts[student.currentStatus] || 0) + 1;
+                statusCounts[student.current_status] = (statusCounts[student.current_status] || 0) + 1;
             });
 
             this.dashboardData.schoolStatus = statusCounts;
@@ -191,7 +191,7 @@ class GuardDashboard {
                  data-student-id="${student.id}">
                 <div class="font-medium">${student.name}</div>
                 <div class="text-sm text-gray-600">${student.id} • ${student.grade}</div>
-                <div class="text-xs text-gray-500">${student.classId || 'No class assigned'}</div>
+                <div class="text-xs text-gray-500">${student.class_id || 'No class assigned'}</div>
             </div>
         `).join('');
 
@@ -263,27 +263,58 @@ class GuardDashboard {
 
     startRealTimeUpdates() {
         // Listen for new attendance records
-        this.unsubscribeAttendance = EducareTrack.db.collection('attendance')
-            .orderBy('timestamp', 'desc')
-            .limit(1)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        this.loadDashboardData(); // Refresh data
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            // Use Supabase real-time
+            window.supabaseClient
+                .channel('attendance')
+                .on('postgres_changes', 
+                    { event: '*', schema: 'public' },
+                    (payload) => {
+                        if (payload.eventType === 'INSERT') {
+                            this.loadDashboardData();
+                        }
                     }
+                )
+                .subscribe();
+        } else {
+            // Fallback to Firestore
+            this.unsubscribeAttendance = EducareTrack.db.collection('attendance')
+                .orderBy('timestamp', 'desc')
+                .limit(1)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            this.loadDashboardData(); // Refresh data
+                        }
+                    });
                 });
-            });
+        }
 
         // Listen for student status changes
-        this.unsubscribeStudents = EducareTrack.db.collection('students')
-            .where('isActive', '==', true)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'modified') {
-                        this.loadSchoolStatus(); // Refresh status counts
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            // Use Supabase real-time
+            window.supabaseClient
+                .channel('students')
+                .on('postgres_changes', 
+                    { event: 'UPDATE', schema: 'public' },
+                    (payload) => {
+                        if (payload.eventType === 'UPDATE') {
+                            this.loadSchoolStatus(); // Refresh status counts
+                        }
                     }
+                )
+                .subscribe();
+        } else {
+            // Fallback to Firestore
+            this.unsubscribeStudents = EducareTrack.db.collection('students')
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'modified') {
+                            this.loadSchoolStatus(); // Refresh status counts
+                        }
+                    });
                 });
-            });
+        }
     }
 
     showNotification(message, type = 'info') {

@@ -73,7 +73,7 @@ class GuardStudentLookup {
             const matchesGrade = !gradeFilter || student.grade === gradeFilter;
 
             // Status filter
-            const matchesStatus = !statusFilter || student.currentStatus === statusFilter;
+            const matchesStatus = !statusFilter || student.current_status === statusFilter;
 
             return matchesSearch && matchesGrade && matchesStatus;
         });
@@ -106,10 +106,10 @@ class GuardStudentLookup {
     }
 
     renderStudentCard(student) {
-        const statusColor = EducareTrack.getStatusColor(student.currentStatus);
-        const statusText = EducareTrack.getStatusText(student.currentStatus);
-        const lastAttendance = student.lastAttendance ? 
-            EducareTrack.formatTime(student.lastAttendance) : 'No record';
+        const statusColor = EducareTrack.getStatusColor(student.current_status);
+        const statusText = EducareTrack.getStatusText(student.current_status);
+        const lastAttendance = student.last_attendance ? 
+            EducareTrack.formatTime(student.last_attendance) : 'No record';
 
         return `
             <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:border-blue-300 transition duration-200 cursor-pointer student-card"
@@ -136,7 +136,7 @@ class GuardStudentLookup {
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">Class:</span>
-                        <span class="font-medium">${student.classId || 'Not assigned'}</span>
+                        <span class="font-medium">${student.class_id || 'Not assigned'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">Last Activity:</span>
@@ -189,7 +189,7 @@ class GuardStudentLookup {
         const [attendanceHistory, clinicVisits, parentInfo] = await Promise.all([
             EducareTrack.getAttendanceByStudent(student.id),
             EducareTrack.getClinicVisitsByStudent(student.id),
-            EducareTrack.getUserById(student.parentId)
+            EducareTrack.getUserById(student.parent_id)
         ]);
 
         document.getElementById('modalStudentName').textContent = student.name;
@@ -224,7 +224,7 @@ class GuardStudentLookup {
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Class:</span>
-                                <span class="font-medium">${student.classId || 'Not assigned'}</span>
+                                <span class="font-medium">${student.class_id || 'Not assigned'}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Current Status:</span>
@@ -287,7 +287,7 @@ class GuardStudentLookup {
                                     <div class="flex items-center justify-between p-2 bg-white rounded border">
                                         <div>
                                             <div class="text-sm font-medium">${date}</div>
-                                            <div class="text-xs text-gray-600">${time} • ${record.entryType}</div>
+                                            <div class="text-xs text-gray-600">${time} • ${record.entry_type}</div>
                                         </div>
                                         <span class="px-2 py-1 text-xs font-semibold rounded-full ${recordStatusColor}">
                                             ${record.status}
@@ -308,7 +308,7 @@ class GuardStudentLookup {
                                 return `
                                     <div class="p-2 bg-white rounded border">
                                         <div class="text-sm font-medium">${date} ${time}</div>
-                                        <div class="text-xs text-gray-600">${visit.checkIn ? 'Check-in' : 'Check-out'}</div>
+                                        <div class="text-xs text-gray-600">${visit.check_in ? 'Check-in' : 'Check-out'}</div>
                                         <div class="text-xs text-gray-800 mt-1">${visit.reason || 'No reason provided'}</div>
                                     </div>
                                 `;
