@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - QR Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        .status-present { background-color: #d1fae5; color: #065f46; }
+        .status-absent { background-color: #fee2e2; color: #991b1b; }
+        .status-late { background-color: #fef3c7; color: #92400e; }
+        .status-clinic { background-color: #dbeafe; color: #1e40af; }
+        .status-ontime { background-color: #d1fae5; color: #065f46; }
+        .status-half_day { background-color: #fef3c7; color: #92400e; }
+        .scanner-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        .scanner-frame {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 250px;
+            height: 250px;
+            border: 3px solid #3b82f6;
+            border-radius: 10px;
+            box-shadow: 0 0 0 5000px rgba(0, 0, 0, 0.5);
+        }
+        .scanner-laser {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background-color: #ef4444;
+            box-shadow: 0 0 8px #ef4444;
+            animation: scan 2s infinite linear;
+        }
+        @keyframes scan {
+            0% { top: 0; }
+            50% { top: 100%; }
+            100% { top: 0; }
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        video {
+            width: 100%;
+            height: auto;
+            border-radius: 10px;
+            background: #000;
+        }
+        video {
+            filter: brightness(1) contrast(1) saturate(1);
+        }
+        .action-buttons {
+            display: none;
+        }
+        .action-buttons.show {
+            display: flex;
+        }
+        .mode-active {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        .time-in-active {
+            border: 3px solid #10b981;
+            background-color: #ecfdf5;
+        }
+        .time-out-active {
+            border: 3px solid #ef4444;
+            background-color: #fef2f2;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                        <span class="text-white font-bold">ET</span>
+                    </div>
+                    <h1 class="text-2xl font-bold text-gray-900">EducareTrack - QR Scanner</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span id="userName" class="text-gray-700">Guard User</span>
+                    <button onclick="window.location.href='guard-dashboard.html'" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        Back to Dashboard
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">QR Code Scanner</h2>
+            <p class="text-gray-600 mb-6">Scan student QR codes to record attendance.</p>
+            
+            <!-- Scanner Mode Selection -->
+            <div class="flex mb-6 border-b border-gray-200">
+                <button id="webcamModeBtn" class="mode-tab border-b-2 border-blue-500 text-blue-600 py-3 px-4 text-sm font-medium">
+                    Webcam Scanner
+                </button>
+                <button id="physicalModeBtn" class="mode-tab border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 py-3 px-4 text-sm font-medium">
+                    Physical Scanner
+                </button>
+            </div>
+            
+            <!-- Attendance Mode Selection -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Attendance Mode</h3>
+                <p class="text-gray-600 mb-4">Select whether you're recording Time In (arrival) or Time Out (dismissal)</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Time In Button -->
+                    <button id="timeInModeBtn" class="time-mode-btn p-6 rounded-lg border-2 border-green-300 bg-green-50 hover:bg-green-100 transition duration-200 time-in-active">
+                        <div class="flex items-center justify-center">
+                            <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mr-4">
+                                <span class="text-green-600 text-xl font-bold">✅</span>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="text-lg font-semibold text-gray-800">Time In Mode</h4>
+                                <p class="text-gray-600 text-sm">Recording student arrivals</p>
+                                <p class="text-green-600 text-xs font-medium mt-1">ACTIVE</p>
+                            </div>
+                        </div>
+                    </button>
+
+                    <!-- Time Out Button -->
+                    <button id="timeOutModeBtn" class="time-mode-btn p-6 rounded-lg border-2 border-gray-300 bg-gray-50 hover:bg-gray-100 transition duration-200">
+                        <div class="flex items-center justify-center">
+                            <div class="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mr-4">
+                                <span class="text-gray-600 text-xl font-bold">🏠</span>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="text-lg font-semibold text-gray-800">Time Out Mode</h4>
+                                <p class="text-gray-600 text-sm">Recording student dismissals</p>
+                                <p class="text-gray-600 text-xs font-medium mt-1">INACTIVE</p>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Current Mode Display -->
+                <div class="mt-4 p-4 bg-blue-50 rounded-lg">
+                    <div class="flex items-center">
+                        <div class="w-3 h-3 bg-blue-500 rounded-full animate-pulse mr-3"></div>
+                        <span id="currentModeText" class="text-blue-800 font-medium">Current Mode: Recording Time In (Arrivals)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Webcam Scanner Section -->
+            <div id="webcamSection" class="scanner-section">
+                <div class="text-center py-6 bg-gray-100 rounded-lg mb-6">
+                    <div class="video-container">
+                        <video id="video" class="w-full" autoplay muted playsinline></video>
+                        <div class="scanner-overlay">
+                            <div class="scanner-frame">
+                                <div class="scanner-laser"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="scannerStatus" class="mt-4 text-gray-600">
+                        Initializing camera...
+                    </div>
+                </div>
+                
+                <div class="flex justify-center space-x-4 mb-6">
+                    <button id="startScanner" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-200">
+                        Start Scanner
+                    </button>
+                    <button id="stopScanner" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-200">
+                        Stop Scanner
+                    </button>
+                    <button id="switchCamera" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition duration-200">
+                        Switch Camera
+                    </button>
+                </div>
+
+                <!-- Camera Settings -->
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                    <h3 class="text-lg font-semibold text-blue-800 mb-2">Camera Settings</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-blue-700 mb-1">Brightness</label>
+                            <input type="range" id="brightnessControl" min="0" max="2" step="0.1" value="1" class="w-full">
+                            <div class="text-xs text-blue-600 text-center mt-1" id="brightnessValue">100%</div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-blue-700 mb-1">Contrast</label>
+                            <input type="range" id="contrastControl" min="0" max="2" step="0.1" value="1" class="w-full">
+                            <div class="text-xs text-blue-600 text-center mt-1" id="contrastValue">100%</div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-blue-700 mb-1">Saturation</label>
+                            <input type="range" id="saturationControl" min="0" max="2" step="0.1" value="1" class="w-full">
+                            <div class="text-xs text-blue-600 text-center mt-1" id="saturationValue">100%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Physical Scanner Section -->
+            <div id="physicalSection" class="scanner-section hidden">
+                <div class="text-center py-12 bg-gray-100 rounded-lg mb-6">
+                    <div class="w-64 h-64 bg-white border-2 border-dashed border-gray-300 rounded-lg mx-auto flex items-center justify-center">
+                        <div class="text-center">
+                            <svg class="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path>
+                            </svg>
+                            <p class="text-gray-500">Connect your physical scanner via USB</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                    <h3 class="text-lg font-semibold text-blue-800 mb-2">Physical Scanner Setup</h3>
+                    <ul class="list-disc list-inside text-blue-700 space-y-1">
+                        <li>Connect your USB QR scanner to the computer</li>
+                        <li>Ensure the scanner is in "keyboard emulation" mode</li>
+                        <li>Click in the input field below and scan a QR code</li>
+                        <li>The system will automatically detect and process the scan</li>
+                    </ul>
+                </div>
+                
+                <div class="max-w-md mx-auto">
+                    <label for="physicalScannerInput" class="block text-sm font-medium text-gray-700 mb-1">Scan QR Code Here</label>
+                    <input type="text" id="physicalScannerInput" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Click here and scan QR code" autocomplete="off">
+                </div>
+            </div>
+            
+            <!-- Student Details Display -->
+            <div id="studentDetails" class="hidden mt-6 p-4 bg-white border border-gray-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-gray-800 mb-3">Student Details</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Student Name</label>
+                        <p id="detailName" class="text-gray-900 font-medium">-</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Student ID</label>
+                        <p id="detailId" class="text-gray-900 font-medium">-</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Grade/Class</label>
+                        <p id="detailGrade" class="text-gray-900">-</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Remarks</label>
+                        <p id="detailRemarks" class="font-semibold">-</p>
+                    </div>
+                </div>
+                
+                <!-- Quick Action Buttons -->
+                <div class="flex justify-center space-x-4 mt-6">
+                    <button id="quickTimeInBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-semibold transition duration-200 hidden">
+                        ✅ Quick Time In
+                    </button>
+                    <button id="quickTimeOutBtn" class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-semibold transition duration-200 hidden">
+                        🏠 Quick Time Out
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Scan Results -->
+            <div id="scanResults" class="mt-8 hidden">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Scan Results</h3>
+                <div id="resultContent" class="space-y-4">
+                    <!-- Results will be displayed here -->
+                </div>
+            </div>
+            
+            <!-- Recent Scans -->
+            <div class="mt-8">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Recent Scans</h3>
+                <div id="recentScans" class="space-y-3">
+                    <!-- Recent scans will be displayed here -->
+                </div>
+            </div>
+
+            <!-- Absent Students List -->
+            <div class="mt-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold text-gray-800">Absent Students Today</h3>
+                    <button onclick="loadAbsentStudents()" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                        Refresh
+                    </button>
+                </div>
+                <div id="absentStudents" class="space-y-3 max-h-64 overflow-y-auto">
+                    <div class="text-center py-8 text-gray-500">
+                        <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <p>No absent students found for today</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    <script src="qr-attendance-logic.js"></script>
+    <script src="qr-scanner.js"></script>
+</body>
+</html>

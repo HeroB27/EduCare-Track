@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Teacher Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .sidebar { transition: all 0.3s ease; }
+        .sidebar.collapsed { width: 70px; }
+        .sidebar.collapsed .sidebar-text { display: none; }
+        .main-content { transition: all 0.3s ease; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1); }
+        .status-present { background-color: #d1fae5; color: #065f46; }
+        .status-absent { background-color: #fee2e2; color: #991b1b; }
+        .status-late { background-color: #fef3c7; color: #92400e; }
+        .status-clinic { background-color: #dbeafe; color: #1e40af; }
+        .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: loading 1.5s infinite; }
+        @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+            <button id="sidebarToggle" class="ml-auto md:hidden">
+                <i class="fas fa-times text-gray-600"></i>
+            </button>
+        </div>
+        
+        <!-- User Info -->
+        <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center">
+                <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                    <span class="text-green-600 font-semibold" id="userInitials">TU</span>
+                </div>
+                <div class="ml-3 sidebar-text">
+                    <h2 class="font-semibold text-gray-800" id="userName">Teacher User</h2>
+                    <p class="text-sm text-gray-600 capitalize" id="userRole">teacher</p>
+                    <p class="text-xs text-gray-500" id="assignedClass">Grade 7 - Section A</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Menu -->
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li>
+                    <a href="teacher-dashboard.html" class="nav-item flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg transition duration-200">
+                        <i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text font-medium">Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-students.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">My Students</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Attendance</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-excuses.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-file-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Excuse Letters</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-reports.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Class Reports</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Announcements</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-notifications.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bell w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Notifications</span>
+                        <span id="notificationBoxCount" class="ml-auto bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-200">
+            <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+                <i class="fas fa-sign-out-alt w-5 h-5 mr-2"></i>
+                Sign Out
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content ml-64 p-6 fade-in">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Teacher Dashboard</h1>
+                <p class="text-gray-600">Welcome to your class management dashboard</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <!-- Current Time -->
+                <div class="text-sm text-gray-500">
+                    <span id="currentTime">Loading...</span>
+                </div>
+                <!-- Notifications -->
+                <div class="relative">
+                    <button id="notificationsBtn" class="relative p-2 text-gray-600 hover:text-blue-600 rounded-full hover:bg-gray-100">
+                        <i class="fas fa-bell"></i>
+                        <span id="notificationCount" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dashboard Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
+                        <i class="fas fa-user-graduate text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold text-gray-800" id="totalStudents">0</h3>
+                        <p class="text-gray-600">Total Students</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-green-100 text-green-600 mr-4">
+                        <i class="fas fa-user-check text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold text-gray-800" id="presentStudents">0</h3>
+                        <p class="text-gray-600">Present Today</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-yellow-100 text-yellow-600 mr-4">
+                        <i class="fas fa-clock text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold text-gray-800" id="lateStudents">0</h3>
+                        <p class="text-gray-600">Late Arrivals</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-purple-100 text-purple-600 mr-4">
+                        <i class="fas fa-clinic-medical text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold text-gray-800" id="clinicStudents">0</h3>
+                        <p class="text-gray-600">In Clinic</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts and Quick Actions -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <!-- Attendance Chart -->
+            <div class="lg:col-span-2 bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-800">Class Attendance Trend</h3>
+                    <select id="chartTimeRange" class="text-sm border border-gray-300 rounded px-2 py-1">
+                        <option value="7">Last 7 days</option>
+                        <option value="14">Last 14 days</option>
+                        <option value="30">Last 30 days</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+                    <div class="md:col-span-2 h-64">
+                        <canvas id="attendanceChart"></canvas>
+                    </div>
+                    <div class="h-64">
+                        <canvas id="statusDonut"></canvas>
+                    </div>
+                </div>
+                <div class="mt-6">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Weekly Heatmap</h4>
+                    <div id="weeklyHeatmap" class="overflow-x-auto">
+                        <div class="text-gray-500 text-sm">Loading...</div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Top Late Students</h3>
+                <div id="topLateList" class="space-y-3">
+                    <div class="text-gray-500 text-sm">Loading...</div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Clinic Validations</h3>
+                <div id="clinicValidations" class="space-y-3">
+                    <div class="text-gray-500 text-sm">No pending validations</div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-800">Clinic Reasons (Class)</h3>
+                    <select id="teacherClinicTrendRange" class="text-sm border border-gray-300 rounded px-2 py-1">
+                        <option value="7">7d</option>
+                        <option value="30">30d</option>
+                        <option value="90">90d</option>
+                    </select>
+                </div>
+                <div class="h-64">
+                    <canvas id="teacherClinicReasonsChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Quick Actions -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Quick Actions</h3>
+                <div class="space-y-3">
+                    <a href="teacher-students.html" class="flex items-center p-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition duration-200">
+                        <i class="fas fa-user-graduate text-blue-600 text-lg mr-3"></i>
+                        <span class="font-medium text-blue-800">View Students</span>
+                    </a>
+                    <a href="teacher-attendance.html" class="flex items-center p-3 bg-green-50 hover:bg-green-100 rounded-lg transition duration-200">
+                        <i class="fas fa-clipboard-check text-green-600 text-lg mr-3"></i>
+                        <span class="font-medium text-green-800">Take Attendance</span>
+                    </a>
+                    <a href="teacher-excuses.html" class="flex items-center p-3 bg-yellow-50 hover:bg-yellow-100 rounded-lg transition duration-200">
+                        <i class="fas fa-file-alt text-yellow-600 text-lg mr-3"></i>
+                        <span class="font-medium text-yellow-800">Review Excuses</span>
+                    </a>
+                    <a href="teacher-announcements.html" class="flex items-center p-3 bg-purple-50 hover:bg-purple-100 rounded-lg transition duration-200">
+                        <i class="fas fa-bullhorn text-purple-600 text-lg mr-3"></i>
+                        <span class="font-medium text-purple-800">Post Announcement</span>
+                    </a>
+                    <li>
+                      <a href="teacher-clinic.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                         <i class="fas fa-clinic-medical w-5 h-5 mr-3"></i>
+                          <span class="sidebar-text">Clinic Management</span>
+                         </a>
+                    </li>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity and Student Status -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Recent Activity -->
+            <div class="lg:col-span-2 bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Recent Class Activity</h3>
+                <div id="recentActivity" class="space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                                <i class="fas fa-user-clock text-blue-600 text-sm"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium">Loading recent activity...</p>
+                                <p class="text-xs text-gray-500">Please wait</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Student Status Overview -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">Student Status</h3>
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-700">Present in Class</span>
+                        <span class="font-semibold text-green-600" id="inClassCount">0</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-700">In Clinic</span>
+                        <span class="font-semibold text-blue-600" id="inClinicCount">0</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-700">Absent</span>
+                        <span class="font-semibold text-red-600" id="absentCount">0</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-700">Late Today</span>
+                        <span class="font-semibold text-yellow-600" id="lateCount">0</span>
+                    </div>
+                    <div class="pt-4 border-t border-gray-200">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-700 font-medium">Total</span>
+                            <span class="font-bold text-gray-800" id="totalStatusCount">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications Modal -->
+    <div id="notificationsModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-xl w-full">
+            <div class="px-6 py-4 border-b flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-800">Notifications</h3>
+                <button onclick="window.teacherDashboard.hideNotifications()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="notificationsList" class="max-h-96 overflow-y-auto">
+            </div>
+            <div class="px-6 py-4 border-t flex justify-end space-x-2">
+                <button onclick="window.teacherDashboard.markAllNotificationsRead()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Mark all as read</button>
+                <button onclick="window.teacherDashboard.hideNotifications()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inline Notification Modal -->
+    <div id="inlineNotificationModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="px-6 py-4 border-b">
+                <h3 id="inlineNotificationTitle" class="text-lg font-semibold text-gray-800">Info</h3>
+            </div>
+            <div class="px-6 py-4">
+                <p id="inlineNotificationMessage" class="text-sm text-gray-700"></p>
+            </div>
+            <div class="px-6 py-4 border-t flex justify-end">
+                <button onclick="document.getElementById('inlineNotificationModal').classList.add('hidden')" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">OK</button>
+            </div>
+        </div>
+    </div>
+
+    
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50 hidden">
+        <div class="text-center">
+            <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p class="text-gray-600">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Database: Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    
+    <!-- Teacher Dashboard Script -->
+    <script>
+        class TeacherDashboard {
+            constructor() {
+                this.currentUser = null;
+                this.assignedClass = null;
+                this.classStudents = [];
+                this.attendanceChart = null;
+                this.init();
+            }
+
+            async init() {
+                try {
+                    this.showLoading();
+                    
+                    // Wait for EducareTrack to be ready
+                    if (!window.EducareTrack) {
+                        setTimeout(() => this.init(), 100);
+                        return;
+                    }
+
+                    // Check if user is logged in
+                    const savedUser = localStorage.getItem('educareTrack_user');
+                    if (!savedUser) {
+                        window.location.href = '../index.html';
+                        return;
+                    }
+
+                    this.currentUser = JSON.parse(savedUser);
+                    
+                    if (this.currentUser.role !== 'teacher') {
+                        window.location.href = `../${this.currentUser.role}/${this.currentUser.role}-dashboard.html`;
+                        return;
+                    }
+
+                    this.updateUI();
+                    await this.loadTeacherData();
+                    this.initEventListeners();
+                    this.initCharts();
+                    
+                    this.hideLoading();
+                } catch (error) {
+                    console.error('Teacher dashboard initialization failed:', error);
+                    this.hideLoading();
+                }
+            }
+
+            updateUI() {
+                document.getElementById('userName').textContent = this.currentUser.name;
+                document.getElementById('userRole').textContent = this.currentUser.role;
+                document.getElementById('userInitials').textContent = this.currentUser.name
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .substring(0, 2)
+                    .toUpperCase();
+
+                if (this.currentUser.classId) {
+                    document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.classId;
+                }
+
+                this.updateCurrentTime();
+                setInterval(() => this.updateCurrentTime(), 60000);
+            }
+
+            updateCurrentTime() {
+                const now = new Date();
+                document.getElementById('currentTime').textContent = now.toLocaleString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+
+            async loadTeacherData() {
+                try {
+                    if (!window.EducareTrack) {
+                        console.error('EducareTrack not available');
+                        return;
+                    }
+
+                    // Load assigned class information
+                    if (this.currentUser.classId) {
+                        this.assignedClass = await EducareTrack.getClassById(this.currentUser.classId);
+                    }
+
+                    // Load class students
+                    await this.loadClassStudents();
+
+                    // Load dashboard stats
+                    await this.loadDashboardStats();
+
+                    // Load recent activity
+                    await this.loadRecentActivity();
+
+                    // Load notifications
+                    await this.loadNotifications();
+
+                } catch (error) {
+                    console.error('Error loading teacher data:', error);
+                }
+            }
+
+            async loadClassStudents() {
+                try {
+                    this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+                    this.updateStudentStatus();
+                } catch (error) {
+                    console.error('Error loading class students:', error);
+                }
+            }
+
+            async loadDashboardStats() {
+                try {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    // Get today's attendance
+                    const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                        .where('timestamp', '>=', today)
+                        .where('classId', '==', this.currentUser.classId)
+                        .get();
+
+                    const presentStudents = new Set();
+                    const lateStudents = new Set();
+                    const clinicStudents = new Set();
+
+                    attendanceSnapshot.forEach(doc => {
+                        const record = doc.data();
+                        if (record.entryType === 'entry') {
+                            if (record.status === 'late') {
+                                lateStudents.add(record.studentId);
+                            } else if (record.status === 'present') {
+                                presentStudents.add(record.studentId);
+                            }
+                        }
+                    });
+
+                    // Get current clinic visits
+                    const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                        .where('checkIn', '==', true)
+                        .where('classId', '==', this.currentUser.classId)
+                        .get();
+
+                    clinicSnapshot.forEach(doc => {
+                        const visit = doc.data();
+                        clinicStudents.add(visit.studentId);
+                    });
+
+                    // Update UI
+                    document.getElementById('totalStudents').textContent = this.classStudents.length;
+                    document.getElementById('presentStudents').textContent = presentStudents.size;
+                    document.getElementById('lateStudents').textContent = lateStudents.size;
+                    document.getElementById('clinicStudents').textContent = clinicStudents.size;
+
+                } catch (error) {
+                    console.error('Error loading dashboard stats:', error);
+                }
+            }
+
+            updateStudentStatus() {
+                const inClassCount = this.classStudents.filter(s => s.currentStatus === 'in_school').length;
+                const inClinicCount = this.classStudents.filter(s => s.currentStatus === 'in_clinic').length;
+                const absentCount = this.classStudents.filter(s => s.currentStatus === 'out_school').length;
+                
+                // Count late students (this would need additional logic based on today's attendance)
+                const lateCount = 0; // Placeholder
+
+                document.getElementById('inClassCount').textContent = inClassCount;
+                document.getElementById('inClinicCount').textContent = inClinicCount;
+                document.getElementById('absentCount').textContent = absentCount;
+                document.getElementById('lateCount').textContent = lateCount;
+                document.getElementById('totalStatusCount').textContent = this.classStudents.length;
+            }
+
+            async loadRecentActivity() {
+                try {
+                    const activity = await EducareTrack.getRecentActivity(10);
+                    const classActivity = activity.filter(item => 
+                        item.classId === this.currentUser.classId
+                    );
+
+                    const container = document.getElementById('recentActivity');
+                    
+                    if (classActivity.length === 0) {
+                        container.innerHTML = `
+                            <div class="text-center py-4 text-gray-500">
+                                <i class="fas fa-inbox text-2xl mb-2"></i>
+                                <p>No recent activity in your class</p>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    container.innerHTML = classActivity.slice(0, 5).map(item => `
+                        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div class="flex items-center">
+                                <div class="w-8 h-8 ${this.getActivityColor(item.entryType, item.status)} rounded-full flex items-center justify-center mr-3">
+                                    <i class="${this.getActivityIcon(item.entryType, item.status)} text-sm"></i>
+                                </div>
+                                <div>
+                                    <p class="text-sm font-medium">${item.studentName}</p>
+                                    <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
+                                </div>
+                            </div>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                        </div>
+                    `).join('');
+                } catch (error) {
+                    console.error('Error loading recent activity:', error);
+                }
+            }
+
+            async loadNotifications() {
+                try {
+                    if (!this.currentUser) return;
+
+                    const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true, 10);
+                    const unreadCount = notifications.filter(n => 
+                        !n.readBy || !n.readBy.includes(this.currentUser.id)
+                    ).length;
+
+                    // Update notification badge
+                    const badge = document.getElementById('notificationCount');
+                    if (unreadCount > 0) {
+                        badge.textContent = unreadCount;
+                        badge.classList.remove('hidden');
+                    } else {
+                        badge.classList.add('hidden');
+                    }
+
+                    // Store notifications for modal
+                    this.notifications = notifications;
+
+                } catch (error) {
+                    console.error('Error loading notifications:', error);
+                }
+            }
+
+            getActivityColor(entryType, status) {
+                if (status === 'late') return 'bg-yellow-100 text-yellow-600';
+                if (status === 'in_clinic') return 'bg-blue-100 text-blue-600';
+                return entryType === 'entry' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600';
+            }
+
+            getActivityIcon(entryType, status) {
+                if (status === 'late') return 'fas fa-clock';
+                if (status === 'in_clinic') return 'fas fa-clinic-medical';
+                return entryType === 'entry' ? 'fas fa-sign-in-alt' : 'fas fa-sign-out-alt';
+            }
+
+            getActivityText(activity) {
+                if (activity.status === 'late') {
+                    return `Late arrival at ${activity.time}`;
+                } else if (activity.status === 'in_clinic') {
+                    return `Checked into clinic`;
+                } else {
+                    return `${activity.entryType === 'entry' ? 'Arrived' : 'Left'} at ${activity.time}`;
+                }
+            }
+
+            formatTime(date) {
+                if (!date) return 'N/A';
+                return new Date(date).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+
+            initEventListeners() {
+                // Sidebar toggle
+                document.getElementById('sidebarToggle').addEventListener('click', () => {
+                    this.toggleSidebar();
+                });
+
+                // Logout via modal
+                document.getElementById('logoutBtn').addEventListener('click', async () => {
+                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                        : true;
+                    if (ok) {
+                        localStorage.removeItem('educareTrack_user');
+                        window.location.href = '../index.html';
+                    }
+                });
+
+                // Notifications
+                document.getElementById('notificationsBtn').addEventListener('click', () => {
+                    this.showNotifications();
+                });
+            }
+
+            initCharts() {
+                const ctx = document.getElementById('attendanceChart').getContext('2d');
+                this.attendanceChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                        datasets: [{
+                            label: 'Attendance Rate',
+                            data: [85, 92, 78, 88, 95],
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                ticks: {
+                                    callback: function(value) {
+                                        return value + '%';
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Weekly Class Attendance'
+                            }
+                        }
+                    }
+                });
+            }
+
+            async showNotifications() {
+                const modal = document.getElementById('notificationsModal');
+                const list = document.getElementById('notificationsList');
+
+                if (this.notifications && this.notifications.length > 0) {
+                    list.innerHTML = this.notifications.map(notification => `
+                        <div class="p-3 border-b border-gray-200 last:border-b-0">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <h4 class="font-semibold text-gray-800">${notification.title}</h4>
+                                    <p class="text-sm text-gray-600 mt-1">${notification.message}</p>
+                                    <p class="text-xs text-gray-500 mt-2">${this.formatTime(notification.createdAt?.toDate())}</p>
+                                </div>
+                                ${!notification.readBy || !notification.readBy.includes(this.currentUser.id) ? 
+                                    '<span class="w-2 h-2 bg-blue-500 rounded-full ml-2 mt-1"></span>' : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    list.innerHTML = `
+                        <div class="text-center py-8 text-gray-500">
+                            <i class="fas fa-bell-slash text-2xl mb-2"></i>
+                            <p>No notifications</p>
+                        </div>
+                    `;
+                }
+
+                modal.classList.remove('hidden');
+            }
+
+            hideNotifications() {
+                document.getElementById('notificationsModal').classList.add('hidden');
+            }
+
+            async markAllNotificationsRead() {
+                try {
+                    if (!this.notifications || !this.currentUser) return;
+
+                    const promises = this.notifications.map(notification => 
+                        EducareTrack.markNotificationAsRead(notification.id)
+                    );
+
+                    await Promise.all(promises);
+                    
+                    // Reload notifications
+                    await this.loadNotifications();
+                    this.hideNotifications();
+                    
+                    this.showNotification('All notifications marked as read', 'success');
+                } catch (error) {
+                    console.error('Error marking notifications as read:', error);
+                    this.showNotification('Error updating notifications', 'error');
+                }
+            }
+
+            toggleSidebar() {
+                const sidebar = document.querySelector('.sidebar');
+                const mainContent = document.querySelector('.main-content');
+                
+                if (sidebar.classList.contains('collapsed')) {
+                    sidebar.classList.remove('collapsed');
+                    mainContent.classList.remove('ml-16');
+                    mainContent.classList.add('ml-64');
+                } else {
+                    sidebar.classList.add('collapsed');
+                    mainContent.classList.remove('ml-64');
+                    mainContent.classList.add('ml-16');
+                }
+            }
+
+            showLoading() {
+                document.getElementById('loadingSpinner').classList.remove('hidden');
+            }
+
+            hideLoading() {
+                document.getElementById('loadingSpinner').classList.add('hidden');
+            }
+
+            showNotification(message, type = 'info') {
+                const modal = document.getElementById('inlineNotificationModal');
+                const titleEl = document.getElementById('inlineNotificationTitle');
+                const msgEl = document.getElementById('inlineNotificationMessage');
+                titleEl.textContent = type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info');
+                msgEl.textContent = message;
+                modal.classList.remove('hidden');
+            }
+        }
+
+        // Initialize dashboard when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            window.teacherDashboard = new TeacherDashboard();
+        });
+    </script>
+</body>
+</html>

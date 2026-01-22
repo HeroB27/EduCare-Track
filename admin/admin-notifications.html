@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EducareTrack - Admin Notifications</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .sidebar { transition: all 0.3s ease; }
+    .sidebar.collapsed { width: 70px; }
+    .sidebar.collapsed .sidebar-text { display: none; }
+    .main-content { transition: all 0.3s ease; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40">
+    <div class="p-6 border-b border-gray-200 flex items-center">
+      <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+        <span class="text-white font-bold">ET</span>
+      </div>
+      <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+      <button id="sidebarToggle" class="ml-auto md:hidden">
+        <i class="fas fa-times text-gray-600"></i>
+      </button>
+    </div>
+
+    <div class="p-4 border-b border-gray-200">
+      <div class="flex items-center">
+        <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+          <span class="text-blue-600 font-semibold" id="userInitials">AD</span>
+        </div>
+        <div class="ml-3 sidebar-text">
+          <h2 class="font-semibold text-gray-800" id="userName">Admin User</h2>
+          <p class="text-sm text-gray-600 capitalize" id="userRole">admin</p>
+        </div>
+      </div>
+    </div>
+
+    <nav class="flex-1 p-4">
+      <ul class="space-y-2">
+        <li>
+          <a href="admin-dashboard.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Dashboard</span>
+          </a>
+        </li>
+        <li>
+          <a href="user-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-users w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">User Management</span>
+          </a>
+        </li>
+        <li>
+          <a href="student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Student Management</span>
+          </a>
+        </li>
+        <li>
+          <a href="class-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-chalkboard w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Class Management</span>
+          </a>
+        </li>
+        <li>
+          <a href="attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Attendance</span>
+          </a>
+        </li>
+        <li>
+          <a href="admin-records.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Reports & Analytics</span>
+          </a>
+        </li>
+        <li>
+          <a href="announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Announcements</span>
+          </a>
+        </li>
+        <li>
+          <a href="id-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-id-card w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">ID Management</span>
+          </a>
+        </li>
+        <li>
+          <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
+            <span class="sidebar-text">Enroll Student</span>
+          </a>
+        </li>
+        <li>
+          <a href="admin-notifications.html" class="nav-item flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg transition duration-200">
+            <i class="fas fa-bell w-5 h-5 mr-3"></i>
+            <span class="sidebar-text font-medium">Notifications</span>
+            <span id="notificationBoxCount" class="ml-auto text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-600 hidden">0</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="p-4 border-t border-gray-200">
+      <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+        <i class="fas fa-sign-out-alt w-5 h-5 mr-2"></i>
+        Sign Out
+      </button>
+    </div>
+  </div>
+
+  <div class="main-content ml-64 p-6 fade-in">
+    <header class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-800">Notifications</h1>
+        <p class="text-gray-600">Review and manage notifications</p>
+      </div>
+      <div class="flex items-center space-x-4">
+        <div class="text-sm text-gray-500">
+          <span id="currentTime">Loading...</span>
+        </div>
+        <div class="relative">
+          <button id="notificationsBtn" class="relative p-2 text-gray-600 hover:text-blue-600 rounded-full hover:bg-gray-100">
+            <i class="fas fa-bell"></i>
+            <span id="notificationCount" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="bg-white rounded-lg shadow-md p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-2">
+          <button id="filterAll" class="text-sm px-3 py-1 rounded bg-gray-100">All</button>
+          <button id="filterUnread" class="text-sm px-3 py-1 rounded">Unread</button>
+          <button id="filterUrgent" class="text-sm px-3 py-1 rounded">Urgent</button>
+        </div>
+        <div class="text-sm text-gray-500" id="notifSummary"></div>
+      </div>
+      <div id="notificationsList" class="divide-y"></div>
+      <div class="mt-4 flex justify-end">
+        <button id="markAllReadPage" class="text-sm text-blue-600">Mark all read</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK (v8) must load before core.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+  <script src="../core.js"></script>
+  <script src="../shared/notifications-page.js"></script>
+</body>
+</html>

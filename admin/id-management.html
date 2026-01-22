@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - ID Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Add QR Code Generator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+    <style>
+        .sidebar { transition: all 0.3s ease; }
+        .sidebar.collapsed { width: 70px; }
+        .sidebar.collapsed .sidebar-text { display: none; }
+        .main-content { transition: all 0.3s ease; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1); }
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+        }
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .id-cr80 { width: 2.125in; height: 3.375in; border-radius: 0.125in; overflow: hidden; }
+        .print-only { display: none; }
+        @media print {
+            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            .print-only { display: block; }
+            body { margin: 0; padding: 0; background: white; }
+            .id-card { 
+                box-shadow: none; 
+                margin: 0; 
+                transform: none !important;
+                width: 100% !important;
+                height: auto !important;
+            }
+            .id-cr80 { width: 2.125in; height: 3.375in; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40 no-print">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+            <button id="sidebarToggle" class="ml-auto md:hidden">
+                <i class="fas fa-times text-gray-600"></i>
+            </button>
+        </div>
+        
+        <!-- User Info -->
+        <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center">
+                <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <span class="text-blue-600 font-semibold" id="userInitials">AD</span>
+                </div>
+                <div class="ml-3 sidebar-text">
+                    <h2 class="font-semibold text-gray-800" id="userName">Admin User</h2>
+                    <p class="text-sm text-gray-600 capitalize" id="userRole">admin</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Menu -->
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li>
+                    <a href="admin-dashboard.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="user-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-users w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">User Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Student Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="class-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chalkboard w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Class Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Attendance</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="reports.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Reports & Analytics</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Announcements</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="id-management.html" class="nav-item flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg transition duration-200">
+                        <i class="fas fa-id-card w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text font-medium">ID Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-notifications.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bell w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Notifications</span>
+                        <span id="notificationBoxCount" class="ml-auto text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-600 hidden">0</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-200">
+            <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+                <i class="fas fa-sign-out-alt w-5 h-5 mr-2"></i>
+                Sign Out
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content ml-64 p-6 fade-in">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8 no-print">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">ID Management</h1>
+                <p class="text-gray-600">Update student and parent information, reissue IDs</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <!-- Current Time -->
+                <div class="text-sm text-gray-500">
+                    <span id="currentTime">Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Search Section -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8 no-print">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Search Student</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label for="searchInput" class="block text-sm font-medium text-gray-700 mb-1">Search by Name, LRN, or ID</label>
+                    <input type="text" id="searchInput" placeholder="Enter student name, LRN, or ID..." 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label for="gradeFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by Grade</label>
+                    <select id="gradeFilter" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">All Grades</option>
+                        <option value="Kindergarten">Kindergarten</option>
+                        <option value="Grade 1">Grade 1</option>
+                        <option value="Grade 2">Grade 2</option>
+                        <option value="Grade 3">Grade 3</option>
+                        <option value="Grade 4">Grade 4</option>
+                        <option value="Grade 5">Grade 5</option>
+                        <option value="Grade 6">Grade 6</option>
+                        <option value="Grade 7">Grade 7</option>
+                        <option value="Grade 8">Grade 8</option>
+                        <option value="Grade 9">Grade 9</option>
+                        <option value="Grade 10">Grade 10</option>
+                        <option value="Grade 11">Grade 11</option>
+                        <option value="Grade 12">Grade 12</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="strandFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by Strand (SHS)</label>
+                    <select id="strandFilter" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">All Strands</option>
+                        <option value="STEM">STEM</option>
+                        <option value="ABM">ABM</option>
+                        <option value="HUMSS">HUMSS</option>
+                        <option value="GAS">GAS</option>
+                        <option value="ICT">ICT</option>
+                        <option value="TVL-ICT">TVL-ICT</option>
+                        <option value="TVL-HE">TVL-HE</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-4">
+                <button id="searchBtn" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                    <i class="fas fa-search mr-2"></i>Search
+                </button>
+                <button id="clearSearchBtn" class="ml-2 px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition duration-200">
+                    <i class="fas fa-times mr-2"></i>Clear
+                </button>
+            </div>
+        </div>
+
+        <!-- Search Results -->
+        <div id="searchResults" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden no-print">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Search Results</h2>
+            <div id="resultsList" class="space-y-3">
+                <!-- Results will be populated here -->
+            </div>
+        </div>
+
+        <!-- Student Information Form -->
+        <div id="studentInfoForm" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden no-print">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Student Information</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Student Details -->
+                <div>
+                    <h3 class="text-md font-medium text-gray-700 mb-3">Student Details</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="studentName" class="block text-sm font-medium text-gray-700 mb-1">Student Name</label>
+                            <input type="text" id="studentName" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="studentLRN" class="block text-sm font-medium text-gray-700 mb-1">LRN</label>
+                            <input type="text" id="studentLRN" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="studentGrade" class="block text-sm font-medium text-gray-700 mb-1">Grade Level</label>
+                            <select id="studentGrade" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <option value="Kindergarten">Kindergarten</option>
+                                <option value="Grade 1">Grade 1</option>
+                                <option value="Grade 2">Grade 2</option>
+                                <option value="Grade 3">Grade 3</option>
+                                <option value="Grade 4">Grade 4</option>
+                                <option value="Grade 5">Grade 5</option>
+                                <option value="Grade 6">Grade 6</option>
+                                <option value="Grade 7">Grade 7</option>
+                                <option value="Grade 8">Grade 8</option>
+                                <option value="Grade 9">Grade 9</option>
+                                <option value="Grade 10">Grade 10</option>
+                                <option value="Grade 11">Grade 11</option>
+                                <option value="Grade 12">Grade 12</option>
+                            </select>
+                        </div>
+                        <div id="strandField" class="hidden">
+                            <label for="studentStrand" class="block text-sm font-medium text-gray-700 mb-1">Strand</label>
+                            <select id="studentStrand" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <option value="STEM">STEM</option>
+                                <option value="ABM">ABM</option>
+                                <option value="HUMSS">HUMSS</option>
+                                <option value="GAS">GAS</option>
+                                <option value="ICT">ICT</option>
+                                <option value="TVL-ICT">TVL-ICT</option>
+                                <option value="TVL-HE">TVL-HE</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="studentClass" class="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                            <select id="studentClass" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <!-- Classes will be populated dynamically -->
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Parent Details -->
+                <div>
+                    <h3 class="text-md font-medium text-gray-700 mb-3">Parent/Guardian Details</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="parentName" class="block text-sm font-medium text-gray-700 mb-1">Parent Name</label>
+                            <input type="text" id="parentName" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="parentPhone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                            <input type="text" id="parentPhone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="parentEmail" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                            <input type="email" id="parentEmail" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="parentAddress" class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                            <textarea id="parentAddress" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+                        </div>
+                        <div>
+                            <label for="parentRelationship" class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                            <select id="parentRelationship" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <option value="Parent">Parent</option>
+                                <option value="Guardian">Guardian</option>
+                                <option value="Relative">Relative</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Photo Section -->
+            <div class="mt-6">
+                <h3 class="text-md font-medium text-gray-700 mb-3">Student Photo</h3>
+                <div class="flex items-center space-x-6">
+                    <div id="currentPhoto" class="w-24 h-24 bg-gray-200 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-user text-gray-400 text-2xl"></i>
+                    </div>
+                    <div>
+                        <button id="updatePhotoBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                            <i class="fas fa-camera mr-2"></i>Update Photo
+                        </button>
+                        <p class="text-sm text-gray-500 mt-1">Click to upload a new photo (preview only)</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-6 flex space-x-4">
+                <button id="saveChangesBtn" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-200">
+                    <i class="fas fa-save mr-2"></i>Save Changes
+                </button>
+                <button id="reissueIDBtn" class="px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition duration-200">
+                    <i class="fas fa-redo mr-2"></i>Reissue ID
+                </button>
+                <button id="cancelEditBtn" class="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition duration-200">
+                    <i class="fas fa-times mr-2"></i>Cancel
+                </button>
+            </div>
+        </div>
+
+        <!-- ID Preview Section -->
+        <div id="idPreviewSection" class="bg-white rounded-lg shadow-md p-6 hidden no-print">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">ID Preview</h2>
+            <div class="flex flex-col lg:flex-row gap-8">
+                <!-- Student List -->
+                <div class="bg-gray-50 rounded-lg p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Student Information</h3>
+                    <div class="space-y-4">
+                        <div class="bg-white border border-gray-200 rounded-lg p-4">
+                            <div class="flex items-center space-x-3">
+                                <div id="previewStudentPhoto" class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <i class="fas fa-user text-blue-600"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <h4 id="previewStudentName" class="font-semibold text-gray-800">Student Name</h4>
+                                    <p id="previewStudentGrade" class="text-sm text-gray-600">Grade Level</p>
+                                    <p id="previewStudentLRN" class="text-xs text-gray-500">LRN: 123456789012</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ID Preview -->
+                <div class="bg-white rounded-xl p-6 flex-1 shadow-lg ring-1 ring-blue-200/60">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">ID Card Preview</h3>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- ID Card Front -->
+                    <div class="id-cr80 bg-white rounded-xl p-4 shadow-md ring-1 ring-gray-200">
+                        <div class="text-center mb-4">
+                            <h4 class="font-bold text-blue-900 text-lg tracking-wide">Educare Colleges</h4>
+                            <p class="text-sm text-gray-600">Purok 4 Irisan Baguio City</p>
+                        </div>
+                        <div class="flex space-x-4">
+                            <div class="w-24 h-24 bg-gray-100 rounded-lg ring-1 ring-gray-300 flex items-center justify-center overflow-hidden">
+                                <img id="idPreviewImage" class="w-full h-full object-cover hidden">
+                                <i class="fas fa-user text-gray-400 text-2xl" id="idPlaceholder"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="mb-2">
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Student Name</label>
+                                    <p id="idStudentName" class="font-semibold text-gray-800">-</p>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Address</label>
+                                    <p id="idAddress" class="font-semibold text-gray-800">-</p>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">Class</label>
+                                    <p id="idGradeLevel" class="font-semibold text-gray-800">-</p>
+                                </div>
+                                <div>
+                                    <label class="text-[11px] uppercase tracking-wider text-gray-500">LRN</label>
+                                    <p id="idLRN" class="font-semibold text-gray-800">-</p>
+                                </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <!-- ID Card Back -->
+                    <div class="id-cr80 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-md ring-1 ring-slate-700">
+                        <div class="text-center mb-4">
+                            <div id="qrCode" class="bg-white p-2 rounded-lg inline-block mb-2 shadow-sm ring-1 ring-gray-200">
+                                <!-- QR Code will be generated here -->
+                                <div class="w-24 h-24 bg-gray-100 flex items-center justify-center">
+                                    <i class="fas fa-qrcode text-gray-400 text-xl"></i>
+                                </div>
+                            </div>
+                            <p id="idStudentId" class="text-sm font-mono break-all tracking-wider">EDU-0000-0000-0000</p>
+                        </div>
+                        <div class="border-t border-slate-600 pt-3 mt-2">
+                            <h5 class="font-semibold mb-2">Parent/Guardian</h5>
+                            <div class="text-sm">
+                                <p id="idParentName"><strong>Parent:</strong> -</p>
+                                <p id="idParentPhone"><strong>Contact:</strong> -</p>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Print and Save Options -->
+            <div class="mt-6 flex flex-wrap gap-3 justify-center">
+                <button id="printIDBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                    <i class="fas fa-print mr-2"></i>Print ID
+                </button>
+                <button id="savePNGBtn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-200">
+                    <i class="fas fa-download mr-2"></i>Save as PNG
+                </button>
+                <button id="savePDFBtn" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition duration-200">
+                    <i class="fas fa-file-pdf mr-2"></i>Save as PDF
+                </button>
+                <button id="closePreviewBtn" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition duration-200">
+                    <i class="fas fa-times mr-2"></i>Close
+                </button>
+            </div>
+        </div>
+
+        <!-- Photo Upload Modal -->
+        <div id="photoModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden no-print">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                <h3 class="text-lg font-semibold text-gray-800 mb-2">Update Student Photo</h3>
+                <p class="text-sm text-yellow-600 mb-4 bg-yellow-50 p-2 rounded">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    Photos are for preview only and will not be saved to the database
+                </p>
+                <div class="space-y-4">
+                    <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                        <i class="fas fa-cloud-upload-alt text-gray-400 text-3xl mb-2"></i>
+                        <p class="text-gray-600">Drag & drop a photo here or click to browse</p>
+                        <input type="file" id="photoUpload" accept="image/*" class="hidden">
+                        <button id="browsePhotoBtn" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                            Browse Files
+                        </button>
+                    </div>
+                    <div id="photoPreview" class="hidden">
+                        <h4 class="text-md font-medium text-gray-700 mb-2">Preview</h4>
+                        <div class="w-32 h-32 mx-auto border rounded-lg overflow-hidden">
+                            <img id="previewImage" src="" alt="Preview" class="w-full h-full object-cover">
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end space-x-3">
+                    <button id="cancelPhotoBtn" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition duration-200">
+                        Cancel
+                    </button>
+                    <button id="savePhotoBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                        Update Preview
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success Modal -->
+        <div id="successModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden no-print">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-check text-green-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Success!</h3>
+                    <p id="successMessage" class="text-gray-600 mb-6">Changes saved successfully.</p>
+                    <button id="closeSuccessBtn" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200">
+                        Continue
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50 hidden no-print">
+            <div class="text-center">
+                <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p class="text-gray-600">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Print-Only ID Card (hidden until printing) -->
+    <div id="printIDCard" class="hidden print-only">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- ID Card Front -->
+            <div class="id-cr80 bg-white rounded-xl p-4 shadow-md ring-1 ring-gray-200">
+                <div class="text-center mb-4">
+                    <h4 class="font-bold text-blue-900 text-lg tracking-wide">Educare Colleges</h4>
+                    <p class="text-sm text-gray-600">Purok 4 Irisan Baguio City</p>
+                </div>
+                <div class="flex space-x-4">
+                    <div class="w-24 h-24 bg-gray-100 rounded-lg ring-1 ring-gray-300 flex items-center justify-center overflow-hidden">
+                        <img id="printPreviewImage" class="w-full h-full object-cover hidden">
+                        <i class="fas fa-user text-gray-400 text-2xl" id="printPlaceholder"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="mb-2">
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Student Name</label>
+                            <p id="printStudentName" class="font-semibold">-</p>
+                        </div>
+                        <div class="mb-2">
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Address</label>
+                            <p id="printAddress" class="font-semibold">-</p>
+                        </div>
+                        <div class="mb-2">
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">Class</label>
+                            <p id="printGradeLevel" class="font-semibold">-</p>
+                        </div>
+                        <div>
+                            <label class="text-[11px] uppercase tracking-wider text-gray-500">LRN</label>
+                            <p id="printLRN" class="font-semibold">-</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ID Card Back -->
+            <div class="id-cr80 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-md ring-1 ring-slate-700">
+                <div class="text-center mb-4">
+                    <div id="printQrCode" class="bg-white p-2 rounded-lg inline-block mb-2 shadow-sm ring-1 ring-gray-200">
+                        <!-- QR Code will be generated here -->
+                        <div class="w-24 h-24 bg-gray-100 flex items-center justify-center">
+                            <i class="fas fa-qrcode text-gray-400 text-xl"></i>
+                        </div>
+                    </div>
+                    <p id="printStudentId" class="text-sm font-mono break-all tracking-wider">EDU-0000-0000-0000</p>
+                </div>
+                <div class="border-t border-slate-600 pt-3 mt-2">
+                    <h5 class="font-semibold mb-2">Parent/Guardian</h5>
+                    <div class="text-sm">
+                        <p id="printParentName"><strong>Parent:</strong> -</p>
+                        <p id="printParentPhone"><strong>Contact:</strong> -</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Database: Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    
+    <!-- ID Management Script -->
+    <script src="id-management.js"></script>
+</body>
+</html>

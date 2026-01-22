@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinic Management - EducareTrack</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-blue-700 text-white p-4 shadow-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fas fa-stethoscope text-xl"></i>
+                <h1 class="text-xl font-bold">EducareTrack - Clinic</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span id="teacherName" class="font-medium">Loading...</span>
+                <a href="teacher-dashboard.html" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg transition">
+                    <i class="fas fa-arrow-left mr-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mx-auto p-4">
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-lg shadow border-l-4 border-blue-500">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <p class="text-gray-500 text-sm">Current in Clinic</p>
+                        <h3 id="currentInClinic" class="text-2xl font-bold">0</h3>
+                    </div>
+                    <i class="fas fa-user-injured text-blue-500 text-2xl"></i>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border-l-4 border-yellow-500">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <p class="text-gray-500 text-sm">Pending Decisions</p>
+                        <h3 id="pendingDecisions" class="text-2xl font-bold">0</h3>
+                    </div>
+                    <i class="fas fa-clock text-yellow-500 text-2xl"></i>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <p class="text-gray-500 text-sm">Today's Visits</p>
+                        <h3 id="todaysVisits" class="text-2xl font-bold">0</h3>
+                    </div>
+                    <i class="fas fa-calendar-day text-green-500 text-2xl"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Active Clinic Visits -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-lg shadow mb-6">
+                    <div class="p-4 border-b">
+                        <h2 class="text-xl font-bold flex items-center">
+                            <i class="fas fa-list mr-2 text-blue-600"></i>
+                            Active Clinic Visits
+                        </h2>
+                        <p class="text-gray-500 text-sm">Students currently in the clinic requiring your attention</p>
+                    </div>
+                    <div id="activeVisitsList" class="p-4">
+                        <!-- Active visits will be loaded here -->
+                        <div class="text-center py-8 text-gray-500">
+                            <i class="fas fa-user-md text-4xl mb-2"></i>
+                            <p>No students currently in the clinic</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Clinic Visit History -->
+                <div class="bg-white rounded-lg shadow">
+                    <div class="p-4 border-b">
+                        <h2 class="text-xl font-bold flex items-center">
+                            <i class="fas fa-history mr-2 text-gray-600"></i>
+                            Recent Clinic Visits
+                        </h2>
+                        <p class="text-gray-500 text-sm">History of clinic visits for your students</p>
+                    </div>
+                    <div class="p-4">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead>
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="visitHistoryTable" class="divide-y divide-gray-200">
+                                    <!-- History will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Decision Panel -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg shadow sticky top-4">
+                    <div class="p-4 border-b">
+                        <h2 class="text-xl font-bold flex items-center">
+                            <i class="fas fa-clipboard-check mr-2 text-green-600"></i>
+                            Authorization Panel
+                        </h2>
+                        <p class="text-gray-500 text-sm">Review and authorize clinic recommendations</p>
+                    </div>
+                    <div id="decisionPanel" class="p-4">
+                        <div class="text-center py-8 text-gray-500">
+                            <i class="fas fa-hand-pointer text-4xl mb-2"></i>
+                            <p>Select a student to make a decision</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    <script src="teacher-clinic.js"></script>
+</body>
+</html>

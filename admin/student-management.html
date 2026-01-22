@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Management - EducareTrack</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation Header -->
+    <nav class="bg-blue-600 text-white shadow-lg">
+    <div class="container mx-auto px-4 py-3">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center space-x-4">
+                <h1 class="text-xl font-bold">EducareTrack</h1>
+                <span class="text-blue-200">Student Management</span>
+            </div>
+            <div class="flex items-center space-x-4">
+                <button onclick="window.location.href='admin-dashboard.html'" 
+                        class="bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded-lg transition-colors">
+                    <i class="fas fa-arrow-left mr-2"></i>Back to Dashboard
+                </button>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<!-- Secondary Navigation -->
+<div class="bg-blue-500 text-white">
+    <div class="container mx-auto px-4 py-2">
+        <nav class="flex space-x-6 text-sm">
+            <a href="user-management.html" class="hover:text-blue-200 transition-colors">Users</a>
+            <a href="student-management.html" class="font-medium border-b-2 border-white pb-1">Students</a>
+            <a href="class-management.html" class="hover:text-blue-200 transition-colors">Classes</a>
+            <a href="id-management.html" class="hover:text-blue-200 transition-colors">ID Management</a>
+            <a href="add-parent-student.html" class="hover:text-blue-200 transition-colors">Enroll Student</a>
+        </nav>
+    </div>
+</div>
+
+    <div class="container mx-auto p-6">
+        <!-- Action Buttons and Search -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            
+                
+                <div class="flex flex-col md:flex-row gap-4 w-full md:w-auto">
+                    <div class="relative flex-1">
+                        <input type="text" id="searchStudents" placeholder="Search students..." 
+                               class="w-full border border-gray-300 rounded-md px-4 py-2 pl-10 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                               onkeyup="studentManagement.searchStudents()">
+                        <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                    </div>
+                    
+                    <select id="classFilter" onchange="studentManagement.filterStudents()" 
+                            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Classes</option>
+                    </select>
+                    
+                    <select id="statusFilter" onchange="studentManagement.filterStudents()" 
+                            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Status</option>
+                        <option value="in_school">In School</option>
+                        <option value="out_school">Out of School</option>
+                        <option value="in_clinic">In Clinic</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Students Table -->
+        <div class="bg-white rounded-lg shadow-md overflow-hidden">
+            <div class="p-4 border-b">
+                <h2 class="text-xl font-semibold text-gray-800">Student Records</h2>
+                <p class="text-sm text-gray-600 mt-1" id="studentCount">Loading students...</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Grade</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Activity</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentsTableBody" class="bg-white divide-y divide-gray-200">
+                        <!-- Students will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Detail Modal -->
+    <div id="studentDetailModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="bg-blue-600 text-white p-4 rounded-t-lg flex justify-between items-center">
+                <h3 class="text-lg font-semibold">Student Details</h3>
+                <button onclick="studentManagement.closeViewModal()" class="text-white hover:text-gray-200">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="p-6" id="studentDetailContent">
+                <!-- Student details will be loaded here -->
+            </div>
+            
+            <div class="bg-gray-50 px-6 py-3 rounded-b-lg flex justify-end space-x-3">
+                <button onclick="studentManagement.closeViewModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Student Modal -->
+    <div id="addStudentModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl mx-4">
+            <div class="flex justify-between items-center p-6 border-b">
+                <h3 id="studentModalTitle" class="text-xl font-semibold text-gray-800">Enroll New Student</h3>
+                <button onclick="studentManagement.closeModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <form id="studentForm" onsubmit="event.preventDefault(); studentManagement.saveStudent()">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentName">Full Name</label>
+                            <input type="text" id="studentName" required
+                                   class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentLRN">LRN</label>
+                            <input type="text" id="studentLRN"
+                                   class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentLevel">Level</label>
+                            <select id="studentLevel" required
+                                    class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                <option value="">Select Level</option>
+                                <option value="Elementary">Elementary</option>
+                                <option value="Junior High School">Junior High School</option>
+                                <option value="Senior High School">Senior High School</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentGrade">Grade/Year</label>
+                            <select id="studentGrade" required
+                                    class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                <option value="">Select Grade</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-4 hidden" id="strandGroup">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentStrand">Strand</label>
+                            <select id="studentStrand"
+                                    class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                <option value="">Select Strand</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentClass">Class</label>
+                            <select id="studentClass"
+                                    class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                <option value="">Select Class</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end pt-4 border-t mt-4">
+                        <button type="button" onclick="studentManagement.closeModal()" 
+                                class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded mr-2 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors">
+                            Save Student
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-lg flex items-center space-x-3">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <span class="text-gray-700">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Notifications -->
+    <div id="successNotification" class="fixed top-4 right-4 bg-green-500 text-white p-4 rounded-lg shadow-lg hidden z-50">
+        <div class="flex items-center space-x-2">
+            <i class="fas fa-check"></i>
+            <span></span>
+        </div>
+    </div>
+
+    <div id="errorNotification" class="fixed top-4 right-4 bg-red-500 text-white p-4 rounded-lg shadow-lg hidden z-50">
+        <div class="flex items-center space-x-2">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span></span>
+        </div>
+    </div>
+
+    <!-- Database: Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    <script src="student-management.js"></script>
+</body>
+</html>

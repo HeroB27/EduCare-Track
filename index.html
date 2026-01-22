@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .login-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+        .role-card {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .role-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        .role-card.selected {
+            border: 2px solid #3b82f6;
+            background-color: #eff6ff;
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .shake {
+            animation: shake 0.5s ease-in-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+    </style>
+</head>
+<body class="login-container flex items-center justify-center p-4">
+    <div class="login-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden fade-in">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 text-white text-center">
+            <div class="w-16 h-16 rounded-full bg-white bg-opacity-20 flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14v6l9-5m-9 5l-9-5m9 5v-6m0 0l-9-5m9 5l9-5"></path>
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold">EducareTrack</h1>
+            <p class="text-blue-100 mt-2">Student Attendance & Safety Monitoring</p>
+            <p id="loginStatus" class="text-xs mt-2 text-blue-50"></p>
+        </div>
+        
+        <!-- Login Form -->
+        <div class="p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-6 text-center">Sign In to Your Account</h2>
+            
+            <!-- Login Form -->
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label for="username" class="block text-sm font-medium text-gray-700 mb-1">
+                        Username
+                    </label>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
+                        placeholder="Enter your username"
+                        required
+                        autocomplete="username"
+                    >
+                </div>
+
+                <div class="mb-4">
+                    <label for="password" class="block text-sm font-medium text-gray-700 mb-1">
+                        Password
+                    </label>
+                    <input 
+                        type="password" 
+                        id="password" 
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
+                        placeholder="Enter your password"
+                        required
+                        autocomplete="current-password"
+                    >
+                </div>
+
+                <button 
+                    type="submit" 
+                    id="loginBtn"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-semibold transition duration-300 flex items-center justify-center shadow-md"
+                >
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                    </svg>
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Forgot Password -->
+            <div class="mt-4 pt-4 border-t border-gray-200">
+                <p class="text-sm text-gray-600 text-center">
+                    Forgot your password?
+                    <button 
+                        type="button" 
+                        id="contactAdminBtn"
+                        class="text-blue-600 hover:text-blue-700 font-semibold underline transition"
+                    >
+                        Contact Admin
+                    </button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Modal -->
+    <div id="statusModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+            <div id="statusContent" class="text-center">
+                <!-- Content will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <!-- Include Core JS -->
+    <script src="core.js"></script>
+
+    <script>
+        // DOM Ready
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginForm = document.getElementById('loginForm');
+            const loginBtn = document.getElementById('loginBtn');
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
+            const contactAdminBtn = document.getElementById('contactAdminBtn');
+            const statusModal = document.getElementById('statusModal');
+            const loginStatus = document.getElementById('loginStatus');
+            
+            // Contact Admin button handler
+            contactAdminBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                showStatus('info', 'Please contact your school administrator for password reset assistance.', true);
+            });
+            
+            // Form submission
+            loginForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const username = usernameInput.value.trim();
+                const password = passwordInput.value;
+                
+                // Validate inputs
+                if (!username) {
+                    showError('Please enter your username');
+                    usernameInput.focus();
+                    return;
+                }
+                
+                if (!password) {
+                    showError('Please enter your password');
+                    passwordInput.focus();
+                    return;
+                }
+                
+                // Disable login button and show loading
+                loginBtn.disabled = true;
+                loginBtn.innerHTML = `
+                    <div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Signing In...
+                `;
+                
+                // Show loading modal
+                showStatus('loading', 'Verifying your credentials...', false);
+                
+                try {
+                    // Authenticate user and get role
+                    const user = await authenticateUser(username, password);
+                    
+                    if (!user) {
+                        throw new Error('Invalid username or password');
+                    }
+                    
+                    const role = user.role;
+                    
+                    // Show success message
+                    showStatus('success', `Welcome back, ${user.name}! Redirecting to your dashboard...`);
+                    
+                    // Redirect to dashboard after a short delay
+                    setTimeout(() => {
+                        const dashboardUrl = getDashboardUrl(role);
+                        const redirectUrl = `${dashboardUrl}?uid=${encodeURIComponent(user.id)}&role=${encodeURIComponent(role)}`;
+                        window.location.href = redirectUrl;
+                    }, 2000);
+                    
+                } catch (error) {
+                    console.error('Login error:', error);
+                    // Show error message
+                    showStatus('error', error.message || 'Login failed. Please try again.');
+                    
+                    // Re-enable login button
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = `
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                        </svg>
+                        Sign In
+                    `;
+                    
+                    // Add shake animation to form
+                    loginForm.classList.add('shake');
+                    setTimeout(() => {
+                        loginForm.classList.remove('shake');
+                    }, 500);
+                }
+            });
+            
+            // Close modal when clicking outside
+            statusModal.addEventListener('click', function(e) {
+                if (e.target === statusModal) {
+                    statusModal.classList.add('hidden');
+                }
+            });
+            
+            // Authenticate user against Supabase
+            async function authenticateUser(username, password) {
+                try {
+                    if (!window.supabaseClient) {
+                        throw new Error('Supabase client not initialized');
+                    }
+                    
+                    // Query the users table
+                    const { data, error } = await window.supabaseClient
+                        .from('users')
+                        .select('id, username, password, name, role, is_active')
+                        .eq('username', username)
+                        .eq('is_active', true)
+                        .single();
+                    
+                    if (error || !data) {
+                        console.error('User not found:', error);
+                        throw new Error('Invalid username or password');
+                    }
+                    
+                    // Simple password comparison (in production, use bcrypt)
+                    if (data.password !== password) {
+                        throw new Error('Invalid username or password');
+                    }
+                    
+                    // Update last login
+                    await window.supabaseClient
+                        .from('users')
+                        .update({ last_login: new Date().toISOString() })
+                        .eq('id', data.id);
+                    
+                    return {
+                        id: data.id,
+                        name: data.name,
+                        role: data.role,
+                        username: data.username
+                    };
+                    
+                } catch (error) {
+                    console.error('Authentication error:', error);
+                    throw error;
+                }
+            }
+            
+            // Helper function to show error (without modal)
+            function showError(message) {
+                // Create temporary error message
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm';
+                errorDiv.textContent = message;
+                
+                // Insert after the form
+                loginForm.parentNode.insertBefore(errorDiv, loginForm);
+                
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    errorDiv.remove();
+                }, 3000);
+            }
+            
+            // Get dashboard URL based on role
+            function getDashboardUrl(role) {
+                const dashboards = {
+                    'admin': 'admin/admin-dashboard.html',
+                    'teacher': 'teacher/teacher-dashboard.html',
+                    'guard': 'guard/guard-dashboard.html',
+                    'clinic': 'clinic/clinic-dashboard.html',
+                    'parent': 'parent/parent-dashboard.html',
+                    'student': 'student-dashboard.html'
+                };
+                return dashboards[role] || 'dashboard.html';
+            }
+            
+            // Show status modal
+            function showStatus(type, message, autoClose = true) {
+                const modal = document.getElementById('statusModal');
+                const content = document.getElementById('statusContent');
+                
+                let icon, color;
+                
+                switch(type) {
+                    case 'success':
+                        icon = `
+                            <svg class="w-12 h-12 text-green-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        `;
+                        color = 'text-green-700';
+                        break;
+                    case 'error':
+                        icon = `
+                            <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        `;
+                        color = 'text-red-700';
+                        break;
+                    case 'loading':
+                        icon = `
+                            <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        `;
+                        color = 'text-blue-700';
+                        break;
+                    case 'info':
+                        icon = `
+                            <svg class="w-12 h-12 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        `;
+                        color = 'text-blue-700';
+                        break;
+                }
+                
+                content.innerHTML = `
+                    ${icon}
+                    <h3 class="text-lg font-semibold ${color} mb-2">${type === 'loading' ? 'Please Wait' : type === 'success' ? 'Success!' : type === 'error' ? 'Error' : 'Information'}</h3>
+                    <p class="text-gray-600">${message}</p>
+                `;
+                
+                modal.classList.remove('hidden');
+                
+                if (autoClose && type !== 'loading') {
+                    setTimeout(() => {
+                        modal.classList.add('hidden');
+                    }, 3000);
+                }
+                
+                return modal;
+            }
+        });
+    </script>
+</body>
+</html>
