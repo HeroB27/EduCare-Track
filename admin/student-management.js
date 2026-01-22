@@ -79,22 +79,22 @@ class StudentManagement {
         tableBody.innerHTML = this.filteredStudents.map(student => `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-mono font-medium text-gray-900">${student.studentId || student.id}</div>
+                    <div class="text-sm font-mono font-medium text-gray-900">${student.id}</div>
                     ${student.lrn ? `<div class="text-xs text-gray-500">LRN: ${student.lrn}</div>` : ''}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-medium text-gray-900">${student.name}</div>
-                    <div class="text-xs text-gray-500">${student.level} • ${student.strand || ''}</div>
+                    <div class="text-sm font-medium text-gray-900">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown'}</div>
+                    <div class="text-xs text-gray-500">${this.getClassById(student.class_id)?.level || 'N/A'} • ${student.strand || ''}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-500">${this.getClassById(student.classId)?.name || 'N/A'}</div>
+                    <div class="text-sm text-gray-500">${this.getClassById(student.class_id)?.name || 'N/A'}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    ${student.grade}
+                    ${this.getClassById(student.class_id)?.grade || 'N/A'}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${this.getStatusColor(student.currentStatus)}">
-                        ${this.getStatusText(student.currentStatus)}
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${this.getStatusColor(student.current_status)}">
+                        ${this.getStatusText(student.current_status)}
                     </span>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -112,9 +112,9 @@ class StudentManagement {
                         <i class="fas fa-edit"></i>
                     </button>
                     <button onclick="studentManagement.toggleStudentStatus('${student.id}')" 
-                            class="${student.isActive ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} transition-colors"
-                            title="${student.isActive ? 'Deactivate' : 'Activate'} Student">
-                        <i class="fas ${student.isActive ? 'fa-user-slash' : 'fa-user-check'}"></i>
+                            class="${student.is_active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} transition-colors"
+                            title="${student.is_active ? 'Deactivate' : 'Activate'} Student">
+                        <i class="fas ${student.is_active ? 'fa-user-slash' : 'fa-user-check'}"></i>
                     </button>
                 </td>
             </tr>
@@ -214,17 +214,21 @@ class StudentManagement {
         try {
             this.showLoading();
 
+            const fullName = document.getElementById('studentName').value.trim();
+            const nameParts = fullName.split(' ');
+            const firstName = nameParts[0] || '';
+            const lastName = nameParts.slice(1).join(' ') || '';
+
             const studentData = {
-                name: document.getElementById('studentName').value,
+                first_name: firstName,
+                last_name: lastName,
                 lrn: document.getElementById('studentLRN').value || '',
-                grade: document.getElementById('studentGrade').value,
-                level: document.getElementById('studentLevel').value,
-                classId: document.getElementById('studentClass').value,
+                class_id: document.getElementById('studentClass').value,
                 strand: document.getElementById('studentStrand').value || ''
             };
 
             // Validate required fields
-            if (!studentData.name || !studentData.grade || !studentData.level) {
+            if (!studentData.first_name || !studentData.class_id) {
                 this.showNotification('Please fill in all required fields', 'error');
                 this.hideLoading();
                 return;
@@ -234,8 +238,8 @@ class StudentManagement {
                 // Update existing student
                 await window.EducareTrack.db.collection('students').doc(this.currentEditingStudent.id).update({
                     ...studentData,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedBy: window.EducareTrack.currentUser.id
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    updated_by: window.EducareTrack.currentUser.id
                 });
                 this.showNotification('Student updated successfully', 'success');
             } 
@@ -269,11 +273,11 @@ class StudentManagement {
     }
 
     populateStudentForm(student) {
-        document.getElementById('studentName').value = student.name || '';
+        document.getElementById('studentName').value = student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '';
         document.getElementById('studentLRN').value = student.lrn || '';
-        document.getElementById('studentClass').value = student.classId || '';
-        document.getElementById('studentGrade').value = student.grade || '';
-        document.getElementById('studentLevel').value = student.level || 'Elementary';
+        document.getElementById('studentClass').value = student.class_id || '';
+        document.getElementById('studentGrade').value = this.getClassById(student.class_id)?.grade || '';
+        document.getElementById('studentLevel').value = this.getClassById(student.class_id)?.level || 'Elementary';
         document.getElementById('studentStrand').value = student.strand || '';
         
         // Trigger level change to populate grades and show/hide strand
@@ -282,7 +286,7 @@ class StudentManagement {
         
         // Set grade after level has populated options
         setTimeout(() => {
-            const grade = student.grade || '';
+            const grade = this.getClassById(student.class_id)?.grade || '';
             document.getElementById('studentGrade').value = grade.replace('Grade ', '');
         }, 100);
     }
@@ -300,7 +304,7 @@ class StudentManagement {
             const [attendanceRecords, clinicVisits, parentInfo] = await Promise.all([
                 this.getAttendanceByStudent(studentId),
                 this.getClinicVisitsByStudent(studentId),
-                student.parentId ? window.EducareTrack.getUserById(student.parentId) : Promise.resolve(null)
+                student.parent_id ? window.EducareTrack.getUserById(student.parent_id) : Promise.resolve(null)
             ]);
 
             const schoolDays = this.countUniqueEntryDays(attendanceRecords);
@@ -313,17 +317,17 @@ class StudentManagement {
                     <div class="lg:col-span-1">
                         <div class="text-center">
                             <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4 overflow-hidden">
-                                ${student.photoUrl ? 
-                                    `<img src="${student.photoUrl}" alt="${student.name}" class="w-24 h-24 rounded-full object-cover">` :
-                                    `<span class="text-blue-600 font-semibold text-2xl">${student.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
+                                ${student.photo_url ? 
+                                    `<img src="${student.photo_url}" alt="${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Student'}" class="w-24 h-24 rounded-full object-cover">` :
+                                    `<span class="text-blue-600 font-semibold text-2xl">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}`.split(' ').map(n => n[0]).join('').substring(0, 2) : 'ST'}</span>`
                                 }
                             </div>
-                            <h3 class="text-xl font-bold text-gray-800">${student.name}</h3>
-                            <p class="text-gray-600">${student.grade} • ${student.level || 'N/A'}</p>
+                            <h3 class="text-xl font-bold text-gray-800">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown'}</h3>
+                            <p class="text-gray-600">${this.getClassById(student.class_id)?.grade || 'N/A'} • ${this.getClassById(student.class_id)?.level || 'N/A'}</p>
                             ${student.strand ? `<p class="text-gray-600">${student.strand}</p>` : ''}
                             <div class="mt-2">
-                                <span class="px-3 py-1 rounded-full text-sm font-medium ${this.getStatusColor(student.currentStatus)}">
-                                    ${this.getStatusText(student.currentStatus)}
+                                <span class="px-3 py-1 rounded-full text-sm font-medium ${this.getStatusColor(student.current_status)}">
+                                    ${this.getStatusText(student.current_status)}
                                 </span>
                             </div>
                         </div>
@@ -335,7 +339,7 @@ class StudentManagement {
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Student ID:</span>
-                                <span class="font-medium">${student.studentId || 'N/A'}</span>
+                                <span class="font-medium">${student.id || 'N/A'}</span>
                             </div>
                         </div>
                     </div>
@@ -414,7 +418,7 @@ class StudentManagement {
     async getAttendanceByStudent(studentId) {
         try {
             const snapshot = await window.EducareTrack.db.collection('attendance')
-                .where('studentId', '==', studentId)
+                .where('student_id', '==', studentId)
                 .orderBy('timestamp', 'desc')
                 .limit(50)
                 .get();
@@ -427,9 +431,9 @@ class StudentManagement {
 
     async getClinicVisitsByStudent(studentId) {
         try {
-            const snapshot = await window.EducareTrack.db.collection('clinic_visits')
-                .where('studentId', '==', studentId)
-                .orderBy('checkIn', 'desc')
+            const snapshot = await window.EducareTrack.db.collection('clinicVisits')
+                .where('student_id', '==', studentId)
+                .orderBy('timestamp', 'desc')
                 .limit(20)
                 .get();
             return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -516,7 +520,7 @@ class StudentManagement {
     async toggleStudentStatus(studentId) {
         const student = this.allStudents.find(s => s.id === studentId);
         if (student) {
-            const newStatus = !student.isActive;
+            const newStatus = !student.is_active;
             const confirmMessage = newStatus ? 
                 'Are you sure you want to activate this student?' : 
                 'Are you sure you want to deactivate this student?';
@@ -528,8 +532,8 @@ class StudentManagement {
                 try {
                     this.showLoading();
                     await window.EducareTrack.db.collection('students').doc(studentId).update({
-                        isActive: newStatus,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        is_active: newStatus,
+                        updated_at: firebase.firestore.FieldValue.serverTimestamp()
                     });
                     this.showNotification(`Student ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
                     await this.loadStudents();
@@ -557,7 +561,7 @@ class StudentManagement {
         classSelect.innerHTML = '<option value="">Select Class</option>';
         
         this.classes.forEach(cls => {
-            if (cls.isActive !== false) {
+            if (cls.is_active !== false) {
                 classSelect.innerHTML += `<option value="${cls.id}">${cls.name} - ${cls.grade} (${cls.level})</option>`;
             }
         });
@@ -568,7 +572,7 @@ class StudentManagement {
         filterSelect.innerHTML = '<option value="">All Classes</option>';
         
         this.classes.forEach(cls => {
-            if (cls.isActive !== false) {
+            if (cls.is_active !== false) {
                 filterSelect.innerHTML += `<option value="${cls.id}">${cls.name}</option>`;
             }
         });
@@ -584,11 +588,12 @@ class StudentManagement {
         const statusFilter = document.getElementById('statusFilter').value;
 
         this.filteredStudents = this.allStudents.filter(student => {
-            const matchesSearch = student.name.toLowerCase().includes(searchTerm) || 
-                                (student.studentId && student.studentId.toLowerCase().includes(searchTerm)) ||
+            const fullName = student.first_name && student.last_name ? `${student.first_name} ${student.last_name}`.toLowerCase() : '';
+            const matchesSearch = fullName.includes(searchTerm) || 
+                                (student.id && student.id.toLowerCase().includes(searchTerm)) ||
                                 (student.lrn && student.lrn.toLowerCase().includes(searchTerm));
-            const matchesClass = !classFilter || student.classId === classFilter;
-            const matchesStatus = !statusFilter || student.currentStatus === statusFilter;
+            const matchesClass = !classFilter || student.class_id === classFilter;
+            const matchesStatus = !statusFilter || student.current_status === statusFilter;
 
             return matchesSearch && matchesClass && matchesStatus;
         });

@@ -385,7 +385,7 @@
                         <label for="pivotSelect" class="text-sm text-gray-600">Pivot</label>
                         <select id="pivotSelect" class="text-sm border border-gray-300 rounded-md px-2 py-1">
                             <option value="none">None</option>
-                            <option value="classId">By Class</option>
+                            <option value="class_id">By Class</option>
                             <option value="grade">By Grade</option>
                         </select>
                     </div>
@@ -541,21 +541,32 @@
                     }
 
                     container.innerHTML = activity.map(item => {
-                        const time = item.timestamp?.toDate ? this.formatTime(item.timestamp.toDate()) : 'N/A';
+                        let time = 'N/A';
+                        if (item.timestamp) {
+                            if (typeof item.timestamp.toDate === 'function') {
+                                time = this.formatTime(item.timestamp.toDate());
+                            } else if (item.timestamp instanceof Date) {
+                                time = this.formatTime(item.timestamp);
+                            } else if (typeof item.timestamp === 'string') {
+                                time = this.formatTime(new Date(item.timestamp));
+                            } else {
+                                time = this.formatTime(new Date());
+                            }
+                        }
                         const activityTime = item.time || 'Unknown time';
                         
                         return `
                             <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                                 <div class="flex items-center">
-                                    <div class="w-8 h-8 ${this.getActivityColor(item.entryType)} rounded-full flex items-center justify-center mr-3">
-                                        <i class="${this.getActivityIcon(item.entryType)} text-sm"></i>
+                                    <div class="w-8 h-8 ${this.getActivityColor(item.entry_type)} rounded-full flex items-center justify-center mr-3">
+                                        <i class="${this.getActivityIcon(item.entry_type)} text-sm"></i>
                                     </div>
                                     <div>
                                         <p class="text-sm font-medium">${item.studentName || 'Unknown Student'}</p>
-                                        <p class="text-xs text-gray-500">${item.entryType === 'entry' ? 'Entered' : 'Exited'} at ${activityTime}</p>
+                                        <p class="text-xs text-gray-500">${item.entry_type === 'entry' ? 'Entered' : 'Exited'} at ${activityTime}</p>
                                     </div>
                                 </div>
-                                <span class="text-xs text-gray-500">${time}</span>
+                                <span class="text-xs text-gray-500">${activityTime}</span>
                             </div>
                         `;
                     }).join('');
@@ -859,12 +870,12 @@
                 }
             }
 
-            getActivityColor(entryType) {
-                return entryType === 'entry' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600';
+            getActivityColor(entry_type) {
+                return entry_type === 'entry' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600';
             }
 
-            getActivityIcon(entryType) {
-                return entryType === 'entry' ? 'fas fa-sign-in-alt' : 'fas fa-sign-out-alt';
+            getActivityIcon(entry_type) {
+                return entry_type === 'entry' ? 'fas fa-sign-in-alt' : 'fas fa-sign-out-alt';
             }
 
             formatTime(date) {
@@ -1074,7 +1085,7 @@
                                 return `
                                     <div class="border border-gray-200 rounded-md">
                                         <div class="px-3 py-2 bg-gray-50 text-gray-700 text-sm flex items-center justify-between">
-                                            <span>${pivot === 'classId' ? 'Class' : 'Grade'}: ${key}</span>
+                                            <span>${pivot === 'class_id' ? 'Class' : 'Grade'}: ${key}</span>
                                             <span class="text-gray-500">${list.length} records</span>
                                         </div>
                                         <div class="divide-y divide-gray-100">
@@ -1113,12 +1124,12 @@
                 return `
                     <div class="flex items-center justify-between p-3">
                         <div>
-                            <div class="text-sm font-medium text-gray-800">${it.studentName || it.studentId}</div>
+                            <div class="text-sm font-medium text-gray-800">${it.studentName || it.student_id}</div>
                             <div class="text-xs text-gray-500">${type === 'clinic' ? (it.notes || '') : ''}</div>
                             <div class="text-xs text-gray-400">${dateText}</div>
                         </div>
                         <div class="text-right">
-                            <div class="text-xs text-gray-500">${it.classId || ''}${it.grade ? ` • ${it.grade}` : ''}</div>
+                            <div class="text-xs text-gray-500">${it.class_id || ''}${it.grade ? ` • ${it.grade}` : ''}</div>
                             ${rightTag}
                         </div>
                     </div>
@@ -1140,7 +1151,7 @@
                         <div class=\"flex items-center justify-between border border-gray-200 rounded-md p-3\">\n
                             <div>\n
                                 <div class=\"text-sm font-medium text-gray-800\">${item.studentName}</div>\n
-                                <div class=\"text-xs text-gray-500\">Class: ${item.classId}</div>\n
+                                <div class=\"text-xs text-gray-500\">Class: ${item.class_id}</div>\n
                             </div>\n
                             <div class=\"flex items-center space-x-3\">\n
                                 <span class=\"text-xs px-2 py-1 rounded bg-red-100 text-red-700\">${item.absentDays} absences</span>\n

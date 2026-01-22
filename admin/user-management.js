@@ -93,8 +93,8 @@ class UserManagement {
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                        ${user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                        ${user.isActive ? 'Active' : 'Inactive'}
+                        ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                        ${user.is_active ? 'Active' : 'Inactive'}
                     </span>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -103,10 +103,10 @@ class UserManagement {
                             title="Edit User">
                         <i class="fas fa-edit"></i>
                     </button>
-                    <button onclick="userManagement.toggleUserStatus('${user.id}', ${!user.isActive})" 
-                            class="${user.isActive ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} transition-colors"
-                            title="${user.isActive ? 'Deactivate' : 'Activate'}">
-                        <i class="fas ${user.isActive ? 'fa-ban' : 'fa-check'}"></i>
+                    <button onclick="userManagement.toggleUserStatus('${user.id}', ${!user.is_active})" 
+                            class="${user.is_active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} transition-colors"
+                            title="${user.is_active ? 'Deactivate' : 'Activate'}">
+                        <i class="fas ${user.is_active ? 'fa-ban' : 'fa-check'}"></i>
                     </button>
                 </td>
             </tr>
@@ -709,15 +709,15 @@ class UserManagement {
                 assignedSubjects: this.selectedSubjects,
                 isHomeroom: document.getElementById('teacherHomeroom').checked,
                 role: 'teacher',
-                isActive: true,
+                is_active: true,
                 createdBy: window.EducareTrack.currentUser.id
             };
 
             if (this.currentEditingUser) {
                 await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
                     ...userData,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedBy: window.EducareTrack.currentUser.id
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    updated_by: window.EducareTrack.currentUser.id
                 });
                 this.showNotification('Teacher updated successfully', 'success');
             } else {
@@ -725,7 +725,7 @@ class UserManagement {
                 const teacherData = {
                     ...userData,
                     id: teacherId,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    created_at: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(teacherId).set(teacherData);
@@ -773,9 +773,9 @@ class UserManagement {
                 level: level,
                 strand: strand,
                 subjects: this.getSubjectsForClass(className),
-                isActive: true,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                createdBy: window.EducareTrack.currentUser.id
+                is_active: true,
+                created_at: firebase.firestore.FieldValue.serverTimestamp(),
+                created_by: window.EducareTrack.currentUser.id
             };
 
             const classRef = await window.EducareTrack.db.collection('classes').add(classData);
@@ -799,7 +799,7 @@ class UserManagement {
                 email: document.getElementById('userEmail').value || '',
                 phone: document.getElementById('userPhone').value || '',
                 role: this.currentRole,
-                isActive: true
+                is_active: true
             };
 
             // Add employee ID for guard and clinic staff
@@ -811,8 +811,8 @@ class UserManagement {
                 // Update existing user
                 await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
                     ...userData,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedBy: window.EducareTrack.currentUser.id
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    updated_by: window.EducareTrack.currentUser.id
                 });
                 this.showNotification('User updated successfully', 'success');
             } else {
@@ -821,7 +821,7 @@ class UserManagement {
                 const newUserData = {
                     ...userData,
                     id: userId,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    created_at: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(userId).set(newUserData);
@@ -850,15 +850,15 @@ class UserManagement {
                 emergencyContact: document.getElementById('emergencyContact').value || '',
                 children: this.currentEditingUser?.children || [],
                 role: 'parent',
-                isActive: true
+                is_active: true
             };
 
             if (this.currentEditingUser) {
                 // Update existing parent
                 await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
                     ...userData,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedBy: window.EducareTrack.currentUser.id
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    updated_by: window.EducareTrack.currentUser.id
                 });
                 this.showNotification('Parent updated successfully', 'success');
             } else {
@@ -867,7 +867,7 @@ class UserManagement {
                 const parentData = {
                     ...userData,
                     id: parentId,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    created_at: firebase.firestore.FieldValue.serverTimestamp()
                 };
 
                 await window.EducareTrack.db.collection('users').doc(parentId).set(parentData);
@@ -911,7 +911,7 @@ class UserManagement {
         try {
             this.showLoading();
             await window.EducareTrack.db.collection('users').doc(userId).update({
-                isActive: newStatus
+                is_active: newStatus
             });
             this.showNotification(`User ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
             await this.loadUsers();
@@ -938,8 +938,8 @@ class UserManagement {
                                 user.id.toLowerCase().includes(searchTerm);
             const matchesRole = !roleFilter || user.role === roleFilter;
             const matchesStatus = !statusFilter || 
-                                (statusFilter === 'active' && user.isActive) ||
-                                (statusFilter === 'inactive' && !user.isActive);
+                                (statusFilter === 'active' && user.is_active) ||
+                                (statusFilter === 'inactive' && !user.is_active);
 
             return matchesSearch && matchesRole && matchesStatus;
         });

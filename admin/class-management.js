@@ -47,7 +47,7 @@ class ClassManagement {
         try {
             const snapshot = await EducareTrack.db.collection('users')
                 .where('role', '==', 'teacher')
-                .where('isActive', '==', true)
+                .where('is_active', '==', true)
                 .get();
             this.teachers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             const teacherSelects = ['classTeacher','editClassTeacher'];

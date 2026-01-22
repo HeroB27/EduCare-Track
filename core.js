@@ -619,9 +619,9 @@ const EducareTrack = {
 
         // Only notifications for now - other data loaded on demand
         this.notificationsListener = db.collection('notifications')
-            .where('targetUsers', 'array-contains', this.currentUser.id)
+            .where('target_users', 'array-contains', this.currentUser.id)
             .where('is_active', '==', true)
-            .orderBy('createdAt', 'desc')
+            .orderBy('created_at', 'desc')
             .limit(10)
             .onSnapshot(snapshot => {
                 if (!this.notificationsInitialized) {
@@ -634,7 +634,7 @@ const EducareTrack = {
                 for (const change of changes) {
                     if (change.type === 'added') {
                         const notification = { id: change.doc.id, ...change.doc.data() };
-                        if (!notification.readBy || !notification.readBy.includes(this.currentUser.id)) {
+                        if (!notification.read_by || !notification.read_by.includes(this.currentUser.id)) {
                             newNotifications.push(notification);
                         }
                     }
@@ -779,18 +779,18 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('users')
-                    .select('id,email,name,role,phone,is_active,assignedClasses,assignedSubjects,classId,isHomeroom')
+                    .select('id,email,name,role,phone,is_active,assigned_classes,assigned_subjects,class_id,is_homeroom')
                     .eq('role', this.USER_TYPES.TEACHER)
-                    .contains('assignedSubjects', [subject])
-                    .contains('assignedClasses', [classId])
+                    .contains('assigned_subjects', [subject])
+                    .contains('assigned_classes', [classId])
                     .eq('is_active', true);
                 if (error || !data) return [];
                 return data.map(u => ({ id: u.id, ...u }));
             } else {
                 const snapshot = await db.collection('users')
                     .where('role', '==', this.USER_TYPES.TEACHER)
-                    .where('assignedSubjects', 'array-contains', subject)
-                    .where('assignedClasses', 'array-contains', classId)
+                    .where('assigned_subjects', 'array-contains', subject)
+                    .where('assigned_classes', 'array-contains', classId)
                     .where('is_active', '==', true)
                     .get();
                 return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -1011,7 +1011,7 @@ const EducareTrack = {
                 emergencyContact: parentData.emergencyContact || parentData.phone,
                 children: [studentId],
                 is_active: true,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: SupabaseFieldValue.serverTimestamp(),
                 createdBy: this.currentUser.id
             });
 
@@ -1043,7 +1043,7 @@ const EducareTrack = {
                                 strand: studentData.strand || null,
                                 subjects: clsSubjects,
                                 is_active: true,
-                                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                createdAt: SupabaseFieldValue.serverTimestamp(),
                                 createdBy: this.currentUser.id
                             });
                             resolvedClassId = ref.id;
@@ -1063,13 +1063,13 @@ const EducareTrack = {
                 lrn: studentData.lrn,
                 grade: studentData.grade,
                 level: studentData.level,
-                classId: resolvedClassId,
-                parentId: parentId,
-                photoUrl: photoUrl,
+                class_id: resolvedClassId,
+                parent_id: parentId,
+                photo_url: photoUrl,
                 qrCode: studentId,
-                currentStatus: 'out_school',
+                current_status: 'out_school',
                 is_active: true,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                created_at: SupabaseFieldValue.serverTimestamp(),
                 createdBy: this.currentUser.id
             };
 
@@ -1150,7 +1150,7 @@ const EducareTrack = {
                 ...classData,
                 subjects: this.getSubjectsForLevel(classData.level, classData.strand, classData.grade),
                 is_active: true,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: SupabaseFieldValue.serverTimestamp(),
                 createdBy: this.currentUser.id
             };
 
@@ -1264,34 +1264,55 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('attendance')
-                    .select('id,studentId,classId,entry_type,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
+                    .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
                     .order('timestamp', { ascending: false })
                     .limit(limit);
                 if (error || !data) {
                     return [];
                 }
-                const ids = Array.from(new Set(data.map(r => r.studentId).filter(Boolean)));
+                const ids = Array.from(new Set(data.map(r => r.student_id).filter(Boolean)));
                 let namesById = {};
                 if (ids.length > 0) {
                     const { data: students } = await window.supabaseClient
                         .from('students')
-                        .select('id,firstName,lastName,classId')
+                        .select('id,first_name,last_name,class_id')
                         .in('id', ids);
                     (students || []).forEach(s => {
-                        namesById[s.id] = [s.firstName, s.lastName].filter(Boolean).join(' ');
+                        namesById[s.id] = [s.first_name, s.last_name].filter(Boolean).join(' ');
                     });
                 }
                 return data.map(row => ({
                     id: row.id,
                     ...row,
-                    studentName: row.studentName || namesById[row.studentId] || ''
+                    studentName: namesById[row.student_id] || 'Unknown Student'
                 }));
             } else {
                 const snapshot = await db.collection('attendance')
                     .orderBy('timestamp', 'desc')
                     .limit(limit)
                     .get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                const attendanceData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                // Fetch student names for Firestore
+                const studentIds = Array.from(new Set(attendanceData.map(r => r.student_id).filter(Boolean)));
+                let namesById = {};
+                
+                if (studentIds.length > 0) {
+                    const studentsSnapshot = await db.collection('students')
+                        .where('id', 'in', studentIds)
+                        .get();
+                    
+                    studentsSnapshot.docs.forEach(doc => {
+                        const student = doc.data();
+                        namesById[doc.id] = [student.first_name, student.last_name].filter(Boolean).join(' ') || 'Unknown Student';
+                    });
+                }
+                
+                return attendanceData.map(row => ({
+                    ...row,
+                    studentName: namesById[row.student_id] || 'Unknown Student'
+                }));
             }
         } catch (error) {
             console.error('Error getting recent activity:', error);
@@ -1311,18 +1332,18 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,lrn,classId,parentId,strand,currentStatus,createdAt')
-                    .eq('classId', classId);
+                    .select('id,first_name,last_name,lrn,class_id,parent_id,strand,current_status,created_at')
+                    .eq('class_id', classId);
                 if (error || !data) return [];
                 return data.map(s => ({
                     id: s.id,
-                    name: [s.firstName, s.lastName].filter(Boolean).join(' '),
+                    name: [s.first_name, s.last_name].filter(Boolean).join(' '),
                     lrn: s.lrn,
-                    classId: s.classId,
-                    parentId: s.parentId,
+                    class_id: s.class_id,
+                    parent_id: s.parent_id,
                     strand: s.strand,
-                    currentStatus: s.currentStatus,
-                    createdAt: s.createdAt
+                    current_status: s.current_status,
+                    created_at: s.created_at
                 }));
             } else {
                 const snapshot = await this.db.collection('students')
@@ -1357,13 +1378,13 @@ const EducareTrack = {
                 }
                 const results = await Promise.all(chunks.map(chunk =>
                     db.collection('students')
-                        .where('parentId', 'in', chunk)
+                        .where('parent_id', 'in', chunk)
                         .get()
                 ));
                 byParent = results.flatMap(snap => snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             } else {
                 const byParentSnapshot = await db.collection('students')
-                    .where('parentId', '==', parentId)
+                    .where('parent_id', '==', parentId)
                     .get();
                 byParent = byParentSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             }
@@ -1541,11 +1562,11 @@ const EducareTrack = {
     async createNotification(notificationData) {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
-                if (!notificationData.targetUsers || notificationData.targetUsers.length === 0) {
+                if (!notificationData.target_users || notificationData.target_users.length === 0) {
                     throw new Error('Notification must have target users');
                 }
                 const row = {
-                    targetUsers: notificationData.targetUsers,
+                    target_users: notificationData.target_users,
                     title: notificationData.title,
                     message: notificationData.message,
                     type: notificationData.type,
@@ -1562,12 +1583,12 @@ const EducareTrack = {
             } else {
                 const notification = {
                     ...notificationData,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    createdAt: SupabaseFieldValue.serverTimestamp(),
                     readBy: [],
                     isUrgent: notificationData.isUrgent || false,
                     is_active: true
                 };
-                if (!notification.targetUsers || notification.targetUsers.length === 0) {
+                if (!notification.target_users || notification.target_users.length === 0) {
                     throw new Error('Notification must have target users');
                 }
                 const notificationRef = await db.collection('notifications').add(notification);
@@ -1660,8 +1681,8 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,readBy,targetUsers,is_active,createdAt,title,message,type')
-                    .contains('targetUsers', [userId])
+                    .select('id,readBy,target_users,is_active,createdAt,title,message,type')
+                    .contains('target_users', [userId])
                     .eq('is_active', true);
                 if (error || !data) return 0;
                 dataCache.notifications = { userId, data, lastUpdated: Date.now() };
@@ -1669,7 +1690,7 @@ const EducareTrack = {
                 return unreadCount;
             } else {
                 const snapshot = await db.collection('notifications')
-                    .where('targetUsers', 'array-contains', userId)
+                    .where('target_users', 'array-contains', userId)
                     .where('is_active', '==', true)
                     .get();
                 const notifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -1689,8 +1710,8 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,targetUsers,title,message,type,is_active,createdAt,readBy')
-                    .contains('targetUsers', [userId])
+                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .contains('target_users', [userId])
                     .eq('is_active', true)
                     .order('createdAt', { ascending: false })
                     .limit(limit);
@@ -1706,7 +1727,7 @@ const EducareTrack = {
                 return notifications;
             } else {
                 let query = db.collection('notifications')
-                    .where('targetUsers', 'array-contains', userId)
+                    .where('target_users', 'array-contains', userId)
                     .where('is_active', '==', true)
                     .orderBy('createdAt', 'desc')
                     .limit(limit);
@@ -1736,8 +1757,8 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,targetUsers,title,message,type,is_active,createdAt,readBy')
-                    .contains('targetUsers', [userId])
+                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .contains('target_users', [userId])
                     .eq('type', type)
                     .eq('is_active', true)
                     .order('createdAt', { ascending: false })
@@ -1750,7 +1771,7 @@ const EducareTrack = {
                 }));
             } else {
                 const snapshot = await db.collection('notifications')
-                    .where('targetUsers', 'array-contains', userId)
+                    .where('target_users', 'array-contains', userId)
                     .where('type', '==', type)
                     .where('is_active', '==', true)
                     .orderBy('createdAt', 'desc')
@@ -1776,8 +1797,8 @@ const EducareTrack = {
                 // Supabase notifications table does not have isUrgent column; return latest notifications
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,targetUsers,title,message,type,is_active,createdAt,readBy')
-                    .contains('targetUsers', [userId])
+                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .contains('target_users', [userId])
                     .eq('is_active', true)
                     .order('createdAt', { ascending: false })
                     .limit(limit);
@@ -1789,7 +1810,7 @@ const EducareTrack = {
                 }));
             } else {
                 const snapshot = await db.collection('notifications')
-                    .where('targetUsers', 'array-contains', userId)
+                    .where('target_users', 'array-contains', userId)
                     .where('isUrgent', '==', true)
                     .where('is_active', '==', true)
                     .orderBy('createdAt', 'desc')
@@ -1815,7 +1836,7 @@ const EducareTrack = {
 
             await db.collection('notifications').doc(notificationId).update({
                 is_active: false,
-                deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                deletedAt: SupabaseFieldValue.serverTimestamp(),
                 deletedBy: this.currentUser.id
             });
 
@@ -1839,7 +1860,7 @@ const EducareTrack = {
                 const notification = {
                     ...notificationData,
                     id: notificationRef.id,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    createdAt: SupabaseFieldValue.serverTimestamp(),
                     readBy: [],
                     isUrgent: notificationData.isUrgent || false,
                     is_active: true
@@ -1869,7 +1890,7 @@ const EducareTrack = {
         try {
             await db.collection('users').doc(userId).update({
                 notificationPreferences: preferences,
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                updatedAt: SupabaseFieldValue.serverTimestamp()
             });
 
             console.log('Notification preferences updated for user:', userId);
@@ -2323,7 +2344,7 @@ const EducareTrack = {
                 const isLate = entry_type === 'entry' && this.isLate(timeString);
                 const { data: student, error: studentErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
+                    .select('id,first_name,last_name,class_id,parent_id')
                     .eq('id', studentId)
                     .single();
                 if (studentErr || !student) {
@@ -2332,7 +2353,7 @@ const EducareTrack = {
                 const status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
                 const insertData = {
                     studentId: studentId,
-                    classId: student.classId || '',
+                    class_id: student.class_id || '',
                     entry_type: entry_type,
                     timestamp: new Date(),
                     time: timeString,
@@ -2348,12 +2369,12 @@ const EducareTrack = {
                     throw error;
                 }
                 const newStatus = entry_type === 'entry' ? 'in_school' : 'out_school';
-                await window.supabaseClient.from('students').update({ currentStatus: newStatus }).eq('id', studentId);
+                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
                 await this.createNotification({
                     type: this.NOTIFICATION_TYPES.ATTENDANCE,
                     title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
-                    message: `${(student.firstName || '')} ${(student.lastName || '')} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                    targetUsers: [student.parentId].filter(Boolean)
+                    message: `${(student.first_name || '')} ${(student.last_name || '')} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
+                    target_users: [student.parent_id].filter(Boolean)
                 });
                 await this.syncAttendanceToReports();
                 return inserted.id;
@@ -2369,9 +2390,9 @@ const EducareTrack = {
                 const attendanceData = {
                     studentId: studentId,
                     studentName: student.name,
-                    classId: student.classId,
+                    class_id: student.class_id,
                     entry_type: entry_type,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    timestamp: SupabaseFieldValue.serverTimestamp(),
                     time: timeString,
                     session: session,
                     status: isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT,
@@ -2380,14 +2401,14 @@ const EducareTrack = {
                 };
                 const attendanceRef = await db.collection('attendance').add(attendanceData);
                 await db.collection('students').doc(studentId).update({
-                    currentStatus: entry_type === 'entry' ? 'in_school' : 'out_school',
-                    lastAttendance: firebase.firestore.FieldValue.serverTimestamp()
+                    current_status: entry_type === 'entry' ? 'in_school' : 'out_school',
+                    lastAttendance: SupabaseFieldValue.serverTimestamp()
                 });
                 await this.createNotification({
                     type: this.NOTIFICATION_TYPES.ATTENDANCE,
                     title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
                     message: `${student.name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                    targetUsers: [student.parentId],
+                    target_users: [student.parent_id],
                     studentId: studentId,
                     studentName: student.name,
                     relatedRecord: attendanceRef.id
@@ -2415,9 +2436,9 @@ const EducareTrack = {
             const attendanceData = {
                 studentId: studentId,
                 studentName: student.name,
-                classId: student.classId || '',
+                classId: student.class_id || '',
                 entry_type: entry_type,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                timestamp: SupabaseFieldValue.serverTimestamp(),
                 time: timeString,
                 session: session,
                 status: status,
@@ -2430,8 +2451,8 @@ const EducareTrack = {
 
             // Update student status
             await this.db.collection('students').doc(studentId).update({
-                currentStatus: entry_type === 'entry' ? 'in_school' : 'out_school',
-                lastAttendance: firebase.firestore.FieldValue.serverTimestamp()
+                current_status: entry_type === 'entry' ? 'in_school' : 'out_school',
+                lastAttendance: SupabaseFieldValue.serverTimestamp()
             });
 
             const teacherIds = await this.getRelevantTeachersForStudent(student);
@@ -2439,7 +2460,7 @@ const EducareTrack = {
                 type: this.NOTIFICATION_TYPES.ATTENDANCE,
                 title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
                 message: `${student.name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                targetUsers: [student.parentId, ...teacherIds].filter(Boolean),
+                target_users: [student.parent_id, ...teacherIds].filter(Boolean),
                 studentId: studentId,
                 studentName: student.name,
                 relatedRecord: attendanceRef.id
@@ -2557,7 +2578,7 @@ const EducareTrack = {
                 const session = this.getCurrentSession();
                 const { data: student, error: studentErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
+                    .select('id,first_name,last_name,class_id,parent_id')
                     .eq('id', attendanceData.studentId)
                     .single();
                 if (studentErr || !student) {
@@ -2565,7 +2586,7 @@ const EducareTrack = {
                 }
                 const row = {
                     studentId: attendanceData.studentId,
-                    classId: student.classId || '',
+                    class_id: student.class_id || '',
                     entry_type: 'entry',
                     timestamp: timestamp,
                     time: timeString,
@@ -2585,7 +2606,7 @@ const EducareTrack = {
                     type: this.NOTIFICATION_TYPES.ATTENDANCE,
                     title: 'Manual Attendance Update',
                     message: `${(student.firstName || '')} ${(student.lastName || '')} marked as ${attendanceData.status} (${attendanceData.notes || 'No notes'})`,
-                    targetUsers: [student.parentId, ...teacherIds].filter(Boolean),
+                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
                     studentId: student.id,
                     studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
                     relatedRecord: inserted.id
@@ -2600,7 +2621,7 @@ const EducareTrack = {
                     timestamp: timestamp,
                     recordedBy: attendanceData.recordedBy,
                     notes: attendanceData.notes || '',
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    createdAt: SupabaseFieldValue.serverTimestamp(),
                     manualEntry: true
                 };
                 const added = await db.collection('attendance').add(attendanceRecord);
@@ -2612,7 +2633,7 @@ const EducareTrack = {
                         type: this.NOTIFICATION_TYPES.ATTENDANCE,
                         title: 'Manual Attendance Update',
                         message: `${student.name} marked as ${attendanceData.status} (${attendanceData.notes || 'No notes'})`,
-                        targetUsers: [student.parentId, ...teacherIds].filter(Boolean),
+                        target_users: [student.parent_id, ...teacherIds].filter(Boolean),
                         studentId: student.id,
                         studentName: student.name,
                         relatedRecord: added.id
@@ -2633,7 +2654,7 @@ const EducareTrack = {
                 today.setHours(0, 0, 0, 0);
                 const { data: student, error: studentErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
+                    .select('id,first_name,last_name,class_id,parent_id')
                     .eq('id', studentId)
                     .single();
                 if (studentErr || !student) {
@@ -2666,7 +2687,7 @@ const EducareTrack = {
                     const session = this.getCurrentSession();
                     const row = {
                         studentId: studentId,
-                        classId: student.classId || '',
+                        class_id: student.class_id || '',
                         entry_type: 'entry',
                         timestamp: now,
                         time: timeString,
@@ -2693,7 +2714,7 @@ const EducareTrack = {
                     type: this.NOTIFICATION_TYPES.ATTENDANCE,
                     title: 'Manual Attendance Update',
                     message: `${(student.firstName || '')} ${(student.lastName || '')} marked as ${status}${notes ? ` (${notes})` : ''}`,
-                    targetUsers: [student.parentId, ...teacherIds].filter(Boolean),
+                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
                     studentId: student.id,
                     studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
                     relatedRecord: recordId
@@ -2723,7 +2744,7 @@ const EducareTrack = {
                             by: this.currentUser?.id || 'system',
                             byName: this.currentUser?.name || 'System',
                             notes: notes,
-                            at: firebase.firestore.FieldValue.serverTimestamp()
+                            at: SupabaseFieldValue.serverTimestamp()
                         }
                     });
                 } else {
@@ -2733,9 +2754,9 @@ const EducareTrack = {
                     const attendanceData = {
                         studentId: studentId,
                         studentName: student.name,
-                        classId: student.classId,
+                        class_id: student.class_id,
                         entry_type: 'entry',
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                        timestamp: SupabaseFieldValue.serverTimestamp(),
                         time: timeString,
                         session: session,
                         status: status,
@@ -2746,22 +2767,22 @@ const EducareTrack = {
                             by: this.currentUser?.id || 'system',
                             byName: this.currentUser?.name || 'System',
                             notes: notes,
-                            at: firebase.firestore.FieldValue.serverTimestamp()
+                            at: SupabaseFieldValue.serverTimestamp()
                         }
                     };
                     const ref = await db.collection('attendance').add(attendanceData);
                     recordId = ref.id;
                 }
                 await db.collection('students').doc(studentId).update({
-                    currentStatus: status === 'absent' ? 'out_school' : 'in_school',
-                    lastAttendance: firebase.firestore.FieldValue.serverTimestamp()
+                    current_status: status === 'absent' ? 'out_school' : 'in_school',
+                    lastAttendance: SupabaseFieldValue.serverTimestamp()
                 });
                 const teacherIds = await this.getRelevantTeachersForStudent(student);
                 await this.createNotification({
                     type: this.NOTIFICATION_TYPES.ATTENDANCE,
                     title: 'Manual Attendance Update',
                     message: `${student.name} marked as ${status}${notes ? ` (${notes})` : ''}`,
-                    targetUsers: [student.parentId, ...teacherIds].filter(Boolean),
+                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
                     studentId: student.id,
                     studentName: student.name,
                     relatedRecord: recordId
@@ -2792,7 +2813,7 @@ const EducareTrack = {
                                 title: 'Critical Attendance Alert',
                                 message: `${student.name} flagged as at-risk. ${reasonText}`,
                                 isUrgent: true,
-                                targetUsers: [student.parentId, ...teacherIds, ...adminIds].filter(Boolean),
+                                target_users: [student.parentId, ...teacherIds, ...adminIds].filter(Boolean),
                                 studentId: student.id,
                                 studentName: student.name,
                                 relatedRecord: recordId
@@ -2861,7 +2882,7 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data: student, error: studentErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
+                    .select('id,first_name,last_name,class_id,parent_id')
                     .eq('id', studentId)
                     .single();
                 if (studentErr || !student) {
@@ -2870,7 +2891,7 @@ const EducareTrack = {
                 const timeString = new Date().toTimeString().split(' ')[0].substring(0, 5);
                 const row = {
                     studentId: studentId,
-                    classId: student.classId || '',
+                    class_id: student.class_id || '',
                     check_in: !!check_in,
                     timestamp: new Date(),
                     reason: reason || '',
@@ -2903,7 +2924,7 @@ const EducareTrack = {
                     type: this.NOTIFICATION_TYPES.CLINIC,
                     title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
                     message: `${(student.firstName || '')} ${(student.lastName || '')} has ${check_in ? 'checked into' : 'checked out from'} the clinic.${reason ? ' Reason: ' + reason : ''}`,
-                    targetUsers: [student.parentId, teacherId].filter(Boolean),
+                    target_users: [student.parentId, teacherId].filter(Boolean),
                     studentId: student.id,
                     studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
                     relatedRecord: inserted.id
@@ -2918,9 +2939,9 @@ const EducareTrack = {
                 const clinicData = {
                     studentId: studentId,
                     studentName: student.name,
-                    classId: student.classId,
+                    class_id: student.class_id,
                     check_in: check_in,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    timestamp: SupabaseFieldValue.serverTimestamp(),
                     reason: reason,
                     notes: notes,
                     staffId: this.currentUser.id,
@@ -2929,11 +2950,11 @@ const EducareTrack = {
                 const clinicRef = await db.collection('clinicVisits').add(clinicData);
                 await db.collection('students').doc(studentId).update({
                     currentStatus: check_in ? 'in_clinic' : 'in_school',
-                    lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
+                    lastClinicVisit: SupabaseFieldValue.serverTimestamp()
                 });
                 const teacherQuery = await db.collection('users')
                     .where('role', '==', this.USER_TYPES.TEACHER)
-                    .where('classId', '==', student.classId)
+                    .where('class_id', '==', student.class_id)
                     .where('isHomeroom', '==', true)
                     .get();
                 let teacherId = null;
@@ -2944,7 +2965,7 @@ const EducareTrack = {
                     type: this.NOTIFICATION_TYPES.CLINIC,
                     title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
                     message: `${student.name} has ${check_in ? 'checked into' : 'checked out from'} the clinic. ${reason ? `Reason: ${reason}` : ''}`,
-                    targetUsers: [student.parentId, teacherId].filter(id => id),
+                    target_users: [student.parentId, teacherId].filter(id => id),
                     studentId: studentId,
                     studentName: student.name,
                     relatedRecord: clinicRef.id
@@ -2970,32 +2991,32 @@ const EducareTrack = {
                 ...announcementData,
                 createdBy: this.currentUser.id,
                 createdByName: this.currentUser.name,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: SupabaseFieldValue.serverTimestamp(),
                 is_active: true
             };
 
             const announcementRef = await db.collection('announcements').add(announcement);
 
             // Get target users based on audience
-            let targetUsers = [];
+            let target_users = [];
             if (announcementData.audience === 'all') {
                 const usersSnapshot = await db.collection('users').where('is_active', '==', true).get();
-                targetUsers = usersSnapshot.docs.map(doc => doc.id);
+                target_users = usersSnapshot.docs.map(doc => doc.id);
             } else if (announcementData.audience === 'parents') {
                 const parentsSnapshot = await db.collection('users').where('role', '==', 'parent').where('is_active', '==', true).get();
-                targetUsers = parentsSnapshot.docs.map(doc => doc.id);
+                target_users = parentsSnapshot.docs.map(doc => doc.id);
             } else if (announcementData.audience === 'teachers') {
                 const teachersSnapshot = await db.collection('users').where('role', '==', 'teacher').where('is_active', '==', true).get();
-                targetUsers = teachersSnapshot.docs.map(doc => doc.id);
+                target_users = teachersSnapshot.docs.map(doc => doc.id);
             }
 
             // Create notifications for target users
-            if (targetUsers.length > 0) {
+            if (target_users.length > 0) {
                 await this.createNotification({
                     type: this.NOTIFICATION_TYPES.ANNOUNCEMENT,
                     title: announcementData.title,
                     message: announcementData.message,
-                    targetUsers: targetUsers,
+                    target_users: target_users,
                     relatedRecord: announcementRef.id,
                     isUrgent: announcementData.isUrgent || false
                 });
@@ -3716,13 +3737,13 @@ const EducareTrack = {
             attendanceSnapshot.forEach(doc => {
                 const r = doc.data();
                 if (r.entry_type === 'entry') {
-                    if (r.status === 'late') lateSet.add(r.studentId);
-                    if (r.status === 'present') presentSet.add(r.studentId);
+                    if (r.status === 'late') lateSet.add(r.student_id);
+                    if (r.status === 'present') presentSet.add(r.student_id);
                 }
             });
             clinicSnapshot.forEach(doc => {
                 const v = doc.data();
-                clinicSet.add(v.studentId);
+                clinicSet.add(v.student_id);
             });
 
             const presentCount = presentSet.size + lateSet.size;
@@ -3765,9 +3786,9 @@ const EducareTrack = {
                 const r = doc.data();
                 if (!r.timestamp || r.entry_type !== 'entry') return;
                 const dayKey = r.timestamp.toDate().toDateString();
-                const cur = grid.get(r.studentId) || {};
+                const cur = grid.get(r.student_id) || {};
                 cur[dayKey] = r.status;
-                grid.set(r.studentId, cur);
+                grid.set(r.student_id, cur);
             });
 
             const days = [];
@@ -3850,25 +3871,25 @@ const EducareTrack = {
                 const [{ data: students }, { data: attendance }] = await Promise.all([
                     window.supabaseClient
                         .from('students')
-                        .select('id,firstName,lastName,classId'),
+                        .select('id,first_name,last_name,class_id'),
                     window.supabaseClient
                         .from('attendance')
-                        .select('studentId,classId,status,entry_type,timestamp')
+                        .select('student_id,class_id,status,entry_type,timestamp')
                         .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
                         .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
                 ]);
-                const filteredStudents = (students || []).filter(s => !classId || s.classId === classId);
+                const filteredStudents = (students || []).filter(s => !classId || s.class_id === classId);
                 const perStudentDays = new Map();
                 (attendance || []).forEach(r => {
                     if (!r.timestamp || r.entry_type !== 'entry') return;
                     const ts = r.timestamp && r.timestamp.toDate ? r.timestamp.toDate() : r.timestamp;
                     const key = new Date(ts).toDateString();
-                    const map = perStudentDays.get(r.studentId) || new Map();
+                    const map = perStudentDays.get(r.student_id) || new Map();
                     const info = map.get(key) || { present: false, late: false };
                     if (r.status === 'late') info.late = true;
                     if (r.status === 'present' || r.status === 'late') info.present = true;
                     map.set(key, info);
-                    perStudentDays.set(r.studentId, map);
+                    perStudentDays.set(r.student_id, map);
                 });
                 const start = startDate instanceof Date ? startDate : new Date(startDate);
                 const end = endDate instanceof Date ? endDate : new Date(endDate);
@@ -3890,8 +3911,8 @@ const EducareTrack = {
                     if (absentDays >= 2) reasons.push(`${absentDays} absences`);
                     if (lateDays >= 3) reasons.push(`${lateDays} lates`);
                     if (severity !== 'normal') {
-                        const name = [s.firstName, s.lastName].filter(Boolean).join(' ');
-                        risks.push({ studentId: s.id, studentName: name, classId: s.classId, absentDays, lateDays, riskScore, severity, reasons });
+                        const name = [s.first_name, s.last_name].filter(Boolean).join(' ');
+                        risks.push({ studentId: s.id, studentName: name, class_id: s.class_id, absentDays, lateDays, riskScore, severity, reasons });
                     }
                 }
                 risks.sort((a, b) => b.riskScore - a.riskScore);
@@ -3913,13 +3934,14 @@ const EducareTrack = {
             attendanceSnapshot.forEach(doc => {
                 const r = doc.data();
                 if (!r.timestamp || r.entry_type !== 'entry') return;
-                const key = r.timestamp.toDate().toDateString();
-                const map = perStudentDays.get(r.studentId) || new Map();
+                const timestamp = r.timestamp instanceof Date ? r.timestamp : r.timestamp.toDate();
+                const key = timestamp.toDateString();
+                const map = perStudentDays.get(r.student_id) || new Map();
                 const info = map.get(key) || { present: false, late: false };
                 if (r.status === 'late') info.late = true;
                 if (r.status === 'present' || r.status === 'late') info.present = true;
                 map.set(key, info);
-                perStudentDays.set(r.studentId, map);
+                perStudentDays.set(r.student_id, map);
             });
 
             const start = new Date(startDate);
@@ -3942,7 +3964,8 @@ const EducareTrack = {
                 if (absentDays >= 2) reasons.push(`${absentDays} absences`);
                 if (lateDays >= 3) reasons.push(`${lateDays} lates`);
                 if (severity !== 'normal') {
-                    risks.push({ studentId: s.id, studentName: s.name, classId: s.classId, absentDays, lateDays, riskScore, severity, reasons });
+                    const name = s.name || [s.first_name, s.last_name].filter(Boolean).join(' ');
+                    risks.push({ studentId: s.id, studentName: name, class_id: s.classId || s.class_id, absentDays, lateDays, riskScore, severity, reasons });
                 }
             }
             risks.sort((a, b) => b.riskScore - a.riskScore);
@@ -3966,15 +3989,15 @@ const EducareTrack = {
                 validatedBy: teacher.id || 'teacher',
                 validatedByName: teacher.name || 'Teacher',
                 validationNotes: teacherNotes || '',
-                validatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                validatedAt: SupabaseFieldValue.serverTimestamp()
             });
 
-            const targetUsers = [];
+            const target_users = [];
             if (visit.studentId) {
                 const studentDoc = await db.collection('students').doc(visit.studentId).get();
                 if (studentDoc.exists) {
                     const student = studentDoc.data();
-                    if (student.parentId) targetUsers.push(student.parentId);
+                    if (student.parentId) target_users.push(student.parentId);
                 }
             }
             const title = status === 'approved' ? 'Clinic Visit Validated' : 'Clinic Visit Validation Rejected';
@@ -3985,7 +4008,7 @@ const EducareTrack = {
                 type: 'clinic',
                 title,
                 message,
-                targetUsers,
+                target_users,
                 studentId: visit.studentId,
                 studentName: visit.studentName,
                 relatedRecord: visitId
@@ -4224,7 +4247,7 @@ const EducareTrack = {
             if (student.classId) {
                 const homeroomSnap = await db.collection('users')
                     .where('role', '==', this.USER_TYPES.TEACHER)
-                    .where('classId', '==', student.classId)
+                    .where('class_id', '==', student.class_id)
                     .where('isHomeroom', '==', true)
                     .get();
                 homeroomSnap.forEach(doc => ids.push(doc.id));

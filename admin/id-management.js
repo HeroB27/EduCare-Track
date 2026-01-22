@@ -643,8 +643,8 @@ class IDManagement {
             grade: grade,
             strand: strand,
             classId: document.getElementById('studentClass').value,
-            updatedAt: new Date(),
-            updatedBy: this.currentUser.id
+            updated_at: new Date(),
+            updated_by: this.currentUser.id
             // Note: photoUrl is intentionally excluded since we're not storing it yet
         };
     }
@@ -656,8 +656,8 @@ class IDManagement {
             email: document.getElementById('parentEmail').value.trim() || null,
             address: document.getElementById('parentAddress').value.trim(),
             relationship: document.getElementById('parentRelationship').value,
-            updatedAt: new Date(),
-            updatedBy: this.currentUser.id
+            updated_at: new Date(),
+            updated_by: this.currentUser.id
         };
     }
 
