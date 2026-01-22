@@ -424,8 +424,8 @@
                     .substring(0, 2)
                     .toUpperCase();
 
-                if (this.currentUser.classId) {
-                    document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.classId;
+                if (this.currentUser.class_id) {
+                    document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.class_id;
                 }
 
                 this.updateCurrentTime();
@@ -451,8 +451,8 @@
                     }
 
                     // Load assigned class information
-                    if (this.currentUser.classId) {
-                        this.assignedClass = await EducareTrack.getClassById(this.currentUser.classId);
+                    if (this.currentUser.class_id) {
+                        this.assignedClass = await EducareTrack.getClassById(this.currentUser.class_id);
                     }
 
                     // Load class students
@@ -474,7 +474,7 @@
 
             async loadClassStudents() {
                 try {
-                    this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+                    this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.class_id);
                     this.updateStudentStatus();
                 } catch (error) {
                     console.error('Error loading class students:', error);
@@ -489,7 +489,7 @@
                     // Get today's attendance
                     const attendanceSnapshot = await EducareTrack.db.collection('attendance')
                         .where('timestamp', '>=', today)
-                        .where('classId', '==', this.currentUser.classId)
+                        .where('class_id', '==', this.currentUser.class_id)
                         .get();
 
                     const presentStudents = new Set();
@@ -509,8 +509,8 @@
 
                     // Get current clinic visits
                     const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                        .where('checkIn', '==', true)
-                        .where('classId', '==', this.currentUser.classId)
+                        .where('check_in', '==', true)
+                        .where('class_id', '==', this.currentUser.class_id)
                         .get();
 
                     clinicSnapshot.forEach(doc => {
@@ -548,7 +548,7 @@
                 try {
                     const activity = await EducareTrack.getRecentActivity(10);
                     const classActivity = activity.filter(item => 
-                        item.classId === this.currentUser.classId
+                        item.class_id === this.currentUser.class_id
                     );
 
                     const container = document.getElementById('recentActivity');
@@ -574,7 +574,7 @@
                                     <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `).join('');
                 } catch (error) {

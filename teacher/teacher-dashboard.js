@@ -58,8 +58,8 @@ class TeacherDashboard {
             .substring(0, 2)
             .toUpperCase();
 
-        if (this.currentUser.classId) {
-            document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.classId;
+        if (this.currentUser.class_id) {
+            document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.class_id;
         }
 
         this.updateCurrentTime();
@@ -85,8 +85,8 @@ class TeacherDashboard {
             }
 
             // Load assigned class information
-            if (this.currentUser.classId) {
-                this.assignedClass = await EducareTrack.getClassById(this.currentUser.classId);
+            if (this.currentUser.class_id) {
+                this.assignedClass = await EducareTrack.getClassById(this.currentUser.class_id);
             }
 
             // Load class students
@@ -108,7 +108,7 @@ class TeacherDashboard {
 
     async loadClassStudents() {
         try {
-            this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+            this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.class_id);
             this.updateStudentStatus();
         } catch (error) {
             console.error('Error loading class students:', error);
@@ -123,7 +123,7 @@ class TeacherDashboard {
             // Get today's attendance
             const attendanceSnapshot = await EducareTrack.db.collection('attendance')
                 .where('timestamp', '>=', today)
-                .where('classId', '==', this.currentUser.classId)
+                .where('class_id', '==', this.currentUser.class_id)
                 .get();
 
             const presentStudents = new Set();
@@ -144,7 +144,7 @@ class TeacherDashboard {
             // Get current clinic visits
             const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
                 .where('checkIn', '==', true)
-                .where('classId', '==', this.currentUser.classId)
+                .where('class_id', '==', this.currentUser.class_id)
                 .get();
 
             clinicSnapshot.forEach(doc => {
@@ -189,21 +189,21 @@ class TeacherDashboard {
             let attendanceActivities = [];
             let clinicActivities = [];
             if (window.USE_SUPABASE && window.supabaseClient) {
-                const classId = this.currentUser.classId;
+                const classId = this.currentUser.class_id;
                 const [{ data: attendance, error: aErr }, { data: clinic, error: cErr }, { data: students, error: sErr }] = await Promise.all([
                     window.supabaseClient.from('attendance')
                         .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks')
-                        .eq('classId', classId)
+                        .eq('class_id', classId)
                         .order('timestamp', { ascending: false })
                         .limit(10),
                     window.supabaseClient.from('clinicVisits')
                         .select('id,studentId,classId,checkIn,timestamp,reason,notes')
-                        .eq('classId', classId)
+                        .eq('class_id', classId)
                         .order('timestamp', { ascending: false })
                         .limit(10),
                     window.supabaseClient.from('students')
                         .select('id,firstName,lastName')
-                        .eq('classId', classId)
+                        .eq('class_id', classId)
                 ]);
                 if (aErr) throw aErr;
                 if (cErr) throw cErr;
@@ -225,12 +225,12 @@ class TeacherDashboard {
                 }));
             } else {
                 const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('classId', '==', this.currentUser.classId)
+                    .where('class_id', '==', this.currentUser.class_id)
                     .orderBy('timestamp', 'desc')
                     .limit(10)
                     .get();
                 const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                    .where('classId', '==', this.currentUser.classId)
+                    .where('class_id', '==', this.currentUser.class_id)
                     .orderBy('timestamp', 'desc')
                     .limit(10)
                     .get();
@@ -249,8 +249,8 @@ class TeacherDashboard {
             // Combine and sort by timestamp
             const allActivities = [...attendanceActivities, ...clinicActivities]
                 .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
+                    const bt = b.timestamp;
+                    const at = a.timestamp;
                     return new Date(bt) - new Date(at);
                 })
                 .slice(0, 10);
@@ -280,7 +280,7 @@ class TeacherDashboard {
                                     <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `;
                 } else {
@@ -297,7 +297,7 @@ class TeacherDashboard {
                                     ${item.reason ? `<p class="text-xs text-gray-400">Reason: ${item.reason}</p>` : ''}
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `;
                 }
@@ -357,7 +357,7 @@ class TeacherDashboard {
             }, 15000);
         } else {
             const attendanceListener = EducareTrack.db.collection('attendance')
-                .where('classId', '==', this.currentUser.classId)
+                .where('class_id', '==', this.currentUser.class_id)
                 .onSnapshot(snapshot => {
                     snapshot.docChanges().forEach(change => {
                         if (change.type === 'added') {
@@ -366,7 +366,7 @@ class TeacherDashboard {
                     });
                 });
             const clinicListener = EducareTrack.db.collection('clinicVisits')
-                .where('classId', '==', this.currentUser.classId)
+                .where('class_id', '==', this.currentUser.class_id)
                 .onSnapshot(snapshot => {
                     snapshot.docChanges().forEach(change => {
                         if (change.type === 'added' || change.type === 'modified') {
@@ -611,10 +611,10 @@ class TeacherDashboard {
 
     async loadClinicReasonsTrend(days) {
         try {
-            if (!this.currentUser?.classId || !this.teacherClinicChart) return;
+            if (!this.currentUser?.class_id || !this.teacherClinicChart) return;
             const end = new Date();
             const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-            const trend = await EducareTrack.getClassClinicReasonTrend(this.currentUser.classId, start, end, 6);
+            const trend = await EducareTrack.getClassClinicReasonTrend(this.currentUser.class_id, start, end, 6);
             this.teacherClinicChart.data.labels = trend.labels;
             this.teacherClinicChart.data.datasets[0].data = trend.counts;
             this.teacherClinicChart.update();
@@ -625,10 +625,10 @@ class TeacherDashboard {
 
     async loadAttendanceTrend(days = 7) {
         try {
-            if (!this.currentUser?.classId) return;
+            if (!this.currentUser?.class_id) return;
             const end = new Date();
             const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-            const trend = await EducareTrack.getClassAttendanceTrend(this.currentUser.classId, start, end);
+            const trend = await EducareTrack.getClassAttendanceTrend(this.currentUser.class_id, start, end);
             const datasets = [
                 { label: 'Present', data: trend.datasets.present, borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.15)', fill: true, tension: 0.4 },
                 { label: 'Late', data: trend.datasets.late, borderColor: '#F59E0B', backgroundColor: 'rgba(245, 158, 11, 0.15)', fill: true, tension: 0.4 },
@@ -644,10 +644,10 @@ class TeacherDashboard {
 
     async loadTopLateStudents(days = 14) {
         try {
-            if (!this.currentUser?.classId) return;
+            if (!this.currentUser?.class_id) return;
             const end = new Date();
             const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-            const leaders = await EducareTrack.getClassLateLeaders(this.currentUser.classId, start, end, 5);
+            const leaders = await EducareTrack.getClassLateLeaders(this.currentUser.class_id, start, end, 5);
             const container = document.getElementById('topLateList');
             if (!container) return;
             if (!leaders || leaders.length === 0) {
@@ -676,16 +676,16 @@ class TeacherDashboard {
     async loadClinicValidations() {
         try {
             const container = document.getElementById('clinicValidations');
-            if (!container || !this.currentUser?.classId) return;
+            if (!container || !this.currentUser?.class_id) return;
             const snapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('classId', '==', this.currentUser.classId)
+                .where('class_id', '==', this.currentUser.class_id)
                 .where('checkIn', '==', true)
                 .where('teacherValidationStatus', '==', 'pending')
                 .get();
             const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
                 .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
+                    const bt = b.timestamp;
+                    const at = a.timestamp;
                     return new Date(bt) - new Date(at);
                 })
                 .slice(0, 10);
@@ -731,10 +731,10 @@ class TeacherDashboard {
 
     async loadStatusDistribution(days = 7) {
         try {
-            if (!this.currentUser?.classId) return;
+            if (!this.currentUser?.class_id) return;
             const end = new Date();
             const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-            const dist = await EducareTrack.getClassStatusDistribution(this.currentUser.classId, start, end);
+            const dist = await EducareTrack.getClassStatusDistribution(this.currentUser.class_id, start, end);
             const el = document.getElementById('statusDonut');
             if (!el) return;
             const ctx = el.getContext('2d');
@@ -756,10 +756,10 @@ class TeacherDashboard {
 
     async loadWeeklyHeatmap(weeksDays = 7) {
         try {
-            if (!this.currentUser?.classId) return;
+            if (!this.currentUser?.class_id) return;
             const end = new Date();
             const start = new Date(end.getTime() - weeksDays * 24 * 60 * 60 * 1000);
-            const heat = await EducareTrack.getClassWeeklyHeatmap(this.currentUser.classId, start);
+            const heat = await EducareTrack.getClassWeeklyHeatmap(this.currentUser.class_id, start);
             const container = document.getElementById('weeklyHeatmap');
             if (!container) return;
             const statusClass = (s) => s === 'present' ? 'bg-green-100 text-green-700' : s === 'late' ? 'bg-yellow-100 text-yellow-700' : s === 'absent' ? 'bg-red-100 text-red-700' : 'bg-gray-50 text-gray-400';
