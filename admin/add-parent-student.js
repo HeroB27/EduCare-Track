@@ -120,6 +120,7 @@ function initializeEventListeners() {
     document.getElementById('addAnotherStudent').addEventListener('click', addAnotherStudent);
     document.getElementById('saveEnrollment').addEventListener('click', saveEnrollment);
     document.getElementById('enrollAnother').addEventListener('click', enrollAnother);
+    document.getElementById('printID').addEventListener('click', printID);
 
     // Grade Level Change
     document.getElementById('gradeLevel').addEventListener('change', toggleStrandField);
@@ -204,6 +205,16 @@ function validateParentForm() {
     
     // Validate phone number format
     const phone = document.getElementById('phoneNumber').value;
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    if (!username || !password) {
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: 'Missing Credentials', message: 'Please enter a username and password for the parent account.' });
+        }
+        return false;
+    }
+
     const phoneRegex = /^09[0-9]{9}$/;
     if (!phoneRegex.test(phone)) {
         if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
@@ -248,11 +259,13 @@ function validateStudentForm() {
 function getParentFormData() {
     return {
         name: document.getElementById('parentName').value.trim(),
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value,
         phone: document.getElementById('phoneNumber').value.trim(),
         email: document.getElementById('email').value.trim() || null,
         address: document.getElementById('homeAddress').value.trim(),
         relationship: document.getElementById('relationship').value,
-        createdAt: new Date()
+        createdAt: new Date().toISOString()
     };
 }
 
@@ -285,7 +298,7 @@ function getStudentFormData() {
         level: getLevelFromGrade(gradeLevel),
         picture: document.getElementById('previewImage').src || null,
         studentId: studentId, // This is crucial for QR codes
-        createdAt: new Date()
+        createdAt: new Date().toISOString()
     };
 }
 
@@ -700,18 +713,37 @@ async function saveEnrollment() {
 
         // Save to Firebase
         let savedIds = [];
+        let createdParentId = null;
         
         if (typeof EducareTrack !== 'undefined' && EducareTrack.enrollStudentWithParent) {
             console.log('Using EducareTrack enrollment method');
             // Use EducareTrack method
-            for (const student of enrollmentData.students) {
-                const classId = await getOrCreateClassId(student.grade, student.strand);
-                student.classId = classId;
-                const result = await EducareTrack.enrollStudentWithParent(
-                    enrollmentData.parent,
-                    student,
-                    student.picture // Pass the picture data URL
-                );
+            for (let i = 0; i < enrollmentData.students.length; i++) {
+                const student = enrollmentData.students[i];
+                // Ensure student has parent's address/contact if not set (though UI should have handled this)
+                if (!student.address && enrollmentData.parent.address) student.address = enrollmentData.parent.address;
+                if (!student.emergencyContact && enrollmentData.parent.phone) student.emergencyContact = enrollmentData.parent.phone;
+
+                let result;
+                if (i === 0) {
+                    // First student: Create Parent + Student
+                    result = await EducareTrack.enrollStudentWithParent(
+                        enrollmentData.parent,
+                        student,
+                        student.picture // Pass the picture data URL
+                    );
+                    createdParentId = result.parentId;
+                } else {
+                    // Subsequent students: Enroll Student and link to existing Parent
+                    if (!createdParentId) throw new Error('Parent ID missing for subsequent student enrollment');
+                    
+                    const studentId = await EducareTrack.enrollStudentOnly(
+                        student,
+                        createdParentId,
+                        student.picture
+                    );
+                    result = { parentId: createdParentId, studentId: studentId };
+                }
                 savedIds.push(result);
             }
         } else {
@@ -751,7 +783,7 @@ async function getOrCreateClassId(grade, strand) {
         }
 
         // For demo or when Firestore is not available
-        if (!firebase.firestore) {
+        if (!enrollmentDb || (typeof firebase === 'undefined' && !enrollmentDb.collection)) {
             return `class-${grade.replace(' ', '-').toLowerCase()}-${strand || 'general'}`;
         }
 
@@ -774,7 +806,7 @@ async function getOrCreateClassId(grade, strand) {
             subjects: typeof EducareTrack !== 'undefined' ? EducareTrack.getSubjectsForLevel(level, strand, grade) : [],
             studentCount: 0,
             is_active: true,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            created_at: new Date().toISOString()
         };
 
         const classRef = await enrollmentDb.collection('classes').add(classData);
@@ -806,9 +838,11 @@ async function saveToFirestoreDirect() {
             address: enrollmentData.parent.address,
             relationship: enrollmentData.parent.relationship,
             role: 'parent',
+            username: enrollmentData.parent.username,
+            password: enrollmentData.parent.password,
             children: [],
             is_active: true,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            created_at: new Date().toISOString()
         };
         
         batch.set(parentRef, parentData);
@@ -830,15 +864,17 @@ async function saveToFirestoreDirect() {
                 grade: student.grade,
                 level: student.level,
                 strand: student.strand || null,
-                classId: classId, // This is crucial for teacher-student relationship
-                parentId: parentId,
-                photoUrl: student.picture || null,
+                class_id: classId, // This is crucial for teacher-student relationship
+                parent_id: parentId,
+                address: enrollmentData.parent.address, // Inherit from parent
+                emergencyContact: enrollmentData.parent.phone, // Inherit from parent
+                photo_url: student.picture || null,
                 qrCode: studentId,
-                currentStatus: 'out_school',
-                lastAttendance: null,
-                lastClinicVisit: null,
+                current_status: 'out_school',
+                last_attendance: null,
+                last_clinic_visit: null,
                 is_active: true,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                created_at: new Date().toISOString()
             };
             
             batch.set(studentRef, studentData);
@@ -922,3 +958,26 @@ document.addEventListener('keydown', function(e) {
         }
     }
 });
+
+function printID() {
+    // Select the card container
+    const printContent = document.querySelector('.bg-white.rounded-xl.p-6.shadow-lg').innerHTML;
+    
+    // Create a print window
+    const printWindow = window.open('', '', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>Print ID</title>');
+    printWindow.document.write('<script src="https://cdn.tailwindcss.com"></script>');
+    printWindow.document.write('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">');
+    printWindow.document.write('<style>@media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }</style>');
+    printWindow.document.write('</head><body class="p-8 flex justify-center items-center min-h-screen bg-white">');
+    printWindow.document.write('<div class="w-full max-w-2xl border p-4">' + printContent + '</div>');
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    
+    // Wait for styles to load
+    setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+        printWindow.close();
+    }, 1500);
+}

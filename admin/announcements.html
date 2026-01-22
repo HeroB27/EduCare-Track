@@ -78,7 +78,7 @@
         <li>
             <a href="attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
-                <span class="sidebar-text">Attendance</span>
+                <span class="sidebar-text">Schedule Settings</span>
             </a>
         </li>
         <li>
@@ -103,6 +103,18 @@
             <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
                 <span class="sidebar-text">Enroll Student</span>
+            </a>
+        </li>
+        <li>
+            <a href="school-calendar.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                <i class="fas fa-calendar-alt w-5 h-5 mr-3"></i>
+                <span class="sidebar-text">School Calendar</span>
+            </a>
+        </li>
+        <li>
+            <a href="settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                <i class="fas fa-cog w-5 h-5 mr-3"></i>
+                <span class="sidebar-text">Settings</span>
             </a>
         </li>
         <li>
@@ -576,77 +588,53 @@
 
             initEventListeners() {
                 // Sidebar toggle
-                const sidebarToggle = document.getElementById('sidebarToggle');
-                if (sidebarToggle) {
-                    sidebarToggle.addEventListener('click', () => {
-                        this.toggleSidebar();
-                    });
-                }
+                document.getElementById('sidebarToggle').addEventListener('click', () => {
+                    this.toggleSidebar();
+                });
 
                 // Logout via modal
-                const logoutBtn = document.getElementById('logoutBtn');
-                if (logoutBtn) {
-                    logoutBtn.addEventListener('click', async () => {
-                        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-                            ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
-                            : true;
-                        if (ok) {
-                            localStorage.removeItem('educareTrack_user');
-                            window.location.href = '../index.html';
-                        }
-                    });
-                }
+                document.getElementById('logoutBtn').addEventListener('click', async () => {
+                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                        : true;
+                    if (ok) {
+                        localStorage.removeItem('educareTrack_user');
+                        window.location.href = '../index.html';
+                    }
+                });
 
                 // Create announcement button
-                const createBtn = document.getElementById('createAnnouncementBtn');
-                if (createBtn) {
-                    createBtn.addEventListener('click', () => {
-                        this.openCreateAnnouncementModal();
-                    });
-                }
+                document.getElementById('createAnnouncementBtn').addEventListener('click', () => {
+                    this.openCreateAnnouncementModal();
+                });
 
-                const createFirstBtn = document.getElementById('createFirstAnnouncement');
-                if (createFirstBtn) {
-                    createFirstBtn.addEventListener('click', () => {
-                        this.openCreateAnnouncementModal();
-                    });
-                }
+                document.getElementById('createFirstAnnouncement').addEventListener('click', () => {
+                    this.openCreateAnnouncementModal();
+                });
 
                 // Filter buttons
-                const filterAllBtn = document.getElementById('filterAll');
-                if (filterAllBtn) {
-                    filterAllBtn.addEventListener('click', () => {
-                        this.setActiveFilter('filterAll');
-                        this.applyFilter('all');
-                    });
-                }
+                document.getElementById('filterAll').addEventListener('click', () => {
+                    this.setActiveFilter('filterAll');
+                    this.applyFilter('all');
+                });
 
-                const filterUrgentBtn = document.getElementById('filterUrgent');
-                if (filterUrgentBtn) {
-                    filterUrgentBtn.addEventListener('click', () => {
-                        this.setActiveFilter('filterUrgent');
-                        this.applyFilter('urgent');
-                    });
-                }
+                document.getElementById('filterUrgent').addEventListener('click', () => {
+                    this.setActiveFilter('filterUrgent');
+                    this.applyFilter('urgent');
+                });
 
                 // Close modals on outside click
-                const createModal = document.getElementById('createAnnouncementModal');
-                if (createModal) {
-                    createModal.addEventListener('click', (e) => {
-                        if (e.target.id === 'createAnnouncementModal') {
-                            this.closeCreateAnnouncementModal();
-                        }
-                    });
-                }
+                document.getElementById('createAnnouncementModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'createAnnouncementModal') {
+                        this.closeCreateAnnouncementModal();
+                    }
+                });
 
-                const detailModal = document.getElementById('announcementDetailModal');
-                if (detailModal) {
-                    detailModal.addEventListener('click', (e) => {
-                        if (e.target.id === 'announcementDetailModal') {
-                            this.closeAnnouncementDetailModal();
-                        }
-                    });
-                }
+                document.getElementById('announcementDetailModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'announcementDetailModal') {
+                        this.closeAnnouncementDetailModal();
+                    }
+                });
 
                 // Escape key to close modals
                 document.addEventListener('keydown', (e) => {

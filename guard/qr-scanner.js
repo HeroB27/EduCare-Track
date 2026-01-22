@@ -323,7 +323,7 @@ class QRScanner {
                 return;
             }
             
-            console.log('✅ Student found:', student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown Student', 'ID:', student.id, 'StudentID:', student.student_id);
+            console.log('✅ Student found:', student.name, 'ID:', student.id, 'StudentID:', student.studentId);
             
             this.currentStudent = student;
             
@@ -342,168 +342,74 @@ class QRScanner {
     // NEW: Enhanced student search
     async findStudentByAnyMeans(candidate) {
         console.log('🔍 Searching for student with:', candidate);
-        
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            // Use Supabase
-            try {
-                // Direct doc lookup
-                const { data: byDoc, error: docErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code')
-                    .eq('id', candidate)
-                    .single();
-                if (!docErr && byDoc) {
-                    console.log('✅ Found by document ID');
-                    return { id: byDoc.id, ...byDoc };
-                }
-            } catch (_) {}
+        const col = window.EducareTrack.db.collection('students');
 
-            // Field: student_id
-            try {
-                const { data: byStudentId, error: idErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code')
-                    .eq('student_id', candidate)
-                    .limit(1);
-                if (!idErr && byStudentId && byStudentId.length > 0) {
-                    console.log('✅ Found by student_id field');
-                    return { id: byStudentId[0].id, ...byStudentId[0] };
-                }
-                const altCandidate = candidate.toUpperCase();
-                if (altCandidate !== candidate) {
-                    const { data: byAltId, error: altErr } = await window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code')
-                        .eq('student_id', altCandidate)
-                        .limit(1);
-                    if (!altErr && byAltId && byAltId.length > 0) {
-                        console.log('✅ Found by student_id (uppercase)');
-                        return { id: byAltId[0].id, ...byAltId[0] };
-                    }
-                }
-            } catch (_) {}
+        // Direct doc lookup (most robust when QR encodes document ID)
+        try {
+            const byDoc = await col.doc(candidate).get();
+            if (byDoc.exists) {
+                console.log('✅ Found by document ID');
+                return { id: byDoc.id, ...byDoc.data() };
+            }
+        } catch (_) {}
 
-            // Field: qr_code (supports legacy qr_ prefix or raw student_id)
-            try {
-                const { data: byQR, error: qrErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code')
-                    .eq('qr_code', candidate)
-                    .limit(1);
-                if (!qrErr && byQR && byQR.length > 0) {
-                    console.log('✅ Found by qr_code field');
-                    return { id: byQR[0].id, ...byQR[0] };
-                }
-                const prefixed = candidate.startsWith('qr_') ? candidate : `qr_${candidate}`;
-                const { data: byPrefixed, error: prefErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code')
-                    .eq('qr_code', prefixed)
-                    .limit(1);
-                if (!prefErr && byPrefixed && byPrefixed.length > 0) {
-                    console.log('✅ Found by qr_code (prefixed)');
-                    return { id: byPrefixed[0].id, ...byPrefixed[0] };
-                }
-            } catch (_) {}
-        } else {
-            // Fallback to Firestore
-            const col = EducareTrack.db.collection('students');
-
-            // Direct doc lookup (most robust when QR encodes document ID)
-            try {
-                const byDoc = await col.doc(candidate).get();
-                if (byDoc.exists) {
-                    console.log('✅ Found by document ID');
-                    return { id: byDoc.id, ...byDoc.data() };
-                }
-            } catch (_) {}
-
-            // Field: student_id
-            try {
-                let byStudentId = await col.where('student_id', '==', candidate).limit(1).get();
+        // Field: studentId
+        try {
+            let byStudentId = await col.where('studentId', '==', candidate).limit(1).get();
+            if (!byStudentId.empty) {
+                console.log('✅ Found by studentId field');
+                const doc = byStudentId.docs[0];
+                return { id: doc.id, ...doc.data() };
+            }
+            const altCandidate = candidate.toUpperCase();
+            if (altCandidate !== candidate) {
+                byStudentId = await col.where('studentId', '==', altCandidate).limit(1).get();
                 if (!byStudentId.empty) {
-                    console.log('✅ Found by student_id field');
+                    console.log('✅ Found by studentId (uppercase)');
                     const doc = byStudentId.docs[0];
                     return { id: doc.id, ...doc.data() };
                 }
-                const altCandidate = candidate.toUpperCase();
-                if (altCandidate !== candidate) {
-                    byStudentId = await col.where('student_id', '==', altCandidate).limit(1).get();
-                    if (!byStudentId.empty) {
-                        console.log('✅ Found by student_id (uppercase)');
-                        const doc = byStudentId.docs[0];
-                        return { id: doc.id, ...doc.data() };
-                    }
-                }
-            } catch (_) {}
+            }
+        } catch (_) {}
 
-            // Field: qrCode (supports legacy qr_ prefix or raw student_id)
-            try {
-                let byQR = await col.where('qrCode', '==', candidate).limit(1).get();
-                if (!byQR.empty) {
-                    console.log('✅ Found by qrCode field');
-                    const doc = byQR.docs[0];
-                    return { id: doc.id, ...doc.data() };
-                }
-                const prefixed = candidate.startsWith('qr_') ? candidate : `qr_${candidate}`;
-                byQR = await col.where('qrCode', '==', prefixed).limit(1).get();
-                if (!byQR.empty) {
-                    console.log('✅ Found by qrCode (prefixed)');
-                    const doc = byQR.docs[0];
-                    return { id: doc.id, ...doc.data() };
-                }
-            } catch (_) {}
-        }
+        // Field: qrCode (supports legacy qr_ prefix or raw studentId)
+        try {
+            let byQR = await col.where('qrCode', '==', candidate).limit(1).get();
+            if (!byQR.empty) {
+                console.log('✅ Found by qrCode field');
+                const doc = byQR.docs[0];
+                return { id: doc.id, ...doc.data() };
+            }
+            const prefixed = candidate.startsWith('qr_') ? candidate : `qr_${candidate}`;
+            byQR = await col.where('qrCode', '==', prefixed).limit(1).get();
+            if (!byQR.empty) {
+                console.log('✅ Found by qrCode (prefixed)');
+                const doc = byQR.docs[0];
+                return { id: doc.id, ...doc.data() };
+            }
+        } catch (_) {}
 
         // Field: LRN (12 digits)
         if (/^\d{12}$/.test(candidate)) {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                try {
-                    const { data: byLRN, error: lrnErr } = await window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code,lrn')
-                        .eq('lrn', candidate)
-                        .limit(1);
-                    if (!lrnErr && byLRN && byLRN.length > 0) {
-                        console.log('✅ Found by LRN');
-                        return { id: byLRN[0].id, ...byLRN[0] };
-                    }
-                } catch (_) {}
-            } else {
-                try {
-                    const byLRN = await col.where('lrn', '==', candidate).limit(1).get();
-                    if (!byLRN.empty) {
-                        console.log('✅ Found by LRN');
-                        const doc = byLRN.docs[0];
-                        return { id: doc.id, ...doc.data() };
-                    }
-                } catch (_) {}
-            }
-        }
-
-        // Field: first_name and last_name (exact, last resort)
-        if (window.USE_SUPABASE && window.supabaseClient) {
             try {
-                const { data: byName, error: nameErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status,qr_code,lrn')
-                    .or(`first_name.eq.${candidate},last_name.eq.${candidate}`)
-                    .limit(1);
-                if (!nameErr && byName && byName.length > 0) {
-                    console.log('✅ Found by name');
-                    return { id: byName[0].id, ...byName[0] };
-                }
-            } catch (_) {}
-        } else {
-            try {
-                const byName = await col.where('name', '==', candidate).limit(1).get();
-                if (!byName.empty) {
-                    console.log('✅ Found by name');
-                    const doc = byName.docs[0];
+                const byLRN = await col.where('lrn', '==', candidate).limit(1).get();
+                if (!byLRN.empty) {
+                    console.log('✅ Found by LRN');
+                    const doc = byLRN.docs[0];
                     return { id: doc.id, ...doc.data() };
                 }
             } catch (_) {}
         }
+
+        // Field: name (exact, last resort)
+        try {
+            const byName = await col.where('name', '==', candidate).limit(1).get();
+            if (!byName.empty) {
+                console.log('✅ Found by name');
+                const doc = byName.docs[0];
+                return { id: doc.id, ...doc.data() };
+            }
+        } catch (_) {}
 
         console.log('❌ Student not found with any method');
         return null;
@@ -571,54 +477,39 @@ class QRScanner {
 
             // Create attendance record
             const attendanceData = {
-                student_id: studentId,
-                student_name: student.name,
-                class_id: student.class_id || '',
-                entry_type: entryType,
-                timestamp: EducareTrack.db.fieldValue.serverTimestamp(),
+                studentId: studentId,
+                student_id: studentId, // Snake case
+                studentName: student.name,
+                student_name: student.name, // Snake case
+                classId: student.class_id || student.classId || '',
+                class_id: student.class_id || student.classId || '', // Snake case
+                entryType: entryType,
+                entry_type: entryType, // Snake case
+                timestamp: timestamp,
                 time: timeString,
                 session: session,
                 status: status,
                 remarks: remarks,
-                recorded_by: this.currentUser.id,
-                recorded_by_name: this.currentUser.name,
-                manual_entry: false
+                recordedBy: this.currentUser.id,
+                recorded_by: this.currentUser.id, // Snake case
+                recordedByName: this.currentUser.name,
+                recorded_by_name: this.currentUser.name, // Snake case
+                manualEntry: false,
+                manual_entry: false, // Snake case
+                created_at: timestamp
             };
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .insert({
-                        ...attendanceData,
-                        created_at: new Date().toISOString()
-                    });
-                if (error) throw error;
-                const attendanceRef = { id: data[0]?.id };
-            } else {
-                // Fallback to Firestore
-                const attendanceRef = await EducareTrack.db.collection('attendance').add(attendanceData);
-            }
+            const attendanceRef = await window.EducareTrack.db.collection('attendance').add(attendanceData);
 
             // Update student's current status
             const newStatus = entryType === 'entry' ? 'in_school' : 'out_school';
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { error } = await window.supabaseClient
-                    .from('students')
-                    .update({
-                        current_status: newStatus,
-                        last_attendance: new Date().toISOString()
-                    })
-                    .eq('id', studentId);
-                if (error) throw error;
-            } else {
-                // Fallback to Firestore
-                await EducareTrack.db.collection('students').doc(studentId).update({
-                    current_status: newStatus,
-                    last_attendance: EducareTrack.db.fieldValue.serverTimestamp()
-                });
-            }
+            await window.EducareTrack.db.collection('students').doc(studentId).update({
+                currentStatus: newStatus,
+                current_status: newStatus,
+                lastAttendance: timestamp,
+                last_attendance: timestamp,
+                updated_at: timestamp
+            });
 
             // Send enhanced notifications to both parent and teacher
             await this.sendEnhancedNotifications(student, entryType, timeString, status, remarks, attendanceRef.id);
@@ -629,15 +520,15 @@ class QRScanner {
             
             this.showResult('success', 
                 `${actionText} Recorded`, 
-                `${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown Student'} ${actionVerb} at ${timeString} (${remarks})`,
+                `${student.name} ${actionVerb} at ${timeString} (${remarks})`,
                 studentId
             );
             
             // Add to recent scans
             this.addRecentScan({
-                student_name: `${student.first_name || ''} ${student.last_name || ''}`.trim() || 'Unknown Student',
+                studentName: student.name,
                 time: timeString,
-                entry_type: entryType,
+                entryType: entryType,
                 status: status,
                 remarks: remarks
             });
@@ -657,7 +548,7 @@ class QRScanner {
     async sendEnhancedNotifications(student, entryType, timeString, status, remarks, attendanceId) {
         try {
             // Get parent ID
-            const parentId = student.parent_id;
+            const parentId = student.parentId;
             
             // Get homeroom teacher and subject teachers
             const teacherIds = await this.getRelevantTeachers(student);
@@ -689,20 +580,22 @@ class QRScanner {
                 type: 'attendance',
                 title: notificationTitle,
                 message: message,
-                target_users: targetUsers,
+                targetUsers: targetUsers,
+                studentId: student.id,
                 student_id: student.id,
-                student_name: student.name,
-                is_urgent: status === 'late' || status === 'half_day',
-                related_record: attendanceId,
-                created_at: EducareTrack.db.fieldValue.serverTimestamp()
+                studentName: student.name,
+                isUrgent: status === 'late' || status === 'half_day',
+                relatedRecord: attendanceId,
+                createdAt: new Date(),
+                created_at: new Date()
             };
 
             // Use EducareTrack notification system if available
             if (window.EducareTrack && window.EducareTrack.createNotification) {
                 await window.EducareTrack.createNotification(notificationData);
             } else {
-                // Fallback to direct database
-                await EducareTrack.db.collection('notifications').add(notificationData);
+                // Fallback to direct Firestore (wrapper)
+                await window.EducareTrack.db.collection('notifications').add(notificationData);
             }
 
             console.log(`Notification sent to ${targetUsers.length} users for ${student.name}`);
@@ -718,80 +611,51 @@ class QRScanner {
         const teacherIds = [];
         
         try {
-            // Get homeroom teacher for student's class
-            if (student.class_id) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    // Use Supabase
-                    const { data: homeroomTeachers, error: hErr } = await window.supabaseClient
-                        .from('users')
-                        .select('id,name')
-                        .eq('role', '==', 'teacher')
-                        .eq('class_id', '==', student.class_id)
-                        .eq('is_homeroom', '==', true);
-                    if (hErr) throw hErr;
-                    teacherIds.push(...(homeroomTeachers || []).map(t => t.id));
-                } else {
-                    // Fallback to Firestore
-                    const homeroomTeacherQuery = await EducareTrack.db.collection('users')
-                        .where('role', '==', 'teacher')
-                        .where('class_id', '==', student.class_id)
-                        .where('is_homeroom', '==', true)
-                        .limit(1)
-                        .get();
-                    if (!homeroomTeacherQuery.empty) {
-                        teacherIds.push(homeroomTeacherQuery.docs[0].id);
-                    }
+            // Get homeroom teacher for the student's class
+            if (student.classId || student.class_id) {
+                const classId = student.class_id || student.classId;
+                const homeroomTeacherQuery = await window.EducareTrack.db
+                    .collection('users')
+                    .where('role', '==', 'teacher')
+                    .where('classId', '==', classId) // Keeping classId for legacy compatibility
+                    .where('isHomeroom', '==', true)
+                    .where('isActive', '==', true)
+                    .limit(1)
+                    .get();
+                    
+                if (!homeroomTeacherQuery.empty) {
+                    teacherIds.push(homeroomTeacherQuery.docs[0].id);
                 }
 
                 // Also get any teacher assigned to this class (as backup)
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    // Use Supabase
-                    const { data: classTeachers, error: cErr } = await window.supabaseClient
-                        .from('users')
-                        .select('id,name')
-                        .eq('role', '==', 'teacher')
-                        .contains('assigned_classes', student.class_id)
-                        .eq('is_active', '==', true);
-                    if (cErr) throw cErr;
-                    teacherIds.push(...(classTeachers || []).map(t => t.id));
-                } else {
-                    // Fallback to Firestore
-                    const classTeachersQuery = await EducareTrack.db.collection('users')
-                        .where('role', '==', 'teacher')
-                        .where('assigned_classes', 'array-contains', student.class_id)
-                        .where('is_active', '==', true)
-                        .limit(3)
-                        .get();
-                    if (!classTeachersQuery.empty) {
-                        teacherIds.push(...classTeachersQuery.docs.map(doc => doc.id));
+                const classTeachersQuery = await window.EducareTrack.db
+                    .collection('users')
+                    .where('role', '==', 'teacher')
+                    .where('assignedClasses', 'array-contains', classId)
+                    .where('isActive', '==', true)
+                    .limit(3)
+                    .get();
+                    
+                classTeachersQuery.docs.forEach(doc => {
+                    if (!teacherIds.includes(doc.id)) {
+                        teacherIds.push(doc.id);
                     }
-                }
+                });
+            }
 
-                // If no teachers found for class, try to find teachers by grade level
-                if (teacherIds.length === 0 && student.grade) {
-                    if (window.USE_SUPABASE && window.supabaseClient) {
-                        // Use Supabase
-                        const { data: gradeTeachers, error: gErr } = await window.supabaseClient
-                            .from('users')
-                            .select('id,name')
-                            .eq('role', '==', 'teacher')
-                            .contains('assigned_grades', student.grade)
-                            .eq('is_active', '==', true);
-                        if (gErr) throw gErr;
-                        teacherIds.push(...(gradeTeachers || []).map(t => t.id));
-                    } else {
-                        // Fallback to Firestore
-                        const gradeTeachersQuery = await EducareTrack.db.collection('users')
-                            .where('role', '==', 'teacher')
-                            .where('assigned_grades', 'array-contains', student.grade)
-                            .where('is_active', '==', true)
-                            .limit(5)
-                            .get();
-                        if (!gradeTeachersQuery.empty) {
-                            teacherIds.push(...gradeTeachersQuery.docs.map(doc => doc.id));
-                        }
-                    }
-                }
+            // If no teachers found for class, try to find teachers by grade level
+            if (teacherIds.length === 0 && student.grade) {
+                const gradeTeachersQuery = await window.EducareTrack.db
+                    .collection('users')
+                    .where('role', '==', 'teacher')
+                    .where('assignedGrades', 'array-contains', student.grade)
+                    .where('isActive', '==', true)
+                    .limit(2)
+                    .get();
+                    
+                gradeTeachersQuery.docs.forEach(doc => {
+                    teacherIds.push(doc.id);
+                });
             }
 
             return teacherIds;
@@ -806,29 +670,17 @@ class QRScanner {
         try {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-
-            // Get morning attendance for student
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data: morningAttendance, error: mErr } = await window.supabaseClient
-                    .from('attendance')
-                    .select('student_id,timestamp')
-                    .eq('student_id', '==', studentId)
-                    .gte('timestamp', today)
-                    .eq('entry_type', '==', 'entry')
-                    .limit(1);
-                if (mErr) throw mErr;
-                return morningAttendance && morningAttendance.length > 0;
-            } else {
-                // Fallback to Firestore
-                const snapshot = await EducareTrack.db.collection('attendance')
-                    .where('student_id', '==', studentId)
-                    .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
-                    .limit(1)
-                    .get();
-                return !snapshot.empty;
-            }
+            
+            const snapshot = await window.EducareTrack.db
+                .collection('attendance')
+                .where('studentId', '==', studentId)
+                .where('timestamp', '>=', today)
+                .where('entryType', '==', 'entry')
+                .where('session', '==', 'morning')
+                .limit(1)
+                .get();
+                
+            return !snapshot.empty;
         } catch (error) {
             console.error('Error checking morning attendance:', error);
             return false;
@@ -837,57 +689,8 @@ class QRScanner {
 
     async loadAbsentStudents() {
         try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            // Get all active students
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data: students, error: sErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status')
-                    .eq('current_status', '==', true);
-                if (sErr) throw sErr;
-                const allStudents = (students || []).map(s => ({
-                    id: s.id,
-                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unknown Student',
-                    class_id: s.class_id,
-                    parent_id: s.parent_id,
-                    current_status: s.current_status
-                }));
-            } else {
-                // Fallback to Firestore
-                const studentsSnapshot = await EducareTrack.db.collection('students')
-                    .where('is_active', '==', true)
-                    .get();
-                const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
-
-            // Get today's attendance entries
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data: entries, error: eErr } = await window.supabaseClient
-                    .from('attendance')
-                    .select('student_id,entry_type,timestamp')
-                    .gte('timestamp', today)
-                    .eq('entry_type', '==', 'entry');
-                if (eErr) throw eErr;
-            } else {
-                // Fallback to Firestore
-                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
-                    .get();
-            }
-
-            const presentStudentIds = new Set();
-            attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().student_id);
-            });
-
-            // Find absent students
-            const absentStudents = allStudents.filter(student => !presentStudentIds.has(student.id));
-
+            // Use the advanced attendance logic to get absent students
+            const absentStudents = await this.attendanceLogic.getAbsentStudents();
             this.displayAbsentStudents(absentStudents);
         } catch (error) {
             console.error('Error loading absent students:', error);
@@ -900,52 +703,26 @@ class QRScanner {
         try {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-
+            
             // Get all active students
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data: students, error: sErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id,current_status')
-                    .eq('current_status', '==', true);
-                if (sErr) throw sErr;
-                const allStudents = (students || []).map(s => ({
-                    id: s.id,
-                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unknown Student',
-                    class_id: s.class_id,
-                    parent_id: s.parent_id,
-                    current_status: s.current_status
-                }));
-            } else {
-                // Fallback to Firestore
-                const studentsSnapshot = await EducareTrack.db.collection('students')
-                    .where('is_active', '==', true)
-                    .get();
-                const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
-
+            const studentsSnapshot = await window.EducareTrack.db
+                .collection('students')
+                .where('isActive', '==', true)
+                .get();
+                
+            const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
             // Get today's attendance entries
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Use Supabase
-                const { data: entries, error: eErr } = await window.supabaseClient
-                    .from('attendance')
-                    .select('student_id,entry_type,timestamp')
-                    .gte('timestamp', today)
-                    .eq('entry_type', '==', 'entry');
-                if (eErr) throw eErr;
-            } else {
-                // Fallback to Firestore
-                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
-                    .get();
-            }
-
+            const attendanceSnapshot = await window.EducareTrack.db
+                .collection('attendance')
+                .where('timestamp', '>=', today)
+                .where('entryType', '==', 'entry')
+                .get();
+                
             const presentStudentIds = new Set();
             attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().student_id);
+                presentStudentIds.add(doc.data().studentId);
             });
-
             
             // Find absent students
             const absentStudents = allStudents.filter(student => !presentStudentIds.has(student.id));
@@ -978,7 +755,7 @@ class QRScanner {
                 <div class="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-200">
                     <div>
                         <h4 class="text-sm font-medium text-gray-900">${student.name}</h4>
-                        <p class="text-xs text-gray-600">${student.id} • ${student.grade}${student.class_id ? ` • ${student.class_id}` : ''}</p>
+                        <p class="text-xs text-gray-600">${student.id} • ${student.grade}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
                         <p class="text-xs text-red-600 mt-1">${status.remarks}</p>
                     </div>
                     <span class="px-2 py-1 text-xs font-semibold rounded-full ${this.getStatusColor(status.status)}">
@@ -1043,8 +820,8 @@ class QRScanner {
         scanElement.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg';
         scanElement.innerHTML = `
             <div>
-                <h4 class="text-sm font-medium text-gray-900">${scanData.student_name || scanData.studentName}</h4>
-                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entry_type || scanData.entryType} • ${scanData.remarks}</p>
+                <h4 class="text-sm font-medium text-gray-900">${scanData.studentName}</h4>
+                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType} • ${scanData.remarks}</p>
             </div>
             <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
                 ${this.getStatusText(scanData.status)}
@@ -1063,51 +840,25 @@ class QRScanner {
     }
 
     loadRecentScans() {
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            // Use Supabase
-            window.supabaseClient
-                .from('attendance')
-                .select('student_id,time,entry_type,status,remarks')
-                .order('timestamp', { ascending: false })
-                .limit(10)
-                .then(({ data, error }) => {
-                    if (!error && data) {
-                        data.forEach(record => {
-                            this.addRecentScan({
-                                student_name: record.student_id, // Use student_id as fallback since attendance doesn't have student_name
-                                time: record.time,
-                                entry_type: record.entry_type,
-                                status: record.status,
-                                remarks: record.remarks || ''
-                            });
-                        });
-                    }
-                })
-                .catch(error => {
-                    console.error('Error loading recent scans:', error);
-                });
-        } else {
-            // Fallback to Firestore
-            EducareTrack.db.collection('attendance')
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .get()
-                .then(snapshot => {
-                    snapshot.docs.forEach(doc => {
-                        const data = doc.data();
-                        this.addRecentScan({
-                            student_name: data.studentName || data.student_name || data.student_id,
-                            time: data.time,
-                            entry_type: data.entryType || data.entry_type,
-                            status: data.status,
-                            remarks: data.remarks || ''
-                        });
+        window.EducareTrack.db.collection('attendance')
+            .orderBy('timestamp', 'desc')
+            .limit(10)
+            .get()
+            .then(snapshot => {
+                snapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    this.addRecentScan({
+                        studentName: data.studentName,
+                        time: data.time,
+                        entryType: data.entryType,
+                        status: data.status,
+                        remarks: data.remarks || ''
                     });
-                })
-                .catch(error => {
-                    console.error('Error loading recent scans:', error);
                 });
-        }
+            })
+            .catch(error => {
+                console.error('Error loading recent scans:', error);
+            });
     }
 
     updateScannerStatus(message) {

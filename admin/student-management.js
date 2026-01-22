@@ -2,6 +2,7 @@ class StudentManagement {
     constructor() {
         this.currentEditingStudent = null;
         this.classes = [];
+        this.parents = [];
         this.allStudents = [];
         this.filteredStudents = [];
         this.init();
@@ -29,16 +30,63 @@ class StudentManagement {
             }
 
             await this.loadClasses();
+            await this.loadParents();
             await this.loadStudents();
             this.populateClassFilters();
             this.setupEventListeners();
             this.populateLevelDependentFields();
+            this.populateParentDropdown();
+            this.populateClassDropdown();
             
             this.hideLoading();
         } catch (error) {
             console.error('Error initializing student management:', error);
             this.hideLoading();
         }
+    }
+
+    async loadParents() {
+        try {
+            // Fetch users with role 'parent'
+            // We'll use EducareTrack.getUsersByRole if available, otherwise direct query
+            let parents = [];
+            if (window.EducareTrack.getUsersByRole) {
+                parents = await window.EducareTrack.getUsersByRole('parent');
+            } else {
+                const snapshot = await window.EducareTrack.db.collection('users')
+                    .where('role', '==', 'parent')
+                    .get();
+                parents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+            this.parents = parents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        } catch (error) {
+            console.error('Error loading parents:', error);
+        }
+    }
+
+    populateParentDropdown() {
+        const parentSelect = document.getElementById('studentParent');
+        if (!parentSelect) return;
+        
+        parentSelect.innerHTML = '<option value="">Select Parent</option>';
+        this.parents.forEach(parent => {
+            parentSelect.innerHTML += `<option value="${parent.id}">${parent.name} (${parent.phone || 'No Phone'})</option>`;
+        });
+    }
+
+    populateClassDropdown() {
+        const classSelect = document.getElementById('studentClass');
+        if (!classSelect) return;
+        
+        // Preserve current selection if any
+        const currentVal = classSelect.value;
+        
+        classSelect.innerHTML = '<option value="">Select Class</option>';
+        this.classes.forEach(cls => {
+            classSelect.innerHTML += `<option value="${cls.id}">${cls.name} (${cls.grade} - ${cls.level})</option>`;
+        });
+        
+        if (currentVal) classSelect.value = currentVal;
     }
 
     async loadStudents() {
@@ -83,14 +131,14 @@ class StudentManagement {
                     ${student.lrn ? `<div class="text-xs text-gray-500">LRN: ${student.lrn}</div>` : ''}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-medium text-gray-900">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown'}</div>
-                    <div class="text-xs text-gray-500">${this.getClassById(student.class_id)?.level || 'N/A'} • ${student.strand || ''}</div>
+                    <div class="text-sm font-medium text-gray-900">${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown')}</div>
+                    <div class="text-xs text-gray-500">${this.getClassById(student.class_id || student.classId)?.level || 'N/A'} • ${student.strand || ''}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-500">${this.getClassById(student.class_id)?.name || 'N/A'}</div>
+                    <div class="text-sm text-gray-500">${this.getClassById(student.class_id || student.classId)?.name || 'N/A'}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    ${this.getClassById(student.class_id)?.grade || 'N/A'}
+                    ${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${this.getStatusColor(student.current_status)}">
@@ -220,15 +268,18 @@ class StudentManagement {
             const lastName = nameParts.slice(1).join(' ') || '';
 
             const studentData = {
+                name: fullName,
                 first_name: firstName,
                 last_name: lastName,
                 lrn: document.getElementById('studentLRN').value || '',
                 class_id: document.getElementById('studentClass').value,
-                strand: document.getElementById('studentStrand').value || ''
+                classId: document.getElementById('studentClass').value, // Add both for compatibility
+                strand: document.getElementById('studentStrand').value || '',
+                parent_id: document.getElementById('studentParent').value || ''
             };
 
             // Validate required fields
-            if (!studentData.first_name || !studentData.class_id) {
+            if (!studentData.name || !studentData.class_id) {
                 this.showNotification('Please fill in all required fields', 'error');
                 this.hideLoading();
                 return;
@@ -238,10 +289,30 @@ class StudentManagement {
                 // Update existing student
                 await window.EducareTrack.db.collection('students').doc(this.currentEditingStudent.id).update({
                     ...studentData,
-                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    updated_at: new Date(),
                     updated_by: window.EducareTrack.currentUser.id
                 });
+                
+                // If parent changed, we might need to update linking on parent side too
+                // But generally linking is stored on student.parent_id
+                
                 this.showNotification('Student updated successfully', 'success');
+            } else {
+                // Create new student
+                // We should ideally use EducareTrack.enrollStudent, but that requires parent info.
+                // If we are just adding a student record directly (admin bypass), we can do this:
+                const studentId = window.EducareTrack.generateStudentId(studentData.lrn);
+                
+                await window.EducareTrack.db.collection('students').doc(studentId).set({
+                    id: studentId,
+                    studentId: studentId,
+                    ...studentData,
+                    current_status: 'out_school',
+                    is_active: true,
+                    created_at: new Date(),
+                    createdBy: window.EducareTrack.currentUser.id
+                });
+                this.showNotification('Student created successfully', 'success');
             } 
 
             this.closeModal();
@@ -273,12 +344,14 @@ class StudentManagement {
     }
 
     populateStudentForm(student) {
-        document.getElementById('studentName').value = student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '';
+        const classId = student.class_id || student.classId;
+        document.getElementById('studentName').value = student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '');
         document.getElementById('studentLRN').value = student.lrn || '';
-        document.getElementById('studentClass').value = student.class_id || '';
-        document.getElementById('studentGrade').value = this.getClassById(student.class_id)?.grade || '';
-        document.getElementById('studentLevel').value = this.getClassById(student.class_id)?.level || 'Elementary';
+        document.getElementById('studentClass').value = classId || '';
+        document.getElementById('studentGrade').value = this.getClassById(classId)?.grade || '';
+        document.getElementById('studentLevel').value = this.getClassById(classId)?.level || 'Elementary';
         document.getElementById('studentStrand').value = student.strand || '';
+        document.getElementById('studentParent').value = student.parent_id || '';
         
         // Trigger level change to populate grades and show/hide strand
         const levelEvent = new Event('change');
@@ -286,7 +359,7 @@ class StudentManagement {
         
         // Set grade after level has populated options
         setTimeout(() => {
-            const grade = this.getClassById(student.class_id)?.grade || '';
+            const grade = this.getClassById(classId)?.grade || '';
             document.getElementById('studentGrade').value = grade.replace('Grade ', '');
         }, 100);
     }
@@ -317,13 +390,13 @@ class StudentManagement {
                     <div class="lg:col-span-1">
                         <div class="text-center">
                             <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4 overflow-hidden">
-                                ${student.photo_url ? 
-                                    `<img src="${student.photo_url}" alt="${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Student'}" class="w-24 h-24 rounded-full object-cover">` :
-                                    `<span class="text-blue-600 font-semibold text-2xl">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}`.split(' ').map(n => n[0]).join('').substring(0, 2) : 'ST'}</span>`
+                                ${student.photo_url || student.photoUrl ? 
+                                    `<img src="${student.photo_url || student.photoUrl}" alt="${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Student')}" class="w-24 h-24 rounded-full object-cover">` :
+                                    `<span class="text-blue-600 font-semibold text-2xl">${(student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'ST')).split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
                                 }
                             </div>
-                            <h3 class="text-xl font-bold text-gray-800">${student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown'}</h3>
-                            <p class="text-gray-600">${this.getClassById(student.class_id)?.grade || 'N/A'} • ${this.getClassById(student.class_id)?.level || 'N/A'}</p>
+                            <h3 class="text-xl font-bold text-gray-800">${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown')}</h3>
+                            <p class="text-gray-600">${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'} • ${this.getClassById(student.class_id || student.classId)?.level || 'N/A'}</p>
                             ${student.strand ? `<p class="text-gray-600">${student.strand}</p>` : ''}
                             <div class="mt-2">
                                 <span class="px-3 py-1 rounded-full text-sm font-medium ${this.getStatusColor(student.current_status)}">
@@ -490,14 +563,17 @@ class StudentManagement {
         const activities = [
             ...attendance.map(a => ({
                 type: 'attendance',
-                date: a.timestamp.toDate(),
+                date: a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : new Date(a.timestamp),
                 details: `${a.entryType === 'entry' ? 'In' : 'Out'} - ${this.getStatusText(a.status)}`
             })),
-            ...clinic.map(c => ({
-                type: 'clinic',
-                date: c.checkIn.toDate(),
-                details: `Clinic Visit - ${c.complaint || 'No details'}`
-            }))
+            ...clinic.map(c => {
+                const ts = c.timestamp || c.checkIn;
+                return {
+                    type: 'clinic',
+                    date: ts && (ts.toDate ? ts.toDate() : new Date(ts)),
+                    details: `Clinic Visit - ${c.complaint || 'No details'}`
+                };
+            })
         ].sort((a, b) => b.date - a.date).slice(0, 5);
 
         if (activities.length === 0) {
@@ -533,7 +609,7 @@ class StudentManagement {
                     this.showLoading();
                     await window.EducareTrack.db.collection('students').doc(studentId).update({
                         is_active: newStatus,
-                        updated_at: firebase.firestore.FieldValue.serverTimestamp()
+                        updated_at: new Date()
                     });
                     this.showNotification(`Student ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
                     await this.loadStudents();
@@ -588,11 +664,15 @@ class StudentManagement {
         const statusFilter = document.getElementById('statusFilter').value;
 
         this.filteredStudents = this.allStudents.filter(student => {
-            const fullName = student.first_name && student.last_name ? `${student.first_name} ${student.last_name}`.toLowerCase() : '';
+            const displayName = student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '');
+            const fullName = displayName.toLowerCase();
             const matchesSearch = fullName.includes(searchTerm) || 
                                 (student.id && student.id.toLowerCase().includes(searchTerm)) ||
                                 (student.lrn && student.lrn.toLowerCase().includes(searchTerm));
-            const matchesClass = !classFilter || student.class_id === classFilter;
+            
+            const studentClassId = student.class_id || student.classId;
+            const matchesClass = !classFilter || studentClassId === classFilter;
+            
             const matchesStatus = !statusFilter || student.current_status === statusFilter;
 
             return matchesSearch && matchesClass && matchesStatus;

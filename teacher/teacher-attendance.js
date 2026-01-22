@@ -125,7 +125,7 @@ class TeacherAttendance {
             
             const snapshot = await EducareTrack.db.collection('attendance')
                 .where('timestamp', '>=', today)
-                .where('class_id', '==', this.currentUser.classId)
+                .where('classId', '==', this.currentUser.classId)
                 .get();
 
             this.todayAttendance = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
@@ -148,14 +148,14 @@ class TeacherAttendance {
         const absentStudents = new Set(this.classStudents.map(s => s.id));
 
         this.todayAttendance.forEach(record => {
-            if (record.entry_type === 'entry') {
+            if (record.entryType === 'entry') {
                 if (record.status !== 'absent') {
-                    absentStudents.delete(record.student_id);
+                    absentStudents.delete(record.studentId);
                 }
                 if (record.status === 'late') {
-                    lateStudents.add(record.student_id);
+                    lateStudents.add(record.studentId);
                 } else if (record.status === 'present') {
-                    presentStudents.add(record.student_id);
+                    presentStudents.add(record.studentId);
                 }
             }
         });
@@ -182,16 +182,16 @@ class TeacherAttendance {
         // Group attendance by student for today
         const studentAttendance = {};
         this.todayAttendance.forEach(record => {
-            if (!studentAttendance[record.student_id]) {
-                studentAttendance[record.student_id] = [];
+            if (!studentAttendance[record.studentId]) {
+                studentAttendance[record.studentId] = [];
             }
-            studentAttendance[record.student_id].push(record);
+            studentAttendance[record.studentId].push(record);
         });
 
         tableBody.innerHTML = this.classStudents.map(student => {
             const studentRecords = studentAttendance[student.id] || [];
-            const entryRecord = studentRecords.find(r => r.entry_type === 'entry');
-            const exitRecord = studentRecords.find(r => r.entry_type === 'exit');
+            const entryRecord = studentRecords.find(r => r.entryType === 'entry');
+            const exitRecord = studentRecords.find(r => r.entryType === 'exit');
             
             return `
                 <tr class="hover:bg-gray-50">
@@ -340,9 +340,9 @@ class TeacherAttendance {
                 today.setHours(0, 0, 0, 0);
                 
                 const attendanceQuery = await EducareTrack.db.collection('attendance')
-                    .where('student_id', '==', studentId)
+                    .where('studentId', '==', studentId)
                     .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
+                    .where('entryType', '==', 'entry')
                     .get();
 
                 if (!attendanceQuery.empty) {
@@ -389,7 +389,7 @@ class TeacherAttendance {
             
             const absentStudents = this.classStudents.filter(student => {
                 const hasEntry = this.todayAttendance.some(record => 
-                    record.student_id === student.id && record.entry_type === 'entry'
+                    record.studentId === student.id && record.entryType === 'entry'
                 );
                 return !hasEntry;
             });
@@ -427,7 +427,7 @@ class TeacherAttendance {
             const snapshot = await EducareTrack.db.collection('attendance')
                 .where('timestamp', '>=', start)
                 .where('timestamp', '<=', end)
-                .where('class_id', '==', this.currentUser.classId)
+                .where('classId', '==', this.currentUser.classId)
                 .get();
 
             this.attendanceHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))

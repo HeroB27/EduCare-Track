@@ -311,7 +311,7 @@ class TeacherAnnouncements {
                 className: this.currentUser.className,
                 createdBy: this.currentUser.id,
                 createdByName: this.currentUser.name,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: new Date().toISOString(),
                 isActive: true
             };
 

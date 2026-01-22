@@ -194,9 +194,6 @@
                     // Show success message
                     showStatus('success', `Welcome back, ${user.name}! Redirecting to your dashboard...`);
                     
-                    // Save user data to localStorage for dashboard authentication
-                    localStorage.setItem('educareTrack_user', JSON.stringify(user));
-                    
                     // Redirect to dashboard after a short delay
                     setTimeout(() => {
                         const dashboardUrl = getDashboardUrl(role);
@@ -304,20 +301,6 @@
                     'student': 'student-dashboard.html'
                 };
                 return dashboards[role] || 'dashboard.html';
-            }
-            
-            // Function to get user from URL parameters (fallback)
-            function getUserFromUrlParams() {
-                const urlParams = new URLSearchParams(window.location.search);
-                const uid = urlParams.get('uid');
-                const role = urlParams.get('role');
-                
-                if (uid && role) {
-                    // If we have URL params but no localStorage user, we need to fetch user data
-                    // This is a fallback mechanism
-                    return { uid, role };
-                }
-                return null;
             }
             
             // Show status modal

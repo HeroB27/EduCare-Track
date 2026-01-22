@@ -458,7 +458,7 @@ async loadNotificationCount() {
 
             await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
                 status: 'approved',
-                reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                reviewedAt: new Date().toISOString(),
                 reviewedBy: this.currentUser.id,
                 reviewedByName: this.currentUser.name
             });

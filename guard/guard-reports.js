@@ -120,18 +120,18 @@ class GuardReports {
                     };
                 }
                 
-                if (record.entry_type === 'entry') {
+                if (record.entryType === 'entry') {
                     dateGroups[date].entries.push(record);
                     if (record.status === 'present') dateGroups[date].present++;
                     if (record.status === 'late') dateGroups[date].late++;
-                } else if (record.entry_type === 'exit') {
+                } else if (record.entryType === 'exit') {
                     dateGroups[date].exits.push(record);
                 }
             }
         });
 
         // Get total number of students for attendance rate calculation
-        const totalStudents = await EducareTrack.getCollectionCount('students', [['is_active', '==', true]]);
+        const totalStudents = await EducareTrack.getCollectionCount('students', [['isActive', '==', true]]);
         
         // Fill missing dates in range
         const filled = {};
@@ -232,14 +232,14 @@ class GuardReports {
                                         <div class="text-sm text-gray-900">${date}</div>
                                         <div class="text-sm text-gray-500">${time}</div>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.entry_type}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.entryType}</td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusColor}">
                                             ${statusText}
                                         </span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.session || 'N/A'}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.recorded_by_name || 'System'}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.recordedByName || 'System'}</td>
                                 </tr>
                             `;
                         }).join('')}
@@ -271,7 +271,7 @@ class GuardReports {
                         ${data.map(record => {
                             const date = EducareTrack.formatDate(record.timestamp);
                             const time = EducareTrack.formatTime(record.timestamp);
-                            const clinicType = record.check_in ? 'Check-in' : 'Check-out';
+                            const type = record.checkIn ? 'Check-in' : 'Check-out';
                             
                             return `
                                 <tr>
@@ -283,10 +283,10 @@ class GuardReports {
                                         <div class="text-sm text-gray-900">${date}</div>
                                         <div class="text-sm text-gray-500">${time}</div>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${clinicType}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${type}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.reason || 'Not specified'}</td>
                                     <td class="px-6 py-4 text-sm text-gray-900">${record.notes || 'None'}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.staff_name || 'Unknown'}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.staffName || 'Unknown'}</td>
                                 </tr>
                             `;
                         }).join('')}
@@ -313,17 +313,17 @@ class GuardReports {
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         ${data.map(day => {
-                            const attendanceRateColor = day.no_school ? 'text-gray-500' : (day.attendance_rate >= 90 ? 'text-green-600' : 
-                                                     day.attendance_rate >= 80 ? 'text-yellow-600' : 'text-red-600');
+                            const attendanceRateColor = day.noSchool ? 'text-gray-500' : (day.attendanceRate >= 90 ? 'text-green-600' : 
+                                                     day.attendanceRate >= 80 ? 'text-yellow-600' : 'text-red-600');
                             
                             return `
                                 <tr>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${day.date}${day.no_school ? ' (No School)' : ''}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${day.date}${day.noSchool ? ' (No School)' : ''}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${day.present}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${day.late}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${day.absent}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium ${attendanceRateColor}">
-                                        ${day.no_school ? 'No School' : `${day.attendance_rate}%`}
+                                        ${day.noSchool ? 'No School' : `${day.attendanceRate}%`}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${day.entries.length}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${day.exits.length}</td>
@@ -393,8 +393,8 @@ class GuardReports {
                 break;
 
             case 'clinic':
-                const checkIns = data.filter(r => r.check_in).length;
-                const checkOuts = data.filter(r => !r.check_in).length;
+                const checkIns = data.filter(r => r.checkIn).length;
+                const checkOuts = data.filter(r => !r.checkIn).length;
                 
                 statsHtml = `
                     <div class="text-center p-4 bg-blue-50 rounded-lg">
@@ -418,7 +418,7 @@ class GuardReports {
 
             case 'summary':
                 const totalDays = data.length;
-                const avgAttendance = data.reduce((sum, day) => sum + day.attendance_rate, 0) / totalDays;
+                const avgAttendance = data.reduce((sum, day) => sum + day.attendanceRate, 0) / totalDays;
                 const totalEntries = data.reduce((sum, day) => sum + day.entries.length, 0);
                 const totalExits = data.reduce((sum, day) => sum + day.exits.length, 0);
                 
@@ -539,15 +539,15 @@ class GuardReports {
                     `"${record.studentId}"`,
                     `"${date}"`,
                     `"${time}"`,
-                    `${record.entry_type}`,
+                    `"${record.entryType}"`,
                     `"${record.status}"`,
                     `"${record.session || ''}"`,
-                    `${record.recorded_by_name || ''}`
+                    `"${record.recordedByName || ''}"`
                 ];
             case 'clinic':
                 const clinicDate = EducareTrack.formatDate(record.timestamp);
                 const clinicTime = EducareTrack.formatTime(record.timestamp);
-                const clinicType = record.check_in ? 'Check-in' : 'Check-out';
+                const clinicType = record.checkIn ? 'Check-in' : 'Check-out';
                 return [
                     `"${record.studentName}"`,
                     `"${record.studentId}"`,
@@ -556,7 +556,7 @@ class GuardReports {
                     `"${clinicType}"`,
                     `"${record.reason || ''}"`,
                     `"${record.notes || ''}"`,
-                    `${record.staff_name || ''}`
+                    `"${record.staffName || ''}"`
                 ];
             case 'summary':
                 return [

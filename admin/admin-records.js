@@ -11,18 +11,6 @@ class AdminRecords {
         this.init();
     }
 
-    // Helper function to handle timestamp conversion
-    parseTimestamp(timestamp) {
-        if (!timestamp) return null;
-        if (timestamp instanceof Date) {
-            return timestamp;
-        }
-        if (timestamp?.toDate) {
-            return timestamp.toDate();
-        }
-        return new Date(timestamp);
-    }
-
     async init() {
         try {
             this.showLoading();
@@ -138,13 +126,18 @@ class AdminRecords {
 
     async getAttendanceData() {
         try {
-            // Get attendance for current date range using the fixed EducareTrack method
-            const filters = {
-                startDate: this.formatDateForInput(this.currentDateRange.startDate),
-                endDate: this.formatDateForInput(this.currentDateRange.endDate)
-            };
-            
-            return await EducareTrack.getAttendanceRecords(filters);
+            // Get attendance for the current date range
+            const startDate = new Date(this.currentDateRange.startDate);
+            const endDate = new Date(this.currentDateRange.endDate);
+            endDate.setHours(23, 59, 59, 999); // Include entire end date
+
+            const snapshot = await EducareTrack.db.collection('attendance')
+                .where('timestamp', '>=', startDate)
+                .where('timestamp', '<=', endDate)
+                .orderBy('timestamp', 'desc')
+                .get();
+
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (error) {
             console.error('Error getting attendance data:', error);
             return [];
@@ -153,13 +146,17 @@ class AdminRecords {
 
     async getClinicVisitsData() {
         try {
-            // Use the new getAllClinicVisits method with proper Supabase support
-            const filters = {
-                startDate: this.formatDateForInput(this.currentDateRange.startDate),
-                endDate: this.formatDateForInput(this.currentDateRange.endDate)
-            };
-            
-            return await EducareTrack.getAllClinicVisits(filters);
+            const startDate = new Date(this.currentDateRange.startDate);
+            const endDate = new Date(this.currentDateRange.endDate);
+            endDate.setHours(23, 59, 59, 999);
+
+            const snapshot = await EducareTrack.db.collection('clinicVisits')
+                .where('timestamp', '>=', startDate)
+                .where('timestamp', '<=', endDate)
+                .orderBy('timestamp', 'desc')
+                .get();
+
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (error) {
             console.error('Error getting clinic visits data:', error);
             return [];
@@ -173,26 +170,26 @@ class AdminRecords {
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
-        // Filter today's attendance - handle both timestamp formats
+        // Filter today's attendance
         const todayAttendance = this.attendanceData.filter(record => {
-            const recordDate = this.parseTimestamp(record.timestamp);
-            return recordDate && recordDate >= today && recordDate < tomorrow;
+            const recordDate = record.timestamp?.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+            return recordDate >= today && recordDate < tomorrow;
         });
 
         // Calculate metrics
         const totalStudents = this.students.length;
         const presentToday = new Set(todayAttendance
             .filter(record => record.status === 'present' || record.status === 'late')
-            .map(record => record.student_id)
+            .map(record => record.studentId)
         ).size;
         
         const absentToday = totalStudents - presentToday;
         const lateToday = todayAttendance.filter(record => record.status === 'late').length;
 
-        // Overall attendance rate for period
+        // Overall attendance rate for the period
         const uniqueStudentsPresent = new Set(this.attendanceData
             .filter(record => record.status === 'present' || record.status === 'late')
-            .map(record => record.student_id)
+            .map(record => record.studentId)
         ).size;
         
         const overallAttendanceRate = totalStudents > 0 ? 
@@ -285,23 +282,6 @@ class AdminRecords {
             }
         });
 
-        const saturdayToggle = document.getElementById('allowSaturday');
-        const sundayToggle = document.getElementById('allowSunday');
-        if (saturdayToggle || sundayToggle) {
-            const current = EducareTrack.getWeekendPolicy();
-            if (saturdayToggle) saturdayToggle.checked = !!current.saturday;
-            if (sundayToggle) sundayToggle.checked = !!current.sunday;
-            const handler = () => {
-                EducareTrack.setWeekendPolicy({
-                    saturday: saturdayToggle ? saturdayToggle.checked : current.saturday,
-                    sunday: sundayToggle ? sundayToggle.checked : current.sunday
-                });
-                this.updateCharts();
-                this.updateTables();
-            };
-            if (saturdayToggle) saturdayToggle.addEventListener('change', handler);
-            if (sundayToggle) sundayToggle.addEventListener('change', handler);
-        }
         const clinicTrendRange = document.getElementById('clinicTrendRange');
         if (clinicTrendRange) {
             clinicTrendRange.addEventListener('change', () => this.loadClinicAndAbsenceTrends());
@@ -310,6 +290,15 @@ class AdminRecords {
         if (absenceTrendRange) {
             absenceTrendRange.addEventListener('change', () => this.loadClinicAndAbsenceTrends());
         }
+
+        // Edit Modal Listeners
+        const closeEditBtn = document.getElementById('closeEditAttendanceModal');
+        const cancelEditBtn = document.getElementById('cancelEditAttendance');
+        const saveEditBtn = document.getElementById('saveEditAttendance');
+
+        if (closeEditBtn) closeEditBtn.addEventListener('click', () => this.closeEditModal());
+        if (cancelEditBtn) cancelEditBtn.addEventListener('click', () => this.closeEditModal());
+        if (saveEditBtn) saveEditBtn.addEventListener('click', () => this.saveEditedRecord());
     }
 
     setDateRange(rangeType) {
@@ -416,7 +405,7 @@ class AdminRecords {
         const classFilter = document.getElementById('classFilter');
         classFilter.innerHTML = '<option value="all">All Classes</option>';
         
-        const uniqueClasses = [...new Set(this.students.map(student => student.classId).filter(Boolean))];
+        const uniqueClasses = [...new Set(this.students.map(student => student.classId || student.class_id).filter(Boolean))];
         uniqueClasses.forEach(classId => {
             const classObj = this.classes.find(c => c.id === classId);
             if (classObj) {
@@ -456,8 +445,11 @@ class AdminRecords {
             }
 
             // Class filter
-            if (classFilter !== 'all' && student.classId !== classFilter) {
-                return false;
+            if (classFilter !== 'all') {
+                const studentClassId = student.classId || student.class_id;
+                if (studentClassId !== classFilter) {
+                    return false;
+                }
             }
 
             return true;
@@ -474,7 +466,7 @@ class AdminRecords {
         if (this.filteredAttendanceData.length === 0) {
             tableBody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="px-4 py-4 text-center text-gray-500">
+                    <td colspan="8" class="px-4 py-4 text-center text-gray-500">
                         No records found for the selected filters
                     </td>
                 </tr>
@@ -490,12 +482,12 @@ class AdminRecords {
 
         tableBody.innerHTML = pageData.map(record => {
             const student = this.students.find(s => s.id === record.studentId);
-            const classObj = this.classes.find(c => c.id === record.classId);
+            const classObj = this.classes.find(c => c.id === (record.classId || record.class_id));
             
             return `
                 <tr>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
                         <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
@@ -517,6 +509,14 @@ class AdminRecords {
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 capitalize">
                         ${record.session || 'N/A'}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                        <button onclick="adminRecords.editRecord('${record.id}')" class="text-indigo-600 hover:text-indigo-900 mr-3">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="adminRecords.deleteRecord('${record.id}')" class="text-red-600 hover:text-red-900">
+                            <i class="fas fa-trash"></i>
+                        </button>
                     </td>
                 </tr>
             `;
@@ -547,7 +547,7 @@ class AdminRecords {
 
         tableBody.innerHTML = lateArrivals.map(record => {
             const student = this.students.find(s => s.id === record.studentId);
-            const classObj = this.classes.find(c => c.id === record.classId);
+            const classObj = this.classes.find(c => c.id === (record.classId || record.class_id));
             
             // Calculate minutes late (assuming 8:00 AM as threshold)
             const arrivalTime = record.time;
@@ -566,7 +566,7 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${arrivalTime}
@@ -595,7 +595,7 @@ class AdminRecords {
 
         tableBody.innerHTML = this.clinicVisits.map(visit => {
             const student = this.students.find(s => s.id === visit.studentId);
-            const classObj = this.classes.find(c => c.id === visit.classId);
+            const classObj = this.classes.find(c => c.id === (visit.classId || visit.class_id));
             
             return `
                 <tr>
@@ -607,10 +607,10 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${visit.timestamp ? EducareTrack.formatDate(this.parseTimestamp(visit.timestamp)) : 'N/A'}
+                        ${visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${visit.timestamp ? EducareTrack.formatTime(this.parseTimestamp(visit.timestamp)) : 'N/A'}
+                        ${visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900">
                         ${visit.reason || 'Not specified'}
@@ -707,7 +707,7 @@ class AdminRecords {
                 let counts = clinicTrend.counts;
                 if (!labels || labels.length === 0) {
                     const withinRange = this.clinicVisits.filter(v => {
-                        const t = this.parseTimestamp(v.timestamp);
+                        const t = v.timestamp?.toDate ? v.timestamp.toDate() : v.timestamp;
                         return t && t >= clinicStart && t <= end && v.checkIn === true;
                     });
                     const mapCounts = new Map();
@@ -790,6 +790,14 @@ class AdminRecords {
                         backgroundColor: 'rgba(239, 68, 68, 0.1)',
                         tension: 0.4,
                         fill: true
+                    },
+                    {
+                        label: 'Late',
+                        data: [],
+                        borderColor: '#F59E0B',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        tension: 0.4,
+                        fill: true
                     }
                 ]
             },
@@ -820,49 +828,47 @@ class AdminRecords {
     }
 
     updateAttendanceTrendChart() {
+        if (!this.attendanceData || this.attendanceData.length === 0) return;
+
         const dateGroups = {};
+        const startDate = new Date(this.currentDateRange.startDate);
+        const endDate = new Date(this.currentDateRange.endDate);
+        
+        // Normalize dates to midnight
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+
+        // Initialize all dates in range
+        const loopDate = new Date(startDate);
+        while (loopDate <= endDate) {
+            const dateStr = EducareTrack.formatDate(loopDate);
+            dateGroups[dateStr] = { present: 0, absent: 0, late: 0 };
+            loopDate.setDate(loopDate.getDate() + 1);
+        }
+
+        // Fill with data
         this.attendanceData.forEach(record => {
-            if (!record.timestamp) return;
-            // Handle both Date objects and Firestore timestamps
-            const timestamp = this.parseTimestamp(record.timestamp);
-            if (!timestamp) return;
-            const key = EducareTrack.formatDate(timestamp);
-            if (!dateGroups[key]) {
-                dateGroups[key] = { presentSet: new Set() };
-            }
-            if (record.status === 'present' || record.status === 'late') {
-                dateGroups[key].presentSet.add(record.studentId);
+            const recordDate = record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+            if (recordDate >= startDate && recordDate <= endDate) {
+                const dateStr = EducareTrack.formatDate(recordDate);
+                if (dateGroups[dateStr]) {
+                    if (record.status === 'present') dateGroups[dateStr].present++;
+                    else if (record.status === 'absent') dateGroups[dateStr].absent++;
+                    else if (record.status === 'late') dateGroups[dateStr].late++;
+                }
             }
         });
 
-        const labels = [];
-        const presentData = [];
-        const absentData = [];
-        const start = new Date(this.currentDateRange.startDate);
-        const end = new Date(this.currentDateRange.endDate);
-        end.setHours(0,0,0,0);
+        const labels = Object.keys(dateGroups);
+        const presentData = labels.map(date => dateGroups[date].present);
+        const absentData = labels.map(date => dateGroups[date].absent);
+        const lateData = labels.map(date => dateGroups[date].late);
 
-        const toKey = (d) => EducareTrack.formatDate(new Date(d));
-        const totalStudents = this.students.length;
-
-        const cur = new Date(start);
-        cur.setHours(0,0,0,0);
-        while (cur <= end) {
-            const key = toKey(cur);
-            const isSchoolDay = window.EducareTrack.isSchoolDay(cur);
-            const presentCount = isSchoolDay ? (dateGroups[key]?.presentSet?.size || 0) : 0;
-            const absentCount = isSchoolDay ? Math.max(0, totalStudents - presentCount) : 0;
-            labels.push(isSchoolDay ? key : `${key} (No School)`);
-            presentData.push(presentCount);
-            absentData.push(absentCount);
-            cur.setDate(cur.getDate() + 1);
-        }
-
-        // Check if chart exists before updating
-        if (this.charts.attendanceTrend && this.charts.attendanceTrend.data) {
+        if (this.charts.attendanceTrend) {
             this.charts.attendanceTrend.data.labels = labels;
             this.charts.attendanceTrend.data.datasets[0].data = presentData;
             this.charts.attendanceTrend.data.datasets[1].data = absentData;
+            this.charts.attendanceTrend.data.datasets[2].data = lateData;
             this.charts.attendanceTrend.update();
         }
     }
@@ -876,14 +882,12 @@ class AdminRecords {
                 datasets: [{
                     data: [0, 0, 0, 0, 0],
                     backgroundColor: [
-                        '#10B981', // Present - green
-                        '#F59E0B', // Late - amber
-                        '#EF4444', // Absent - red
-                        '#8B5CF6', // Excused - purple
-                        '#3B82F6'  // Clinic - blue
-                    ],
-                    borderWidth: 2,
-                    borderColor: '#ffffff'
+                        '#10B981', // Present - Green
+                        '#F59E0B', // Late - Yellow
+                        '#EF4444', // Absent - Red
+                        '#6366F1', // Excused - Indigo
+                        '#3B82F6'  // In Clinic - Blue
+                    ]
                 }]
             },
             options: {
@@ -891,7 +895,7 @@ class AdminRecords {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        position: 'bottom'
+                        position: 'right'
                     }
                 }
             }
@@ -900,41 +904,35 @@ class AdminRecords {
     }
 
     updateStatusDistributionChart() {
-        const presentStudents = new Set();
-        const lateStudents = new Set();
-        const excusedStudents = new Set();
-        const clinicStudents = new Set();
+        if (!this.filteredAttendanceData) return;
 
-        this.attendanceData.forEach(record => {
-            if (record.status === 'present') presentStudents.add(record.studentId);
-            if (record.status === 'late') lateStudents.add(record.studentId);
-            if (record.status === 'excused') excusedStudents.add(record.studentId);
+        const stats = {
+            present: 0,
+            late: 0,
+            absent: 0,
+            excused: 0,
+            in_clinic: 0
+        };
+
+        this.filteredAttendanceData.forEach(record => {
+            if (stats.hasOwnProperty(record.status)) {
+                stats[record.status]++;
+            }
         });
 
-        // Only count clinic check-ins, unique per student
-        this.clinicVisits.forEach(visit => {
-            if (visit.checkIn) clinicStudents.add(visit.studentId);
-        });
-
-        const totalStudents = this.students.length;
-        const presentCount = presentStudents.size;
-        const lateCount = lateStudents.size;
-        const clinicCount = clinicStudents.size;
-        const excusedCount = excusedStudents.size;
-        const absentCount = Math.max(0, totalStudents - presentCount - lateCount - excusedCount - clinicCount);
-
-        // Check if chart exists before updating
-        if (this.charts.statusDistribution && this.charts.statusDistribution.data) {
+        if (this.charts.statusDistribution) {
             this.charts.statusDistribution.data.datasets[0].data = [
-                presentCount,
-                lateCount,
-                absentCount,
-                excusedCount,
-                clinicCount
+                stats.present,
+                stats.late,
+                stats.absent,
+                stats.excused,
+                stats.in_clinic
             ];
             this.charts.statusDistribution.update();
         }
     }
+
+
 
     createDailyPatternChart() {
         const ctx = document.getElementById('dailyPatternChart').getContext('2d');
@@ -1024,12 +1022,9 @@ class AdminRecords {
         const entriesData = labels.map(slot => timeSlots[slot].entries);
         const exitsData = labels.map(slot => timeSlots[slot].exits);
 
-        // Check if chart exists before updating
-        if (this.charts.dailyPattern && this.charts.dailyPattern.data) {
-            this.charts.dailyPattern.data.datasets[0].data = entriesData;
-            this.charts.dailyPattern.data.datasets[1].data = exitsData;
-            this.charts.dailyPattern.update();
-        }
+        this.charts.dailyPattern.data.datasets[0].data = entriesData;
+        this.charts.dailyPattern.data.datasets[1].data = exitsData;
+        this.charts.dailyPattern.update();
     }
 
     createGradeLevelChart() {
@@ -1099,12 +1094,9 @@ class AdminRecords {
             return totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
         });
 
-        // Check if chart exists before updating
-        if (this.charts.gradeLevel && this.charts.gradeLevel.data) {
-            this.charts.gradeLevel.data.labels = labels;
-            this.charts.gradeLevel.data.datasets[0].data = attendanceRates;
-            this.charts.gradeLevel.update();
-        }
+        this.charts.gradeLevel.data.labels = labels;
+        this.charts.gradeLevel.data.datasets[0].data = attendanceRates;
+        this.charts.gradeLevel.update();
     }
 
     createClassAttendanceChart() {
@@ -1205,14 +1197,11 @@ class AdminRecords {
             }
         });
 
-        // Check if chart exists before updating
-        if (this.charts.classAttendance && this.charts.classAttendance.data) {
-            this.charts.classAttendance.data.labels = labels;
-            this.charts.classAttendance.data.datasets[0].data = presentData;
-            this.charts.classAttendance.data.datasets[1].data = absentData;
-            this.charts.classAttendance.data.datasets[2].data = lateData;
-            this.charts.classAttendance.update();
-        }
+        this.charts.classAttendance.data.labels = labels;
+        this.charts.classAttendance.data.datasets[0].data = presentData;
+        this.charts.classAttendance.data.datasets[1].data = absentData;
+        this.charts.classAttendance.data.datasets[2].data = lateData;
+        this.charts.classAttendance.update();
 
         // Update class attendance table
         this.updateClassAttendanceTable(classStats);
@@ -1317,12 +1306,9 @@ class AdminRecords {
         const labels = Object.keys(levelStats).filter(level => levelStats[level].total > 0);
         const data = labels.map(level => levelStats[level].total);
 
-        // Check if chart exists before updating
-        if (this.charts.levelAttendance && this.charts.levelAttendance.data) {
-            this.charts.levelAttendance.data.labels = labels;
-            this.charts.levelAttendance.data.datasets[0].data = data;
-            this.charts.levelAttendance.update();
-        }
+        this.charts.levelAttendance.data.labels = labels;
+        this.charts.levelAttendance.data.datasets[0].data = data;
+        this.charts.levelAttendance.update();
 
         // Update level comparison chart
         this.updateLevelComparisonChart(levelStats);
@@ -1374,12 +1360,9 @@ class AdminRecords {
             return stat.total > 0 ? Math.round((stat.present / stat.total) * 100) : 0;
         });
 
-        // Check if chart exists before updating
-        if (this.charts.levelComparison && this.charts.levelComparison.data) {
-            this.charts.levelComparison.data.labels = labels;
-            this.charts.levelComparison.data.datasets[0].data = attendanceRates;
-            this.charts.levelComparison.update();
-        }
+        this.charts.levelComparison.data.labels = labels;
+        this.charts.levelComparison.data.datasets[0].data = attendanceRates;
+        this.charts.levelComparison.update();
     }
 
     updateLevelAttendanceTable(levelStats) {
@@ -1467,7 +1450,7 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatTime(this.parseTimestamp(record.timestamp)) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatTime(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${EducareTrack.getStatusColor(record.status)}">
@@ -1501,7 +1484,7 @@ class AdminRecords {
                     const classObj = this.classes.find(c => c.id === record.classId);
                     
                     return {
-                        date: record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A',
+                        date: record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A',
                         time: record.time || 'N/A',
                         studentName: student ? student.name : 'Unknown',
                         studentId: student ? student.studentId : 'N/A',
@@ -1516,8 +1499,8 @@ class AdminRecords {
                     const classObj = this.classes.find(c => c.id === visit.classId);
                     
                     return {
-                        date: visit.timestamp ? EducareTrack.formatDate(this.parseTimestamp(visit.timestamp)) : 'N/A',
-                        time: visit.timestamp ? EducareTrack.formatTime(this.parseTimestamp(visit.timestamp)) : 'N/A',
+                        date: visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A',
+                        time: visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A',
                         studentName: student ? student.name : 'Unknown',
                         studentId: student ? student.studentId : 'N/A',
                         className: classObj ? classObj.name : 'N/A',
@@ -1545,6 +1528,81 @@ class AdminRecords {
             console.error('Error exporting data:', error);
             this.hideLoading();
             this.showNotification('Error exporting data', 'error');
+        }
+    }
+
+    editRecord(recordId) {
+        const record = this.attendanceData.find(r => r.id === recordId);
+        if (!record) return;
+
+        const student = this.students.find(s => s.id === record.studentId);
+        document.getElementById('editStudentName').value = student ? student.name : 'Unknown';
+        document.getElementById('editRecordId').value = recordId;
+        
+        // Format date for input
+        const date = record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+        document.getElementById('editAttendanceDate').value = date.toISOString().split('T')[0];
+        document.getElementById('editAttendanceTime').value = record.time;
+        document.getElementById('editAttendanceStatus').value = record.status;
+        document.getElementById('editEntryType').value = record.entryType || 'entry';
+
+        document.getElementById('editAttendanceModal').classList.remove('hidden');
+        document.getElementById('editAttendanceModal').classList.add('flex');
+    }
+
+    closeEditModal() {
+        document.getElementById('editAttendanceModal').classList.add('hidden');
+        document.getElementById('editAttendanceModal').classList.remove('flex');
+    }
+
+    async saveEditedRecord() {
+        try {
+            this.showLoading();
+            const recordId = document.getElementById('editRecordId').value;
+            const dateStr = document.getElementById('editAttendanceDate').value;
+            const timeStr = document.getElementById('editAttendanceTime').value;
+            const status = document.getElementById('editAttendanceStatus').value;
+            const entryType = document.getElementById('editEntryType').value;
+
+            // Combine date and time
+            const timestamp = new Date(dateStr + 'T' + timeStr);
+
+            await EducareTrack.db.collection('attendance').doc(recordId).update({
+                timestamp: timestamp,
+                time: timeStr,
+                status: status,
+                entryType: entryType
+            });
+
+            this.closeEditModal();
+            this.showNotification('Record updated successfully', 'success');
+            await this.loadAnalyticsData(); // Reload to reflect changes
+        } catch (error) {
+            console.error('Error updating record:', error);
+            this.showNotification('Error updating record', 'error');
+            this.hideLoading();
+        }
+    }
+
+    async deleteRecord(recordId) {
+        const confirmed = await window.EducareTrack.confirmAction(
+            'Are you sure you want to delete this attendance record?',
+            'Delete Record',
+            'Delete',
+            'Cancel'
+        );
+
+        if (confirmed) {
+            try {
+                this.showLoading();
+                await EducareTrack.db.collection('attendance').doc(recordId).delete();
+                this.showNotification('Record deleted successfully', 'success');
+                await this.loadAnalyticsData(); // Reload
+            } catch (error) {
+                console.error('Error deleting record:', error);
+                this.showNotification('Error deleting record', 'error');
+                this.hideLoading();
+            }
         }
     }
 
