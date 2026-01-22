@@ -1089,7 +1089,7 @@ const DataInitializer = {
     getRandomPastDate(maxDaysAgo = 30) {
         const date = new Date();
         date.setDate(date.getDate() - Math.floor(Math.random() * maxDaysAgo));
-        return firebase.firestore.Timestamp.fromDate(date);
+        return date;
     },
 
     async clearExistingData() {

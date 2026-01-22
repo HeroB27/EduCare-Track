@@ -142,6 +142,7 @@ CREATE TABLE public.users (
   is_homeroom boolean,
   assigned_classes ARRAY,
   assigned_subjects ARRAY,
+  capabilities JSONB DEFAULT '[]'::jsonb,
   password_changed_at timestamp with time zone,
   login_attempts integer DEFAULT 0,
   locked_until timestamp with time zone,

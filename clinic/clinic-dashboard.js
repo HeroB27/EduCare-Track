@@ -452,9 +452,13 @@ class ClinicDashboard {
             : true;
         if (!ok) return;
         try {
-            const checkoutPromises = this.currentPatients.map(patient => 
-                this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false)
-            );
+            const checkoutPromises = this.currentPatients.map(patient => {
+                if (window.EducareTrack) {
+                    return window.EducareTrack.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false);
+                } else {
+                    return this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false);
+                }
+            });
             await Promise.all(checkoutPromises);
             await this.loadDashboardData();
             await this.loadPage(this.currentPage);
@@ -467,33 +471,43 @@ class ClinicDashboard {
 
     async recordClinicVisit(studentId, reason, notes, checkIn) {
         try {
-            const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
-            
-            if (!studentDoc.exists) {
-                throw new Error('Student not found');
+            let student;
+            if (window.EducareTrack && window.EducareTrack.db) {
+                const doc = await window.EducareTrack.db.collection('students').doc(studentId).get();
+                if (!doc.exists) throw new Error('Student not found');
+                student = doc.data();
+            } else {
+                const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
+                if (!studentDoc.exists) throw new Error('Student not found');
+                student = studentDoc.data();
             }
-
-            const student = studentDoc.data();
             
             const clinicData = {
                 studentId: studentId,
                 studentName: student.name,
-                classId: student.classId || '',
+                classId: student.classId || student.class_id || '',
+                class_id: student.classId || student.class_id || '',
                 checkIn: checkIn,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                timestamp: new Date(),
                 reason: reason,
                 notes: notes,
                 staffId: this.currentUser.id,
                 staffName: this.currentUser.name
             };
 
-            await firebase.firestore().collection('clinicVisits').add(clinicData);
-
-            // Update student status
-            await firebase.firestore().collection('students').doc(studentId).update({
-                currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
-            });
+            if (window.EducareTrack && window.EducareTrack.db) {
+                await window.EducareTrack.db.collection('clinicVisits').add(clinicData);
+                await window.EducareTrack.db.collection('students').doc(studentId).update({
+                    currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                    lastClinicVisit: new Date()
+                });
+            } else {
+                await firebase.firestore().collection('clinicVisits').add(clinicData);
+                await firebase.firestore().collection('students').doc(studentId).update({
+                    currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                    lastClinicVisit: new Date()
+                });
+            }
 
             return true;
         } catch (error) {

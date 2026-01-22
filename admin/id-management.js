@@ -276,15 +276,18 @@ class IDManagement {
         } else {
             resultsList.innerHTML = students.map(student => {
                 // Find parent for this student
-                const parent = this.allParents.find(p => p.id === student.parentId);
+                // Support both camelCase (old) and snake_case (new)
+                const pId = student.parent_id || student.parentId;
+                const parent = this.allParents.find(p => p.id === pId);
                 const parentName = parent ? parent.name : 'Parent not found';
+                const photo = student.photo_url || student.photoUrl;
                 
                 return `
                 <div class="student-result flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-blue-50 transition duration-200" data-student-id="${student.id}">
                     <div class="flex items-center space-x-4">
                         <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                            ${student.photoUrl ? 
-                                `<img src="${student.photoUrl}" alt="${student.name}" class="w-full h-full rounded-full object-cover">` :
+                            ${photo ? 
+                                `<img src="${photo}" alt="${student.name}" class="w-full h-full rounded-full object-cover">` :
                                 `<i class="fas fa-user text-blue-600"></i>`
                             }
                         </div>
@@ -335,12 +338,13 @@ class IDManagement {
             }
 
             // Get parent data from our loaded data
-            this.currentParent = this.allParents.find(p => p.id === this.currentStudent.parentId);
+            const pId = this.currentStudent.parent_id || this.currentStudent.parentId;
+            this.currentParent = this.allParents.find(p => p.id === pId);
             if (!this.currentParent) {
                 console.warn('Parent not found for student:', this.currentStudent.id);
                 // Create a dummy parent object to avoid errors
                 this.currentParent = {
-                    id: this.currentStudent.parentId,
+                    id: pId,
                     name: 'Parent not found',
                     phone: '',
                     email: '',
@@ -379,8 +383,9 @@ class IDManagement {
 
         // Load classes for the grade
         this.loadClassesForGrade().then(() => {
-            if (this.currentStudent.classId) {
-                document.getElementById('studentClass').value = this.currentStudent.classId;
+            const clsId = this.currentStudent.class_id || this.currentStudent.classId;
+            if (clsId) {
+                document.getElementById('studentClass').value = clsId;
             }
         });
 
@@ -436,8 +441,9 @@ class IDManagement {
             });
 
             // Select current class if available
-            if (this.currentStudent && this.currentStudent.classId) {
-                classSelect.value = this.currentStudent.classId;
+            const clsId = this.currentStudent && (this.currentStudent.class_id || this.currentStudent.classId);
+            if (clsId) {
+                classSelect.value = clsId;
             }
         } catch (error) {
             console.error('Error loading classes:', error);
@@ -490,29 +496,38 @@ class IDManagement {
 
             this.showLoading();
 
-            // Read the photo as data URL for preview (but don't save to storage)
+            // Read the photo as data URL
             const reader = new FileReader();
-            reader.onload = (e) => {
+            reader.onload = async (e) => {
                 const photoDataUrl = e.target.result;
                 
-                // Update current student data with the photo data URL (temporary)
-                this.currentStudent.photoUrl = photoDataUrl;
+                try {
+                    // Update in Firestore/Supabase
+                    await EducareTrack.db.collection('students').doc(this.currentStudent.id).update({
+                        photo_url: photoDataUrl,
+                        updated_at: new Date()
+                    });
 
-                // Update the main array (temporary - only for current session)
-                const studentIndex = this.allStudents.findIndex(s => s.id === this.currentStudent.id);
-                if (studentIndex !== -1) {
-                    this.allStudents[studentIndex].photoUrl = photoDataUrl;
+                    // Update local state
+                    this.currentStudent.photo_url = photoDataUrl;
+                    const studentIndex = this.allStudents.findIndex(s => s.id === this.currentStudent.id);
+                    if (studentIndex !== -1) {
+                        this.allStudents[studentIndex].photo_url = photoDataUrl;
+                    }
+
+                    // Update UI
+                    this.loadCurrentPhoto();
+                    this.updateIDPreview();
+
+                    // Close modal and show success
+                    this.closePhotoModal();
+                    this.showSuccess('Student photo updated successfully');
+                } catch (error) {
+                    console.error('Error saving photo:', error);
+                    this.showError('Failed to save photo to database');
+                } finally {
+                    this.hideLoading();
                 }
-
-                // Update UI
-                this.loadCurrentPhoto();
-                this.updateIDPreview();
-
-                // Close modal and show success
-                this.closePhotoModal();
-                this.showSuccess('Student photo updated in preview (not saved to database)');
-                
-                this.hideLoading();
             };
             reader.onerror = () => {
                 this.showError('Error reading photo file');
@@ -529,9 +544,10 @@ class IDManagement {
 
     loadCurrentPhoto() {
         const currentPhoto = document.getElementById('currentPhoto');
+        const photo = this.currentStudent.photo_url || this.currentStudent.photoUrl;
         
-        if (this.currentStudent.photoUrl) {
-            currentPhoto.innerHTML = `<img src="${this.currentStudent.photoUrl}" alt="Student Photo" class="w-full h-full object-cover rounded-lg">`;
+        if (photo) {
+            currentPhoto.innerHTML = `<img src="${photo}" alt="Student Photo" class="w-full h-full object-cover rounded-lg">`;
         } else {
             currentPhoto.innerHTML = '<i class="fas fa-user text-gray-400 text-2xl"></i>';
         }
@@ -551,16 +567,7 @@ class IDManagement {
             const updatedStudentData = this.getUpdatedStudentData();
             const updatedParentData = this.getUpdatedParentData();
 
-            // Check if we have a temporary photo that needs to be saved
-            if (this.currentStudent.photoUrl && this.currentStudent.photoUrl.startsWith('data:')) {
-                // Photo is a data URL (temporary) - we need to handle this appropriately
-                // For now, we'll just note that photo changes require separate saving
-                console.log('Temporary photo detected - photo will not be saved with other changes');
-                // Remove photo from update data since it's not properly stored yet
-                delete updatedStudentData.photoUrl;
-            }
-
-            // Update in database (without photo)
+            // Update in database (without photo - photo is handled separately by savePhoto)
             await this.updateStudentInDatabase(updatedStudentData);
             await this.updateParentInDatabase(updatedParentData);
 
@@ -642,10 +649,10 @@ class IDManagement {
             lrn: document.getElementById('studentLRN').value.trim(),
             grade: grade,
             strand: strand,
-            classId: document.getElementById('studentClass').value,
+            class_id: document.getElementById('studentClass').value,
             updated_at: new Date(),
             updated_by: this.currentUser.id
-            // Note: photoUrl is intentionally excluded since we're not storing it yet
+            // Note: photo_url is intentionally excluded since we're not storing it yet
         };
     }
 
@@ -743,8 +750,9 @@ class IDManagement {
         document.getElementById('previewStudentLRN').textContent = `LRN: ${document.getElementById('studentLRN').value}`;
 
         // Update preview photo
-        if (this.currentStudent.photoUrl) {
-            document.getElementById('previewStudentPhoto').innerHTML = `<img src="${this.currentStudent.photoUrl}" alt="Student Photo" class="w-full h-full rounded-full object-cover">`;
+        const photo = this.currentStudent.photo_url || this.currentStudent.photoUrl;
+        if (photo) {
+            document.getElementById('previewStudentPhoto').innerHTML = `<img src="${photo}" alt="Student Photo" class="w-full h-full rounded-full object-cover">`;
         }
 
         // Update ID Preview elements (FRONT)
@@ -760,8 +768,8 @@ class IDManagement {
         document.getElementById('idParentPhone').innerHTML = `<strong>Contact:</strong> ${document.getElementById('parentPhone').value}`;
 
         // Update photo in ID card
-        if (this.currentStudent.photoUrl) {
-            document.getElementById('idPreviewImage').src = this.currentStudent.photoUrl;
+        if (photo) {
+            document.getElementById('idPreviewImage').src = photo;
             document.getElementById('idPreviewImage').classList.remove('hidden');
             document.getElementById('idPlaceholder').classList.add('hidden');
         } else {
@@ -780,8 +788,8 @@ class IDManagement {
         document.getElementById('printParentName').innerHTML = `<strong>Parent:</strong> ${document.getElementById('parentName').value}`;
         document.getElementById('printParentPhone').innerHTML = `<strong>Contact:</strong> ${document.getElementById('parentPhone').value}`;
         
-        if (this.currentStudent.photoUrl) {
-            document.getElementById('printPreviewImage').src = this.currentStudent.photoUrl;
+        if (photo) {
+            document.getElementById('printPreviewImage').src = photo;
             document.getElementById('printPreviewImage').classList.remove('hidden');
             document.getElementById('printPlaceholder').classList.add('hidden');
         } else {

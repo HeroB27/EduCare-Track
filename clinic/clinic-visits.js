@@ -371,7 +371,7 @@ class ClinicVisits {
                     await firebase.firestore().collection('clinicVisits').doc(visitId).update({
                         reason: newReason,
                         notes: newNotes,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: new Date().toISOString(),
                         updatedBy: this.currentUser.id,
                         updatedByName: this.currentUser.name
                     });

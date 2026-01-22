@@ -1,16 +1,91 @@
 // Attendance Logic for EducareTrack
 class AttendanceLogic {
     constructor() {
-        this.morningStart = '7:30';
-        this.morningEnd = '12:00';
-        this.afternoonStart = '13:00';
-        this.afternoonEnd = '16:00';
-        this.lateThreshold = '7:30';
+        this.settings = null;
+        this.defaultSchedule = {
+            kinder_in: '07:30', kinder_out: '11:30',
+            g1_3_in: '07:30', g1_3_out: '13:00',
+            g4_6_in: '07:30', g4_6_out: '15:00',
+            jhs_in: '07:30', jhs_out: '16:00',
+            shs_in: '07:30', shs_out: '16:30'
+        };
+        this.loadSettings();
+    }
+
+    async loadSettings() {
+        try {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data } = await window.supabaseClient
+                    .from('system_settings')
+                    .select('value')
+                    .eq('key', 'attendance_schedule')
+                    .single();
+                if (data) this.settings = data.value;
+            } else if (typeof firebase !== 'undefined') {
+                const doc = await firebase.firestore().collection('system_settings').doc('attendance_schedule').get();
+                if (doc.exists) this.settings = doc.data();
+            }
+        } catch (e) {
+            console.error('Error loading settings', e);
+        }
+        if (!this.settings) this.settings = this.defaultSchedule;
+    }
+
+    getScheduleForStudent(level, grade) {
+        const s = this.settings || this.defaultSchedule;
+        
+        // Normalize input
+        const gradeStr = (grade || '').toString().toLowerCase();
+        const levelStr = (level || '').toString().toLowerCase();
+
+        if (levelStr.includes('kinder') || gradeStr.includes('kinder')) {
+            return { in: s.kinder_in, out: s.kinder_out };
+        }
+        
+        if (levelStr.includes('senior') || gradeStr.includes('11') || gradeStr.includes('12')) {
+            return { in: s.shs_in, out: s.shs_out };
+        }
+
+        if (levelStr.includes('junior') || ['7','8','9','10'].some(g => gradeStr.includes(g) && !gradeStr.includes('10') && g!=='1')) {
+            // Note: simple check for 7,8,9. 10 is tricky if we just check '1' or '0'.
+            // Better parsing:
+            const num = parseInt(gradeStr.replace(/\D/g, ''));
+            if (num >= 7 && num <= 10) return { in: s.jhs_in, out: s.jhs_out };
+        }
+
+        // Elementary parsing
+        const num = parseInt(gradeStr.replace(/\D/g, ''));
+        if (!isNaN(num)) {
+            if (num >= 1 && num <= 3) return { in: s.g1_3_in, out: s.g1_3_out };
+            if (num >= 4 && num <= 6) return { in: s.g4_6_in, out: s.g4_6_out };
+            if (num >= 7 && num <= 10) return { in: s.jhs_in, out: s.jhs_out }; // Fallback if level check failed
+            if (num >= 11 && num <= 12) return { in: s.shs_in, out: s.shs_out };
+        }
+
+        // Default to JHS if unknown (safest middle ground?) or maybe G1-3
+        return { in: '07:30', out: '16:00' };
     }
 
     // Calculate student status based on attendance records
-    async calculateStudentStatus(studentId, date = new Date()) {
+    async calculateStudentStatus(studentId, date = new Date(), studentData = null) {
         try {
+            // Fetch student data if not provided to determine schedule
+            if (!studentData) {
+                if (window.USE_SUPABASE && window.supabaseClient) {
+                    const { data } = await window.supabaseClient
+                        .from('students')
+                        .select('level,grade')
+                        .eq('id', studentId)
+                        .single();
+                    if (data) studentData = data;
+                } else if (typeof firebase !== 'undefined') {
+                    const doc = await firebase.firestore().collection('students').doc(studentId).get();
+                    if (doc.exists) studentData = doc.data();
+                }
+            }
+
+            const schedule = this.getScheduleForStudent(studentData?.level, studentData?.grade);
+            
             const startOfDay = new Date(date);
             startOfDay.setHours(0, 0, 0, 0);
             const endOfDay = new Date(date);
@@ -42,22 +117,30 @@ class AttendanceLogic {
                 records = attendanceSnapshot.docs.map(doc => doc.data());
             }
             
-            return this.analyzeAttendance(records, date);
+            return this.analyzeAttendance(records, date, schedule);
         } catch (error) {
             console.error('Error calculating student status:', error);
             return { status: 'absent', remarks: 'Error calculating status' };
         }
     }
 
-    analyzeAttendance(records, date) {
+    analyzeAttendance(records, date, schedule) {
+        // Use schedule or defaults
+        const morningStart = schedule?.in || '07:30';
+        const morningEnd = '12:00'; // Lunch break usually fixed? Or should we assume half day split?
+        // Let's assume standard lunch break 12-1
+        const afternoonStart = '13:00';
+        const afternoonEnd = schedule?.out || '16:00';
+        const lateThreshold = morningStart; // Strictly late if after start time
+
         const morningRecords = records.filter(record => 
             record.session === 'morning' || 
-            (record.time >= this.morningStart && record.time < this.morningEnd)
+            (record.time >= morningStart && record.time < morningEnd)
         );
 
         const afternoonRecords = records.filter(record => 
             record.session === 'afternoon' || 
-            (record.time >= this.afternoonStart && record.time < this.afternoonEnd)
+            (record.time >= afternoonStart && record.time < afternoonEnd)
         );
 
         const morningEntry = morningRecords.find(record => record.entryType === 'entry');
@@ -66,8 +149,8 @@ class AttendanceLogic {
         const afternoonExit = afternoonRecords.find(record => record.entryType === 'exit');
 
         const currentTime = new Date();
-        const isMorningOver = currentTime >= new Date(date.toDateString() + ' ' + this.morningEnd);
-        const isAfternoonOver = currentTime >= new Date(date.toDateString() + ' ' + this.afternoonEnd);
+        const isMorningOver = currentTime >= new Date(date.toDateString() + ' ' + morningEnd);
+        const isAfternoonOver = currentTime >= new Date(date.toDateString() + ' ' + afternoonEnd);
 
         let status = 'present';
         let remarks = [];
@@ -78,7 +161,7 @@ class AttendanceLogic {
 
         // Morning session analysis
         if (morningEntry) {
-            if (morningEntry.time > this.lateThreshold) {
+            if (morningEntry.time > lateThreshold) {
                 sessionStatus.morning = 'late';
                 remarks.push('Late morning arrival');
             }
@@ -93,7 +176,7 @@ class AttendanceLogic {
 
         // Afternoon session analysis
         if (afternoonEntry) {
-            if (afternoonEntry.time > this.afternoonStart) {
+            if (afternoonEntry.time > afternoonStart) {
                 sessionStatus.afternoon = 'late';
                 remarks.push('Late afternoon arrival');
             }
@@ -334,7 +417,7 @@ class AttendanceLogic {
             } else {
                 await firebase.firestore().collection('notifications').add({
                     ...notificationData,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    createdAt: new Date().toISOString()
                 });
             }
         } catch (error) {
@@ -370,7 +453,7 @@ async getAbsentStudents(date = new Date()) {
         let presentStudentIds = new Set();
         if (window.USE_SUPABASE && window.supabaseClient) {
             const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
-                window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus'),
+                window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus,grade,level'),
                 window.supabaseClient.from('attendance')
                     .select('studentId,entryType,timestamp')
                     .gte('timestamp', startOfDay.toISOString())
@@ -384,7 +467,9 @@ async getAbsentStudents(date = new Date()) {
                 name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
                 classId: s.classId,
                 parentId: s.parentId,
-                currentStatus: s.currentStatus
+                currentStatus: s.currentStatus,
+                grade: s.grade,
+                level: s.level
             }));
             presentStudentIds = new Set((entries || []).map(e => e.studentId));
         } else {
@@ -409,7 +494,7 @@ async getAbsentStudents(date = new Date()) {
         const absentStudents = [];
         for (const student of allStudents) {
             if (!presentStudentIds.has(student.id)) {
-                const status = await this.calculateStudentStatus(student.id, date);
+                const status = await this.calculateStudentStatus(student.id, date, student);
                 absentStudents.push({
                     ...student,
                     attendanceStatus: status

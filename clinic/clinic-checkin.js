@@ -707,7 +707,7 @@ class ClinicCheckin {
                 const clinicRef = await firebase.firestore().collection('clinicVisits').add(clinicData);
                 await firebase.firestore().collection('students').doc(studentId).update({
                     currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                    lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
+                    lastClinicVisit: new Date().toISOString()
                 });
                 await this.sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData, clinicData.time);
                 return clinicRef.id;
@@ -806,7 +806,7 @@ class ClinicCheckin {
             } else {
                 await firebase.firestore().collection('notifications').add({
                     ...notificationData,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    createdAt: new Date().toISOString()
                 });
             }
             

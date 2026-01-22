@@ -342,7 +342,7 @@ class QRScanner {
     // NEW: Enhanced student search
     async findStudentByAnyMeans(candidate) {
         console.log('🔍 Searching for student with:', candidate);
-        const col = firebase.firestore().collection('students');
+        const col = window.EducareTrack.db.collection('students');
 
         // Direct doc lookup (most robust when QR encodes document ID)
         try {
@@ -478,26 +478,37 @@ class QRScanner {
             // Create attendance record
             const attendanceData = {
                 studentId: studentId,
+                student_id: studentId, // Snake case
                 studentName: student.name,
-                classId: student.classId || '',
+                student_name: student.name, // Snake case
+                classId: student.class_id || student.classId || '',
+                class_id: student.class_id || student.classId || '', // Snake case
                 entryType: entryType,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                entry_type: entryType, // Snake case
+                timestamp: timestamp,
                 time: timeString,
                 session: session,
                 status: status,
                 remarks: remarks,
                 recordedBy: this.currentUser.id,
+                recorded_by: this.currentUser.id, // Snake case
                 recordedByName: this.currentUser.name,
-                manualEntry: false
+                recorded_by_name: this.currentUser.name, // Snake case
+                manualEntry: false,
+                manual_entry: false, // Snake case
+                created_at: timestamp
             };
 
-            const attendanceRef = await firebase.firestore().collection('attendance').add(attendanceData);
+            const attendanceRef = await window.EducareTrack.db.collection('attendance').add(attendanceData);
 
             // Update student's current status
             const newStatus = entryType === 'entry' ? 'in_school' : 'out_school';
-            await firebase.firestore().collection('students').doc(studentId).update({
+            await window.EducareTrack.db.collection('students').doc(studentId).update({
                 currentStatus: newStatus,
-                lastAttendance: firebase.firestore.FieldValue.serverTimestamp()
+                current_status: newStatus,
+                lastAttendance: timestamp,
+                last_attendance: timestamp,
+                updated_at: timestamp
             });
 
             // Send enhanced notifications to both parent and teacher
@@ -571,18 +582,20 @@ class QRScanner {
                 message: message,
                 targetUsers: targetUsers,
                 studentId: student.id,
+                student_id: student.id,
                 studentName: student.name,
                 isUrgent: status === 'late' || status === 'half_day',
                 relatedRecord: attendanceId,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: new Date(),
+                created_at: new Date()
             };
 
             // Use EducareTrack notification system if available
             if (window.EducareTrack && window.EducareTrack.createNotification) {
                 await window.EducareTrack.createNotification(notificationData);
             } else {
-                // Fallback to direct Firestore
-                await firebase.firestore().collection('notifications').add(notificationData);
+                // Fallback to direct Firestore (wrapper)
+                await window.EducareTrack.db.collection('notifications').add(notificationData);
             }
 
             console.log(`Notification sent to ${targetUsers.length} users for ${student.name}`);
@@ -599,11 +612,12 @@ class QRScanner {
         
         try {
             // Get homeroom teacher for the student's class
-            if (student.classId) {
-                const homeroomTeacherQuery = await firebase.firestore()
+            if (student.classId || student.class_id) {
+                const classId = student.class_id || student.classId;
+                const homeroomTeacherQuery = await window.EducareTrack.db
                     .collection('users')
                     .where('role', '==', 'teacher')
-                    .where('classId', '==', student.classId)
+                    .where('classId', '==', classId) // Keeping classId for legacy compatibility
                     .where('isHomeroom', '==', true)
                     .where('isActive', '==', true)
                     .limit(1)
@@ -614,10 +628,10 @@ class QRScanner {
                 }
 
                 // Also get any teacher assigned to this class (as backup)
-                const classTeachersQuery = await firebase.firestore()
+                const classTeachersQuery = await window.EducareTrack.db
                     .collection('users')
                     .where('role', '==', 'teacher')
-                    .where('assignedClasses', 'array-contains', student.classId)
+                    .where('assignedClasses', 'array-contains', classId)
                     .where('isActive', '==', true)
                     .limit(3)
                     .get();
@@ -631,7 +645,7 @@ class QRScanner {
 
             // If no teachers found for class, try to find teachers by grade level
             if (teacherIds.length === 0 && student.grade) {
-                const gradeTeachersQuery = await firebase.firestore()
+                const gradeTeachersQuery = await window.EducareTrack.db
                     .collection('users')
                     .where('role', '==', 'teacher')
                     .where('assignedGrades', 'array-contains', student.grade)
@@ -657,7 +671,7 @@ class QRScanner {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            const snapshot = await firebase.firestore()
+            const snapshot = await window.EducareTrack.db
                 .collection('attendance')
                 .where('studentId', '==', studentId)
                 .where('timestamp', '>=', today)
@@ -691,7 +705,7 @@ class QRScanner {
             today.setHours(0, 0, 0, 0);
             
             // Get all active students
-            const studentsSnapshot = await firebase.firestore()
+            const studentsSnapshot = await window.EducareTrack.db
                 .collection('students')
                 .where('isActive', '==', true)
                 .get();
@@ -699,7 +713,7 @@ class QRScanner {
             const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             
             // Get today's attendance entries
-            const attendanceSnapshot = await firebase.firestore()
+            const attendanceSnapshot = await window.EducareTrack.db
                 .collection('attendance')
                 .where('timestamp', '>=', today)
                 .where('entryType', '==', 'entry')
@@ -741,7 +755,7 @@ class QRScanner {
                 <div class="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-200">
                     <div>
                         <h4 class="text-sm font-medium text-gray-900">${student.name}</h4>
-                        <p class="text-xs text-gray-600">${student.id} • ${student.grade}${student.classId ? ` • ${student.classId}` : ''}</p>
+                        <p class="text-xs text-gray-600">${student.id} • ${student.grade}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
                         <p class="text-xs text-red-600 mt-1">${status.remarks}</p>
                     </div>
                     <span class="px-2 py-1 text-xs font-semibold rounded-full ${this.getStatusColor(status.status)}">
@@ -826,7 +840,7 @@ class QRScanner {
     }
 
     loadRecentScans() {
-        firebase.firestore().collection('attendance')
+        window.EducareTrack.db.collection('attendance')
             .orderBy('timestamp', 'desc')
             .limit(10)
             .get()

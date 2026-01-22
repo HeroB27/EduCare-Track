@@ -516,7 +516,7 @@ async loadChildren() {
             dates: dates,
             attachments: attachments,
             status: 'pending',
-            submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            submittedAt: new Date().toISOString(),
             // Additional synchronized fields - WITH FIXES FOR UNDEFINED VALUES
             studentName: student.name || 'Unknown Student',
             className: className,
@@ -748,7 +748,7 @@ async loadChildren() {
         try {
             await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
                 status: 'cancelled',
-                cancelledAt: firebase.firestore.FieldValue.serverTimestamp()
+                cancelledAt: new Date().toISOString()
             });
 
             this.showNotification('Excuse letter cancelled successfully', 'success');
