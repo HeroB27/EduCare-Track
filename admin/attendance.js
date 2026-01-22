@@ -105,13 +105,33 @@ class AttendanceManager {
 
     async loadTodayStats() {
         try {
-            const today = new Date().toISOString().split('T')[0];
-            const stats = await EducareTrack.getAttendanceStats(today);
+            const today = new Date();
+            const startDate = new Date(today);
+            startDate.setDate(startDate.getDate() - 7); // Get last 7 days for trend data
             
-            document.getElementById('totalPresent').textContent = stats.present || 0;
-            document.getElementById('totalAbsent').textContent = stats.absent || 0;
-            document.getElementById('totalLate').textContent = stats.late || 0;
-            document.getElementById('totalClinic').textContent = stats.clinic || 0;
+            const attendanceData = await EducareTrack.getAttendanceTrend(startDate, today, 'day');
+            
+            if (attendanceData && attendanceData.datasets) {
+                // Get today's data (last entry in the datasets)
+                const todayIndex = attendanceData.datasets.present.length - 1;
+                
+                document.getElementById('totalPresent').textContent = attendanceData.datasets.present[todayIndex] || 0;
+                document.getElementById('totalAbsent').textContent = attendanceData.datasets.absent[todayIndex] || 0;
+                document.getElementById('totalLate').textContent = attendanceData.datasets.late[todayIndex] || 0;
+                document.getElementById('totalClinic').textContent = attendanceData.datasets.clinic[todayIndex] || 0;
+                
+                // Store the trend data for charts
+                this.attendanceTrendData = attendanceData;
+            } else {
+                // Fallback to individual stats call
+                const todayStr = today.toISOString().split('T')[0];
+                const stats = await EducareTrack.getAttendanceStats(todayStr);
+                
+                document.getElementById('totalPresent').textContent = stats.present || 0;
+                document.getElementById('totalAbsent').textContent = stats.absent || 0;
+                document.getElementById('totalLate').textContent = stats.late || 0;
+                document.getElementById('totalClinic').textContent = stats.clinic || 0;
+            }
             
         } catch (error) {
             console.error('Error loading today stats:', error);
@@ -133,40 +153,24 @@ class AttendanceManager {
             this.hideLoading();
         } catch (error) {
             console.error('Error loading attendance records:', error);
-            // Create sample data if function doesn't exist
-            this.attendanceRecords = this.createSampleAttendanceData();
+            // Show empty state instead of sample data
+            this.attendanceRecords = [];
             this.applyFilters();
+            this.showErrorMessage('Failed to load attendance records');
             this.hideLoading();
         }
     }
 
-    createSampleAttendanceData() {
-        const sampleData = [];
-        const statuses = ['present', 'absent', 'late', 'in_clinic', 'excused'];
-        const classes = ['Grade 7-A', 'Grade 8-B', 'Grade 9-C', 'Grade 10-D'];
-        const studentNames = ['John Smith', 'Maria Garcia', 'David Johnson', 'Sarah Wilson', 'Michael Brown'];
-        
-        for (let i = 0; i < 50; i++) {
-            const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
-            const randomClass = classes[Math.floor(Math.random() * classes.length)];
-            const randomStudent = studentNames[Math.floor(Math.random() * studentNames.length)];
-            const randomDate = new Date();
-            randomDate.setDate(randomDate.getDate() - Math.floor(Math.random() * 30));
-            
-            sampleData.push({
-                id: `attendance-${i}`,
-                studentId: `STU${1000 + i}`,
-                studentName: randomStudent,
-                classId: `class-${Math.floor(Math.random() * 4)}`,
-                className: randomClass,
-                status: randomStatus,
-                timestamp: randomDate,
-                entryType: Math.random() > 0.5 ? 'entry' : 'exit',
-                recordedBy: 'Admin User'
-            });
+    showErrorMessage(message) {
+        const container = document.getElementById('attendanceRecords');
+        if (container) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+                    <p>${message}</p>
+                </div>
+            `;
         }
-        
-        return sampleData;
     }
 
     applyFilters() {
@@ -177,7 +181,7 @@ class AttendanceManager {
 
         this.filteredRecords = this.attendanceRecords.filter(record => {
             // Class filter
-            if (classFilter && record.classId !== classFilter) return false;
+            if (classFilter && record.class_id !== classFilter) return false;
             
             // Status filter
             if (statusFilter && record.status !== statusFilter) return false;
@@ -190,6 +194,22 @@ class AttendanceManager {
             return true;
         });
 
+        this.renderAttendanceTable();
+        this.updateCharts();
+    }
+
+    resetFilters() {
+        // Clear all filter inputs
+        document.getElementById('classFilter').value = '';
+        document.getElementById('statusFilter').value = '';
+        document.getElementById('startDate').value = '';
+        document.getElementById('endDate').value = '';
+        
+        // Reset to show all records
+        this.filteredRecords = [...this.attendanceRecords];
+        this.currentPage = 1;
+        
+        // Update UI
         this.renderAttendanceTable();
         this.updateCharts();
     }
@@ -230,7 +250,7 @@ class AttendanceManager {
                         </div>
                         <div class="ml-4">
                             <div class="text-sm font-medium text-gray-900">${record.studentName}</div>
-                            <div class="text-sm text-gray-500">${record.studentId}</div>
+                            <div class="text-sm text-gray-500">${record.student_id}</div>
                         </div>
                     </div>
                 </td>
@@ -242,7 +262,7 @@ class AttendanceManager {
                     ${record.className || 'N/A'}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    ${record.entryType === 'entry' ? 'Entry' : 'Exit'}
+                    ${record.entry_type === 'entry' ? 'Entry' : 'Exit'}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${this.getStatusClass(record.status)}">
@@ -250,7 +270,7 @@ class AttendanceManager {
                     </span>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    ${record.recordedBy || 'System'}
+                    ${record.recorded_by || 'System'}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <button onclick="attendanceManager.editRecord('${record.id}')" class="text-blue-600 hover:text-blue-900 mr-3">
@@ -265,6 +285,9 @@ class AttendanceManager {
     }
 
     getInitials(name) {
+        if (!name || typeof name !== 'string') {
+            return '??';
+        }
         return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
     }
 
@@ -327,75 +350,141 @@ class AttendanceManager {
             this.trendChart.destroy();
         }
 
-        // Sample data - in real implementation, this would come from the database
-        const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-        const presentData = [120, 118, 122, 119, 121];
-        const absentData = [5, 7, 3, 6, 4];
-        const lateData = [8, 10, 6, 9, 7];
-        const clinicData = [2, 1, 3, 2, 1];
-
-        this.trendChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'Present',
-                        data: presentData,
-                        borderColor: '#10B981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    },
-                    {
-                        label: 'Absent',
-                        data: absentData,
-                        borderColor: '#EF4444',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    },
-                    {
-                        label: 'Late',
-                        data: lateData,
-                        borderColor: '#F59E0B',
-                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    },
-                    {
-                        label: 'Clinic',
-                        data: clinicData,
-                        borderColor: '#3B82F6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'top',
-                    },
-                    title: {
-                        display: true,
-                        text: 'Weekly Attendance Trend'
-                    }
+        // Use the same data as admin dashboard if available
+        if (this.attendanceTrendData && this.attendanceTrendData.datasets) {
+            this.trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: this.attendanceTrendData.labels,
+                    datasets: [
+                        {
+                            label: 'Present',
+                            data: this.attendanceTrendData.datasets.present,
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Absent',
+                            data: this.attendanceTrendData.datasets.absent,
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Late',
+                            data: this.attendanceTrendData.datasets.late,
+                            borderColor: '#F59E0B',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Clinic',
+                            data: this.attendanceTrendData.datasets.clinic,
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }
+                    ]
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
                         title: {
                             display: true,
-                            text: 'Number of Students'
+                            text: 'Weekly Attendance Trend'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Students'
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
+        } else {
+            // Fallback to sample data if no trend data available
+            const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+            const presentData = [120, 118, 122, 119, 121];
+            const absentData = [5, 7, 3, 6, 4];
+            const lateData = [8, 10, 6, 9, 7];
+            const clinicData = [2, 1, 3, 2, 1];
+
+            this.trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Present',
+                            data: presentData,
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Absent',
+                            data: absentData,
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Late',
+                            data: lateData,
+                            borderColor: '#F59E0B',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Clinic',
+                            data: clinicData,
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'Weekly Attendance Trend (Sample Data)'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Students'
+                            }
+                        }
+                    }
+                }
+            });
+        }
     }
 
     createDistributionChart() {
@@ -405,14 +494,28 @@ class AttendanceManager {
             this.distributionChart.destroy();
         }
 
-        // Sample data
-        const data = {
-            present: 121,
-            absent: 4,
-            late: 7,
-            clinic: 2,
-            excused: 1
-        };
+        // Use real data from trend data if available
+        let data;
+        if (this.attendanceTrendData && this.attendanceTrendData.datasets) {
+            // Get today's data (last entry in the datasets)
+            const todayIndex = this.attendanceTrendData.datasets.present.length - 1;
+            data = {
+                present: this.attendanceTrendData.datasets.present[todayIndex] || 0,
+                absent: this.attendanceTrendData.datasets.absent[todayIndex] || 0,
+                late: this.attendanceTrendData.datasets.late[todayIndex] || 0,
+                clinic: this.attendanceTrendData.datasets.clinic[todayIndex] || 0,
+                excused: 0 // Excused data not available in trend data, default to 0
+            };
+        } else {
+            // Fallback to sample data
+            data = {
+                present: 121,
+                absent: 4,
+                late: 7,
+                clinic: 2,
+                excused: 1
+            };
+        }
 
         this.distributionChart = new Chart(ctx, {
             type: 'doughnut',
@@ -448,10 +551,72 @@ class AttendanceManager {
     }
 
     updateCharts() {
-        // In a real implementation, this would update charts with filtered data
-        // For now, we'll just recreate them with sample data
-        this.createTrendChart();
-        this.createDistributionChart();
+        // Update charts with filtered data for proper filtering functionality
+        this.updateTrendChart();
+        this.updateDistributionChart();
+    }
+
+    updateTrendChart() {
+        if (!this.trendChart || this.filteredRecords.length === 0) {
+            // If no filtered records, show empty chart
+            if (this.trendChart) {
+                this.trendChart.data.labels = [];
+                this.trendChart.data.datasets.forEach(dataset => {
+                    dataset.data = [];
+                });
+                this.trendChart.update();
+            }
+            return;
+        }
+        
+        // Group filtered records by date for trend chart
+        const dateGroups = {};
+        this.filteredRecords.forEach(record => {
+            const date = new Date(record.timestamp).toDateString();
+            if (!dateGroups[date]) {
+                dateGroups[date] = { present: 0, absent: 0, late: 0, clinic: 0 };
+            }
+            
+            if (record.status === 'present') dateGroups[date].present++;
+            else if (record.status === 'absent') dateGroups[date].absent++;
+            else if (record.status === 'late') dateGroups[date].late++;
+            else if (record.status === 'in_clinic') dateGroups[date].clinic++;
+        });
+
+        const sortedDates = Object.keys(dateGroups).sort();
+        const labels = sortedDates.map(date => new Date(date).toLocaleDateString('en-US', { 
+            weekday: 'short', month: 'short', day: 'numeric' 
+        }));
+        
+        this.trendChart.data.labels = labels;
+        this.trendChart.data.datasets[0].data = sortedDates.map(date => dateGroups[date].present);
+        this.trendChart.data.datasets[1].data = sortedDates.map(date => dateGroups[date].absent);
+        this.trendChart.data.datasets[2].data = sortedDates.map(date => dateGroups[date].late);
+        this.trendChart.data.datasets[3].data = sortedDates.map(date => dateGroups[date].clinic);
+        this.trendChart.update();
+    }
+
+    updateDistributionChart() {
+        if (!this.distributionChart) return;
+        
+        // Count status distribution from filtered records
+        const statusCounts = { present: 0, absent: 0, late: 0, clinic: 0, excused: 0 };
+        this.filteredRecords.forEach(record => {
+            if (record.status === 'present') statusCounts.present++;
+            else if (record.status === 'absent') statusCounts.absent++;
+            else if (record.status === 'late') statusCounts.late++;
+            else if (record.status === 'in_clinic') statusCounts.clinic++;
+            else if (record.status === 'excused') statusCounts.excused++;
+        });
+
+        this.distributionChart.data.datasets[0].data = [
+            statusCounts.present,
+            statusCounts.absent,
+            statusCounts.late,
+            statusCounts.clinic,
+            statusCounts.excused
+        ];
+        this.distributionChart.update();
     }
 
     async loadClassStudents(classId) {
@@ -464,21 +629,11 @@ class AttendanceManager {
             this.hideLoading();
         } catch (error) {
             console.error('Error loading class students:', error);
-            // Create sample students if function doesn't exist
-            const sampleStudents = this.createSampleStudents();
-            this.renderStudentsList(sampleStudents);
+            // Show empty state instead of sample data
+            this.renderStudentsList([]);
+            this.showNotification('Failed to load students for this class', 'error');
             this.hideLoading();
         }
-    }
-
-    createSampleStudents() {
-        return [
-            { id: 'stu1', name: 'John Smith', classId: 'class-1' },
-            { id: 'stu2', name: 'Maria Garcia', classId: 'class-1' },
-            { id: 'stu3', name: 'David Johnson', classId: 'class-1' },
-            { id: 'stu4', name: 'Sarah Wilson', classId: 'class-1' },
-            { id: 'stu5', name: 'Michael Brown', classId: 'class-1' }
-        ];
     }
 
     renderStudentsList(students) {
@@ -593,6 +748,28 @@ class AttendanceManager {
 
         // Apply filters
         document.getElementById('applyFilters').addEventListener('click', () => {
+            this.applyFilters();
+        });
+
+        // Reset filters
+        document.getElementById('resetFilters').addEventListener('click', () => {
+            this.resetFilters();
+        });
+
+        // Auto-filter on change
+        document.getElementById('classFilter').addEventListener('change', () => {
+            this.applyFilters();
+        });
+        
+        document.getElementById('statusFilter').addEventListener('change', () => {
+            this.applyFilters();
+        });
+        
+        document.getElementById('startDate').addEventListener('change', () => {
+            this.applyFilters();
+        });
+        
+        document.getElementById('endDate').addEventListener('change', () => {
             this.applyFilters();
         });
 

@@ -576,53 +576,77 @@
 
             initEventListeners() {
                 // Sidebar toggle
-                document.getElementById('sidebarToggle').addEventListener('click', () => {
-                    this.toggleSidebar();
-                });
+                const sidebarToggle = document.getElementById('sidebarToggle');
+                if (sidebarToggle) {
+                    sidebarToggle.addEventListener('click', () => {
+                        this.toggleSidebar();
+                    });
+                }
 
                 // Logout via modal
-                document.getElementById('logoutBtn').addEventListener('click', async () => {
-                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
-                        : true;
-                    if (ok) {
-                        localStorage.removeItem('educareTrack_user');
-                        window.location.href = '../index.html';
-                    }
-                });
+                const logoutBtn = document.getElementById('logoutBtn');
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', async () => {
+                        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                            ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                            : true;
+                        if (ok) {
+                            localStorage.removeItem('educareTrack_user');
+                            window.location.href = '../index.html';
+                        }
+                    });
+                }
 
                 // Create announcement button
-                document.getElementById('createAnnouncementBtn').addEventListener('click', () => {
-                    this.openCreateAnnouncementModal();
-                });
+                const createBtn = document.getElementById('createAnnouncementBtn');
+                if (createBtn) {
+                    createBtn.addEventListener('click', () => {
+                        this.openCreateAnnouncementModal();
+                    });
+                }
 
-                document.getElementById('createFirstAnnouncement').addEventListener('click', () => {
-                    this.openCreateAnnouncementModal();
-                });
+                const createFirstBtn = document.getElementById('createFirstAnnouncement');
+                if (createFirstBtn) {
+                    createFirstBtn.addEventListener('click', () => {
+                        this.openCreateAnnouncementModal();
+                    });
+                }
 
                 // Filter buttons
-                document.getElementById('filterAll').addEventListener('click', () => {
-                    this.setActiveFilter('filterAll');
-                    this.applyFilter('all');
-                });
+                const filterAllBtn = document.getElementById('filterAll');
+                if (filterAllBtn) {
+                    filterAllBtn.addEventListener('click', () => {
+                        this.setActiveFilter('filterAll');
+                        this.applyFilter('all');
+                    });
+                }
 
-                document.getElementById('filterUrgent').addEventListener('click', () => {
-                    this.setActiveFilter('filterUrgent');
-                    this.applyFilter('urgent');
-                });
+                const filterUrgentBtn = document.getElementById('filterUrgent');
+                if (filterUrgentBtn) {
+                    filterUrgentBtn.addEventListener('click', () => {
+                        this.setActiveFilter('filterUrgent');
+                        this.applyFilter('urgent');
+                    });
+                }
 
                 // Close modals on outside click
-                document.getElementById('createAnnouncementModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'createAnnouncementModal') {
-                        this.closeCreateAnnouncementModal();
-                    }
-                });
+                const createModal = document.getElementById('createAnnouncementModal');
+                if (createModal) {
+                    createModal.addEventListener('click', (e) => {
+                        if (e.target.id === 'createAnnouncementModal') {
+                            this.closeCreateAnnouncementModal();
+                        }
+                    });
+                }
 
-                document.getElementById('announcementDetailModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'announcementDetailModal') {
-                        this.closeAnnouncementDetailModal();
-                    }
-                });
+                const detailModal = document.getElementById('announcementDetailModal');
+                if (detailModal) {
+                    detailModal.addEventListener('click', (e) => {
+                        if (e.target.id === 'announcementDetailModal') {
+                            this.closeAnnouncementDetailModal();
+                        }
+                    });
+                }
 
                 // Escape key to close modals
                 document.addEventListener('keydown', (e) => {

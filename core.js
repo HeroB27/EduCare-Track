@@ -1194,11 +1194,41 @@ const EducareTrack = {
         }
 
         try {
-            const snapshot = await db.collection('students')
-                .limit(200) // Limit results
-                .get();
+            const [studentsSnapshot, classesSnapshot] = await Promise.all([
+                db.collection('students').get(),
+                db.collection('classes').get()
+            ]);
+            
+            // Create a map of class_id to grade information
+            const classGradeMap = {};
+            classesSnapshot.docs.forEach(doc => {
+                const classData = doc.data();
+                classGradeMap[doc.id] = {
+                    grade: classData.grade,
+                    level: classData.level,
+                    name: classData.name,
+                    strand: classData.strand
+                };
+            });
                 
-            dataCache.students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            dataCache.students = studentsSnapshot.docs.map(doc => {
+                const data = doc.data();
+                const classInfo = classGradeMap[data.class_id] || {};
+                
+                return {
+                    id: doc.id,
+                    ...data,
+                    name: [data.first_name, data.last_name].filter(Boolean).join(' ') || 'Unknown Student',
+                    grade: classInfo.grade || data.grade || data.level, // Get from class table first, then student fields
+                    level: classInfo.level || data.level || classInfo.grade,
+                    className: classInfo.name || null,
+                    studentId: data.id || data.student_id || data.studentId || data.qrCode || null, // Use id field first, then other variations
+                    lrn: data.lrn || null,
+                    strand: data.strand || classInfo.strand || null, // Get from student first, then class
+                    classId: data.class_id || data.classId || null, // Support both field naming conventions
+                    parentId: data.parent_id || data.parentId || null // Support both field naming conventions
+                };
+            });
             dataCache.lastUpdated = Date.now();
             return dataCache.students;
         } catch (error) {
@@ -1536,12 +1566,19 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('clinicVisits')
-                    .select('id,studentId,studentName,classId,reason,check_in,timestamp,notes,treatedBy,outcome')
+                    .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
                     .eq('studentId', studentId)
                     .order('timestamp', { ascending: false })
                     .limit(50);
-                if (error || !data) return [];
-                return data.map(r => ({ id: r.id, ...r }));
+                if (error) throw error;
+                return (data || []).map(visit => ({
+                    ...visit,
+                    studentId: visit.student_id,
+                    studentName: visit.student_name,
+                    classId: visit.class_id,
+                    checkIn: visit.check_in,
+                    treatedBy: visit.treated_by
+                }));
             } else {
                 const snapshot = await db.collection('clinicVisits')
                     .where('studentId', '==', studentId)
@@ -1551,7 +1588,50 @@ const EducareTrack = {
                 return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             }
         } catch (error) {
-            console.error('Error getting clinic visits by student:', error);
+            console.error('Error getting clinic visits:', error);
+            return [];
+        }
+    },
+
+    // Get all clinic visits (for admin reports)
+    async getAllClinicVisits(filters = {}) {
+        try {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                let query = window.supabaseClient
+                    .from('clinicVisits')
+                    .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome');
+                
+                if (filters.startDate && filters.endDate) {
+                    const startDate = new Date(filters.startDate + 'T00:00:00');
+                    const endDate = new Date(filters.endDate + 'T23:59:59');
+                    query = query.gte('timestamp', startDate.toISOString()).lte('timestamp', endDate.toISOString());
+                }
+                
+                const { data, error } = await query.order('timestamp', { ascending: false });
+                if (error) throw error;
+                
+                return (data || []).map(visit => ({
+                    ...visit,
+                    studentId: visit.student_id,
+                    studentName: visit.student_name,
+                    classId: visit.class_id,
+                    checkIn: visit.check_in,
+                    treatedBy: visit.treated_by
+                }));
+            } else {
+                let query = db.collection('clinicVisits').orderBy('timestamp', 'desc');
+                
+                if (filters.startDate && filters.endDate) {
+                    const startDate = new Date(filters.startDate + 'T00:00:00');
+                    const endDate = new Date(filters.endDate + 'T23:59:59');
+                    query = query.where('timestamp', '>=', startDate).where('timestamp', '<=', endDate);
+                }
+                
+                const snapshot = await query.get();
+                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+        } catch (error) {
+            console.error('Error getting all clinic visits:', error);
             return [];
         }
     },
@@ -1681,7 +1761,7 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,readBy,target_users,is_active,createdAt,title,message,type')
+                    .select('id,readBy,target_users,is_active,created_at,title,message,type')
                     .contains('target_users', [userId])
                     .eq('is_active', true);
                 if (error || !data) return 0;
@@ -1710,10 +1790,10 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('is_active', true)
-                    .order('createdAt', { ascending: false })
+                    .order('created_at', { ascending: false })
                     .limit(limit);
                 if (error || !data) throw error || new Error('Failed to load notifications');
                 let notifications = data.map(n => ({
@@ -1729,7 +1809,7 @@ const EducareTrack = {
                 let query = db.collection('notifications')
                     .where('target_users', 'array-contains', userId)
                     .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
+                    .orderBy('created_at', 'desc')
                     .limit(limit);
                 const snapshot = await query.get();
                 let notifications = snapshot.docs.map(doc => ({ 
@@ -1757,11 +1837,11 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('type', type)
                     .eq('is_active', true)
-                    .order('createdAt', { ascending: false })
+                    .order('created_at', { ascending: false })
                     .limit(limit);
                 if (error || !data) return [];
                 return data.map(n => ({
@@ -1774,7 +1854,7 @@ const EducareTrack = {
                     .where('target_users', 'array-contains', userId)
                     .where('type', '==', type)
                     .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
+                    .orderBy('created_at', 'desc')
                     .limit(limit)
                     .get();
                 return snapshot.docs.map(doc => ({ 
@@ -1797,10 +1877,10 @@ const EducareTrack = {
                 // Supabase notifications table does not have isUrgent column; return latest notifications
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,createdAt,readBy')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('is_active', true)
-                    .order('createdAt', { ascending: false })
+                    .order('created_at', { ascending: false })
                     .limit(limit);
                 if (error || !data) return [];
                 return data.map(n => ({
@@ -1813,7 +1893,7 @@ const EducareTrack = {
                     .where('target_users', 'array-contains', userId)
                     .where('isUrgent', '==', true)
                     .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
+                    .orderBy('created_at', 'desc')
                     .limit(limit)
                     .get();
                 return snapshot.docs.map(doc => ({ 
@@ -2265,7 +2345,7 @@ const EducareTrack = {
             cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
             const snapshot = await db.collection('notifications')
-                .where('createdAt', '<', cutoffDate)
+                .where('created_at', '<', cutoffDate)
                 .where('isUrgent', '==', false)
                 .limit(100) // Process in batches
                 .get();
@@ -2532,7 +2612,7 @@ const EducareTrack = {
                     query = query.gte('timestamp', startDate.toISOString()).lte('timestamp', endDate.toISOString());
                 }
                 if (filters.classId) {
-                    query = query.eq('classId', filters.classId);
+                    query = query.eq('class_id', filters.classId);
                 }
                 if (filters.status) {
                     query = query.eq('status', filters.status);
@@ -2541,7 +2621,45 @@ const EducareTrack = {
                 if (error) {
                     throw error;
                 }
-                return Array.isArray(data) ? data.map(r => ({ id: r.id, ...r })) : [];
+                
+                // Fetch student names
+                const attendanceData = Array.isArray(data) ? data.map(r => ({ id: r.id, ...r })) : [];
+                const studentIds = Array.from(new Set(attendanceData.map(r => r.student_id).filter(Boolean)));
+                let namesById = {};
+                
+                if (studentIds.length > 0) {
+                    const { data: students } = await window.supabaseClient
+                        .from('students')
+                        .select('id,first_name,last_name')
+                        .in('id', studentIds);
+                    (students || []).forEach(s => {
+                        namesById[s.id] = [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Unknown Student';
+                    });
+                }
+                
+                // Fetch class names
+                const classIds = Array.from(new Set(attendanceData.map(r => r.class_id).filter(Boolean)));
+                let classesById = {};
+                
+                if (classIds.length > 0) {
+                    const { data: classes } = await window.supabaseClient
+                        .from('classes')
+                        .select('id,name')
+                        .in('id', classIds);
+                    (classes || []).forEach(c => {
+                        classesById[c.id] = c.name;
+                    });
+                }
+                
+                return attendanceData.map(row => ({
+                    ...row,
+                    studentId: row.student_id, // Map for compatibility
+                    studentName: namesById[row.student_id] || 'Unknown Student',
+                    classId: row.class_id, // Map for compatibility
+                    className: classesById[row.class_id] || 'N/A',
+                    entryType: row.entry_type, // Map for compatibility
+                    recordedBy: row.recorded_by_name || row.recorded_by || 'System' // Map for compatibility
+                }));
             } else {
                 const db = firebase.firestore();
                 let query = db.collection('attendance');
@@ -2561,7 +2679,30 @@ const EducareTrack = {
                 snapshot.forEach(doc => {
                     records.push({ id: doc.id, ...doc.data() });
                 });
-                return records;
+                
+                // Fetch student names for Firestore
+                const studentIds = Array.from(new Set(records.map(r => r.studentId || r.student_id).filter(Boolean)));
+                let namesById = {};
+                
+                if (studentIds.length > 0) {
+                    const studentsSnapshot = await db.collection('students')
+                        .where('id', 'in', studentIds)
+                        .get();
+                    
+                    studentsSnapshot.docs.forEach(doc => {
+                        const student = doc.data();
+                        if (student.name) {
+                            namesById[doc.id] = student.name;
+                        } else {
+                            namesById[doc.id] = [student.first_name, student.last_name].filter(Boolean).join(' ') || 'Unknown Student';
+                        }
+                    });
+                }
+                
+                return records.map(row => ({
+                    ...row,
+                    studentName: namesById[row.studentId || row.student_id] || 'Unknown Student'
+                }));
             }
         } catch (error) {
             console.error('Error getting attendance records:', error);
@@ -2797,7 +2938,7 @@ const EducareTrack = {
                         const dupCheck = await db.collection('notifications')
                             .where('studentId', '==', student.id)
                             .where('type', '==', this.NOTIFICATION_TYPES.ATTENDANCE)
-                            .where('createdAt', '>=', today)
+                            .where('created_at', '>=', today)
                             .get();
                         const hasCriticalToday = dupCheck.docs.some(doc => (doc.data().title || '').includes('Critical Attendance Alert'));
                         if (!hasCriticalToday) {
@@ -2995,7 +3136,7 @@ const EducareTrack = {
                 is_active: true
             };
 
-            const announcementRef = await db.collection('announcements').add(announcement);
+            const announcementRef = await db.collection('notifications').add(announcement);
 
             // Get target users based on audience
             let target_users = [];
@@ -3033,7 +3174,7 @@ const EducareTrack = {
     // Get announcements
     async getAnnouncements(limit = 20) {
         try {
-            const snapshot = await db.collection('announcements')
+            const snapshot = await db.collection('notifications')
                 .where('is_active', '==', true)
                 .get();
 
@@ -3055,7 +3196,7 @@ const EducareTrack = {
                 throw new Error('Only admins and teachers can delete announcements');
             }
 
-            await db.collection('announcements').doc(announcementId).delete();
+            await db.collection('notifications').doc(announcementId).delete();
             return true;
         } catch (error) {
             console.error('Error deleting announcement:', error);
@@ -3420,11 +3561,11 @@ const EducareTrack = {
                     const group = dateGroups[date];
                     
                     if (record.status === 'present') {
-                        group.present.add(record.studentId);
+                        group.present.add(record.studentId || record.student_id);
                     } else if (record.status === 'late') {
-                        group.late.add(record.studentId);
+                        group.late.add(record.studentId || record.student_id);
                     } else if (record.status === 'in_clinic') {
-                        group.clinic.add(record.studentId);
+                        group.clinic.add(record.studentId || record.student_id);
                     }
                 }
             });
@@ -4022,13 +4163,6 @@ const EducareTrack = {
 
     async getClinicReasonTrend(startDate, endDate, top = 6) {
         try {
-            const db = firebase.firestore();
-            const snapshot = await db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .where('check_in', '==', true)
-                .get();
-            const counts = new Map();
             const ignore = new Set([
                 'check_in','check-in','qr code check-in','quick checkout','checkout','check-out','return to class','validation','teacher validation','approved','rejected'
             ]);
@@ -4054,16 +4188,50 @@ const EducareTrack = {
                 };
                 return map[s] || s.replace(/(^\w|\s\w)/g, (m) => m.toUpperCase());
             };
-            snapshot.forEach(doc => {
-                const r = doc.data();
-                const label = normalize(r.reason);
-                if (!label) return;
-                counts.set(label, (counts.get(label) || 0) + 1);
-            });
-            const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
-            arr.sort((a, b) => b.count - a.count);
-            const topArr = arr.slice(0, top);
-            return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .select('reason,timestamp')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('check_in', true);
+                
+                if (error) {
+                    console.error('Supabase error getting clinic reason trend:', error);
+                    return { labels: [], counts: [] };
+                }
+
+                const counts = new Map();
+                (data || []).forEach(r => {
+                    const label = normalize(r.reason);
+                    if (!label) return;
+                    counts.set(label, (counts.get(label) || 0) + 1);
+                });
+                
+                const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
+                arr.sort((a, b) => b.count - a.count);
+                const topArr = arr.slice(0, top);
+                return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+            } else {
+                const db = firebase.firestore();
+                const snapshot = await db.collection('clinicVisits')
+                    .where('timestamp', '>=', startDate)
+                    .where('timestamp', '<=', endDate)
+                    .where('check_in', '==', true)
+                    .get();
+                const counts = new Map();
+                snapshot.forEach(doc => {
+                    const r = doc.data();
+                    const label = normalize(r.reason);
+                    if (!label) return;
+                    counts.set(label, (counts.get(label) || 0) + 1);
+                });
+                const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
+                arr.sort((a, b) => b.count - a.count);
+                const topArr = arr.slice(0, top);
+                return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+            }
         } catch (error) {
             console.error('Error getting clinic reason trend:', error);
             return { labels: [], counts: [] };
@@ -4123,21 +4291,45 @@ const EducareTrack = {
 
     async getAbsenceReasonTrend(startDate, endDate, top = 6) {
         try {
-            const db = firebase.firestore();
-            const snapshot = await db.collection('excuseLetters')
-                .where('submitted_at', '>=', startDate)
-                .where('submitted_at', '<=', endDate)
-                .where('type', '==', 'absence')
-                .get();
-            const counts = new Map();
-            snapshot.forEach(doc => {
-                const r = doc.data();
-                if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
-            });
-            const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
-            arr.sort((a, b) => b.count - a.count);
-            const topArr = arr.slice(0, top);
-            return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('excuseLetters')
+                    .select('reason,submitted_at')
+                    .gte('submitted_at', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('submitted_at', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('type', 'absence');
+                
+                if (error) {
+                    console.error('Supabase error getting absence reason trend:', error);
+                    return { labels: [], counts: [] };
+                }
+
+                const counts = new Map();
+                (data || []).forEach(r => {
+                    if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
+                });
+                
+                const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
+                arr.sort((a, b) => b.count - a.count);
+                const topArr = arr.slice(0, top);
+                return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+            } else {
+                const db = firebase.firestore();
+                const snapshot = await db.collection('excuseLetters')
+                    .where('submitted_at', '>=', startDate)
+                    .where('submitted_at', '<=', endDate)
+                    .where('type', '==', 'absence')
+                    .get();
+                const counts = new Map();
+                snapshot.forEach(doc => {
+                    const r = doc.data();
+                    if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
+                });
+                const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
+                arr.sort((a, b) => b.count - a.count);
+                const topArr = arr.slice(0, top);
+                return { labels: topArr.map(x => x.label), counts: topArr.map(x => x.count) };
+            }
         } catch (error) {
             console.error('Error getting absence reason trend:', error);
             return { labels: [], counts: [] };
@@ -4146,20 +4338,44 @@ const EducareTrack = {
 
     async getExcusedVsUnexcusedAbsences(startDate, endDate) {
         try {
-            const db = firebase.firestore();
-            const snapshot = await db.collection('excuseLetters')
-                .where('submitted_at', '>=', startDate)
-                .where('submitted_at', '<=', endDate)
-                .where('type', '==', 'absence')
-                .get();
-            let approved = 0, rejected = 0, pending = 0;
-            snapshot.forEach(doc => {
-                const s = doc.data().status;
-                if (s === 'approved') approved++;
-                else if (s === 'rejected') rejected++;
-                else pending++;
-            });
-            return { approved, rejected, pending };
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('excuseLetters')
+                    .select('status,submitted_at')
+                    .gte('submitted_at', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('submitted_at', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('type', 'absence');
+                
+                if (error) {
+                    console.error('Supabase error getting excused vs unexcused:', error);
+                    return { approved: 0, rejected: 0, pending: 0 };
+                }
+
+                let approved = 0, rejected = 0, pending = 0;
+                (data || []).forEach(r => {
+                    const s = r.status;
+                    if (s === 'approved') approved++;
+                    else if (s === 'rejected') rejected++;
+                    else pending++;
+                });
+                
+                return { approved, rejected, pending };
+            } else {
+                const db = firebase.firestore();
+                const snapshot = await db.collection('excuseLetters')
+                    .where('submitted_at', '>=', startDate)
+                    .where('submitted_at', '<=', endDate)
+                    .where('type', '==', 'absence')
+                    .get();
+                let approved = 0, rejected = 0, pending = 0;
+                snapshot.forEach(doc => {
+                    const s = doc.data().status;
+                    if (s === 'approved') approved++;
+                    else if (s === 'rejected') rejected++;
+                    else pending++;
+                });
+                return { approved, rejected, pending };
+            }
         } catch (error) {
             console.error('Error getting excused vs unexcused:', error);
             return { approved: 0, rejected: 0, pending: 0 };
@@ -4168,36 +4384,89 @@ const EducareTrack = {
 
     async getClinicReasonDetails({ startDate, endDate, reason, classId = null, limit = 100 }) {
         try {
-            const db = firebase.firestore();
-            let query = db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .where('reason', '==', reason);
-            if (classId) {
-                query = query.where('classId', '==', classId);
-            }
-            const snapshot = await query.orderBy('timestamp', 'desc').limit(limit).get();
-            const visits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const studentIds = Array.from(new Set(visits.map(v => v.studentId).filter(Boolean)));
-            const students = {};
-            await Promise.all(studentIds.map(async sid => {
-                const sdoc = await db.collection('students').doc(sid).get();
-                if (sdoc.exists) {
-                    students[sid] = { id: sdoc.id, ...sdoc.data() };
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                let query = window.supabaseClient
+                    .from('clinicVisits')
+                    .select('*')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('reason', reason);
+                
+                if (classId) {
+                    query = query.eq('class_id', classId);
                 }
-            }));
-            return visits.map(v => ({
-                id: v.id,
-                studentId: v.studentId,
-                studentName: v.studentName,
-                classId: v.classId || (students[v.studentId]?.classId || null),
-                grade: students[v.studentId]?.grade || null,
-                reason: v.reason || '',
-                notes: v.notes || '',
-                teacherValidationStatus: v.teacherValidationStatus || 'pending',
-                validatedByName: v.validatedByName || '',
-                timestamp: v.timestamp || null
-            }));
+                
+                const { data, error } = await query.order('timestamp', { ascending: false }).limit(limit);
+                
+                if (error) {
+                    console.error('Supabase error getting clinic reason details:', error);
+                    return [];
+                }
+                
+                const visits = data || [];
+                const studentIds = Array.from(new Set(visits.map(v => v.student_id || v.studentId).filter(Boolean)));
+                const students = {};
+                
+                if (studentIds.length > 0) {
+                    const { data: studentData } = await window.supabaseClient
+                        .from('students')
+                        .select('id,first_name,last_name,grade,class_id')
+                        .in('id', studentIds);
+                    
+                    (studentData || []).forEach(s => {
+                        students[s.id] = {
+                            id: s.id,
+                            name: [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Unknown Student',
+                            grade: s.grade,
+                            classId: s.class_id
+                        };
+                    });
+                }
+                
+                return visits.map(v => ({
+                    id: v.id,
+                    studentId: v.student_id || v.studentId,
+                    studentName: students[v.student_id || v.studentId]?.name || 'Unknown Student',
+                    classId: v.class_id || v.classId || (students[v.student_id || v.studentId]?.classId || null),
+                    grade: students[v.student_id || v.studentId]?.grade || null,
+                    reason: v.reason || '',
+                    notes: v.notes || '',
+                    teacherValidationStatus: v.teacher_validation_status || 'pending',
+                    validatedByName: v.validated_by_name || '',
+                    timestamp: v.timestamp || null
+                }));
+            } else {
+                const db = firebase.firestore();
+                let query = db.collection('clinicVisits')
+                    .where('timestamp', '>=', startDate)
+                    .where('timestamp', '<=', endDate)
+                    .where('reason', '==', reason);
+                if (classId) {
+                    query = query.where('classId', '==', classId);
+                }
+                const snapshot = await query.orderBy('timestamp', 'desc').limit(limit).get();
+                const visits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const studentIds = Array.from(new Set(visits.map(v => v.studentId).filter(Boolean)));
+                const students = {};
+                await Promise.all(studentIds.map(async sid => {
+                    const sdoc = await db.collection('students').doc(sid).get();
+                    if (sdoc.exists) {
+                        students[sid] = { id: sdoc.id, ...sdoc.data() };
+                    }
+                }));
+                return visits.map(v => ({
+                    id: v.id,
+                    studentId: v.studentId,
+                    studentName: v.studentName,
+                    classId: v.classId || (students[v.studentId]?.classId || null),
+                    grade: students[v.studentId]?.grade || null,
+                    reason: v.reason || '',
+                    notes: v.notes || '',
+                    teacherValidationStatus: v.teacherValidationStatus || 'pending',
+                    validatedByName: v.validatedByName || '',
+                    timestamp: v.timestamp || null
+                }));
+            }
         } catch (error) {
             console.error('Error getting clinic reason details:', error);
             return [];
@@ -4206,35 +4475,87 @@ const EducareTrack = {
 
     async getAbsenceReasonDetails({ startDate, endDate, reason, status = null, limit = 100 }) {
         try {
-            const db = firebase.firestore();
-            let query = db.collection('excuseLetters')
-                .where('submitted_at', '>=', startDate)
-                .where('submitted_at', '<=', endDate)
-                .where('type', '==', 'absence')
-                .where('reason', '==', reason);
-            if (status) {
-                query = query.where('status', '==', status);
-            }
-            const snapshot = await query.orderBy('submitted_at', 'desc').limit(limit).get();
-            const letters = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
-            const students = {};
-            await Promise.all(studentIds.map(async sid => {
-                const sdoc = await db.collection('students').doc(sid).get();
-                if (sdoc.exists) {
-                    students[sid] = { id: sdoc.id, ...sdoc.data() };
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                let query = window.supabaseClient
+                    .from('excuseLetters')
+                    .select('*')
+                    .gte('submitted_at', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('submitted_at', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('type', 'absence')
+                    .eq('reason', reason);
+                
+                if (status) {
+                    query = query.eq('status', status);
                 }
-            }));
-            return letters.map(l => ({
-                id: l.id,
-                studentId: l.studentId,
-                studentName: l.studentName,
-                classId: students[l.studentId]?.classId || null,
-                grade: students[l.studentId]?.grade || null,
-                reason: l.reason || '',
-                status: l.status || 'pending',
-                submitted_at: l.submitted_at || null
-            }));
+                
+                const { data, error } = await query.order('submitted_at', { ascending: false }).limit(limit);
+                
+                if (error) {
+                    console.error('Supabase error getting absence reason details:', error);
+                    return [];
+                }
+                
+                const letters = data || [];
+                const studentIds = Array.from(new Set(letters.map(l => l.student_id || l.studentId).filter(Boolean)));
+                const students = {};
+                
+                if (studentIds.length > 0) {
+                    const { data: studentData } = await window.supabaseClient
+                        .from('students')
+                        .select('id,first_name,last_name,grade,class_id')
+                        .in('id', studentIds);
+                    
+                    (studentData || []).forEach(s => {
+                        students[s.id] = {
+                            id: s.id,
+                            name: [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Unknown Student',
+                            grade: s.grade,
+                            classId: s.class_id
+                        };
+                    });
+                }
+                
+                return letters.map(l => ({
+                    id: l.id,
+                    studentId: l.student_id || l.studentId,
+                    studentName: students[l.student_id || l.studentId]?.name || 'Unknown Student',
+                    classId: students[l.student_id || l.studentId]?.classId || null,
+                    grade: students[l.student_id || l.studentId]?.grade || null,
+                    reason: l.reason || '',
+                    status: l.status || 'pending',
+                    submitted_at: l.submitted_at || null
+                }));
+            } else {
+                const db = firebase.firestore();
+                let query = db.collection('excuseLetters')
+                    .where('submitted_at', '>=', startDate)
+                    .where('submitted_at', '<=', endDate)
+                    .where('type', '==', 'absence')
+                    .where('reason', '==', reason);
+                if (status) {
+                    query = query.where('status', '==', status);
+                }
+                const snapshot = await query.orderBy('submitted_at', 'desc').limit(limit).get();
+                const letters = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
+                const students = {};
+                await Promise.all(studentIds.map(async sid => {
+                    const sdoc = await db.collection('students').doc(sid).get();
+                    if (sdoc.exists) {
+                        students[sid] = { id: sdoc.id, ...sdoc.data() };
+                    }
+                }));
+                return letters.map(l => ({
+                    id: l.id,
+                    studentId: l.studentId,
+                    studentName: l.studentName,
+                    classId: students[l.studentId]?.classId || null,
+                    grade: students[l.studentId]?.grade || null,
+                    reason: l.reason || '',
+                    status: l.status || 'pending',
+                    submitted_at: l.submitted_at || null
+                }));
+            }
         } catch (error) {
             console.error('Error getting absence reason details:', error);
             return [];

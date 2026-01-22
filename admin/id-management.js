@@ -226,6 +226,13 @@ class IDManagement {
             }
 
             console.log('Searching with:', { searchInput, gradeFilter, strandFilter });
+            console.log('Total students loaded:', this.allStudents.length);
+            console.log('Sample student data:', this.allStudents.slice(0, 3));
+            console.log('First student fields:', Object.keys(this.allStudents[0] || {}));
+            console.log('First student id field:', this.allStudents[0]?.id);
+            console.log('First student student_id field:', this.allStudents[0]?.student_id);
+            console.log('First student studentId field:', this.allStudents[0]?.studentId);
+            console.log('First student qrCode field:', this.allStudents[0]?.qrCode);
 
             let students = this.allStudents;
 
@@ -252,6 +259,13 @@ class IDManagement {
             }
 
             console.log('Filtered students:', students);
+            console.log('Filter results breakdown:', {
+                totalBefore: this.allStudents.length,
+                totalAfter: students.length,
+                searchInput: searchInput,
+                gradeFilter: gradeFilter,
+                strandFilter: strandFilter
+            });
             this.displaySearchResults(students);
             this.hideLoading();
         } catch (error) {

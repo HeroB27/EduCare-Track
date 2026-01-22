@@ -3,6 +3,9 @@ const supabaseConfig = {
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrd2p4bWhucm9xcHJtamZvYXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NzM1MzksImV4cCI6MjA4NDU0OTUzOX0.4kcq7jztHm_zvS1yMX1VjZAvMbxKgNHBqkiThotG3DM" // Make sure this is your actual anon key
 };
 
+// Set Supabase as the active database
+window.USE_SUPABASE = true;
+
 // Assuming supabase-js is loaded via CDN
 const supabaseClient = typeof window !== 'undefined' && window.supabase 
     ? window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey) 
@@ -10,4 +13,5 @@ const supabaseClient = typeof window !== 'undefined' && window.supabase
 
 if (typeof window !== 'undefined') {
     window.supabaseClient = supabaseClient;
+    window.supabaseConfig = supabaseConfig;
 }

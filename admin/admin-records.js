@@ -11,6 +11,18 @@ class AdminRecords {
         this.init();
     }
 
+    // Helper function to handle timestamp conversion
+    parseTimestamp(timestamp) {
+        if (!timestamp) return null;
+        if (timestamp instanceof Date) {
+            return timestamp;
+        }
+        if (timestamp?.toDate) {
+            return timestamp.toDate();
+        }
+        return new Date(timestamp);
+    }
+
     async init() {
         try {
             this.showLoading();
@@ -126,18 +138,13 @@ class AdminRecords {
 
     async getAttendanceData() {
         try {
-            // Get attendance for the current date range
-            const startDate = new Date(this.currentDateRange.startDate);
-            const endDate = new Date(this.currentDateRange.endDate);
-            endDate.setHours(23, 59, 59, 999); // Include entire end date
-
-            const snapshot = await EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .get();
-
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Get attendance for current date range using the fixed EducareTrack method
+            const filters = {
+                startDate: this.formatDateForInput(this.currentDateRange.startDate),
+                endDate: this.formatDateForInput(this.currentDateRange.endDate)
+            };
+            
+            return await EducareTrack.getAttendanceRecords(filters);
         } catch (error) {
             console.error('Error getting attendance data:', error);
             return [];
@@ -146,17 +153,13 @@ class AdminRecords {
 
     async getClinicVisitsData() {
         try {
-            const startDate = new Date(this.currentDateRange.startDate);
-            const endDate = new Date(this.currentDateRange.endDate);
-            endDate.setHours(23, 59, 59, 999);
-
-            const snapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .get();
-
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Use the new getAllClinicVisits method with proper Supabase support
+            const filters = {
+                startDate: this.formatDateForInput(this.currentDateRange.startDate),
+                endDate: this.formatDateForInput(this.currentDateRange.endDate)
+            };
+            
+            return await EducareTrack.getAllClinicVisits(filters);
         } catch (error) {
             console.error('Error getting clinic visits data:', error);
             return [];
@@ -170,26 +173,26 @@ class AdminRecords {
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
-        // Filter today's attendance
+        // Filter today's attendance - handle both timestamp formats
         const todayAttendance = this.attendanceData.filter(record => {
-            const recordDate = record.timestamp?.toDate();
-            return recordDate >= today && recordDate < tomorrow;
+            const recordDate = this.parseTimestamp(record.timestamp);
+            return recordDate && recordDate >= today && recordDate < tomorrow;
         });
 
         // Calculate metrics
         const totalStudents = this.students.length;
         const presentToday = new Set(todayAttendance
             .filter(record => record.status === 'present' || record.status === 'late')
-            .map(record => record.studentId)
+            .map(record => record.student_id)
         ).size;
         
         const absentToday = totalStudents - presentToday;
         const lateToday = todayAttendance.filter(record => record.status === 'late').length;
 
-        // Overall attendance rate for the period
+        // Overall attendance rate for period
         const uniqueStudentsPresent = new Set(this.attendanceData
             .filter(record => record.status === 'present' || record.status === 'late')
-            .map(record => record.studentId)
+            .map(record => record.student_id)
         ).size;
         
         const overallAttendanceRate = totalStudents > 0 ? 
@@ -492,7 +495,7 @@ class AdminRecords {
             return `
                 <tr>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate()) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
                         <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
@@ -563,7 +566,7 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate()) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${arrivalTime}
@@ -604,10 +607,10 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate()) : 'N/A'}
+                        ${visit.timestamp ? EducareTrack.formatDate(this.parseTimestamp(visit.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate()) : 'N/A'}
+                        ${visit.timestamp ? EducareTrack.formatTime(this.parseTimestamp(visit.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900">
                         ${visit.reason || 'Not specified'}
@@ -704,7 +707,7 @@ class AdminRecords {
                 let counts = clinicTrend.counts;
                 if (!labels || labels.length === 0) {
                     const withinRange = this.clinicVisits.filter(v => {
-                        const t = v.timestamp?.toDate ? v.timestamp.toDate() : v.timestamp;
+                        const t = this.parseTimestamp(v.timestamp);
                         return t && t >= clinicStart && t <= end && v.checkIn === true;
                     });
                     const mapCounts = new Map();
@@ -820,7 +823,10 @@ class AdminRecords {
         const dateGroups = {};
         this.attendanceData.forEach(record => {
             if (!record.timestamp) return;
-            const key = EducareTrack.formatDate(record.timestamp.toDate());
+            // Handle both Date objects and Firestore timestamps
+            const timestamp = this.parseTimestamp(record.timestamp);
+            if (!timestamp) return;
+            const key = EducareTrack.formatDate(timestamp);
             if (!dateGroups[key]) {
                 dateGroups[key] = { presentSet: new Set() };
             }
@@ -852,10 +858,13 @@ class AdminRecords {
             cur.setDate(cur.getDate() + 1);
         }
 
-        this.charts.attendanceTrend.data.labels = labels;
-        this.charts.attendanceTrend.data.datasets[0].data = presentData;
-        this.charts.attendanceTrend.data.datasets[1].data = absentData;
-        this.charts.attendanceTrend.update();
+        // Check if chart exists before updating
+        if (this.charts.attendanceTrend && this.charts.attendanceTrend.data) {
+            this.charts.attendanceTrend.data.labels = labels;
+            this.charts.attendanceTrend.data.datasets[0].data = presentData;
+            this.charts.attendanceTrend.data.datasets[1].data = absentData;
+            this.charts.attendanceTrend.update();
+        }
     }
 
     createStatusDistributionChart() {
@@ -914,14 +923,17 @@ class AdminRecords {
         const excusedCount = excusedStudents.size;
         const absentCount = Math.max(0, totalStudents - presentCount - lateCount - excusedCount - clinicCount);
 
-        this.charts.statusDistribution.data.datasets[0].data = [
-            presentCount,
-            lateCount,
-            absentCount,
-            excusedCount,
-            clinicCount
-        ];
-        this.charts.statusDistribution.update();
+        // Check if chart exists before updating
+        if (this.charts.statusDistribution && this.charts.statusDistribution.data) {
+            this.charts.statusDistribution.data.datasets[0].data = [
+                presentCount,
+                lateCount,
+                absentCount,
+                excusedCount,
+                clinicCount
+            ];
+            this.charts.statusDistribution.update();
+        }
     }
 
     createDailyPatternChart() {
@@ -1012,9 +1024,12 @@ class AdminRecords {
         const entriesData = labels.map(slot => timeSlots[slot].entries);
         const exitsData = labels.map(slot => timeSlots[slot].exits);
 
-        this.charts.dailyPattern.data.datasets[0].data = entriesData;
-        this.charts.dailyPattern.data.datasets[1].data = exitsData;
-        this.charts.dailyPattern.update();
+        // Check if chart exists before updating
+        if (this.charts.dailyPattern && this.charts.dailyPattern.data) {
+            this.charts.dailyPattern.data.datasets[0].data = entriesData;
+            this.charts.dailyPattern.data.datasets[1].data = exitsData;
+            this.charts.dailyPattern.update();
+        }
     }
 
     createGradeLevelChart() {
@@ -1084,9 +1099,12 @@ class AdminRecords {
             return totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
         });
 
-        this.charts.gradeLevel.data.labels = labels;
-        this.charts.gradeLevel.data.datasets[0].data = attendanceRates;
-        this.charts.gradeLevel.update();
+        // Check if chart exists before updating
+        if (this.charts.gradeLevel && this.charts.gradeLevel.data) {
+            this.charts.gradeLevel.data.labels = labels;
+            this.charts.gradeLevel.data.datasets[0].data = attendanceRates;
+            this.charts.gradeLevel.update();
+        }
     }
 
     createClassAttendanceChart() {
@@ -1187,11 +1205,14 @@ class AdminRecords {
             }
         });
 
-        this.charts.classAttendance.data.labels = labels;
-        this.charts.classAttendance.data.datasets[0].data = presentData;
-        this.charts.classAttendance.data.datasets[1].data = absentData;
-        this.charts.classAttendance.data.datasets[2].data = lateData;
-        this.charts.classAttendance.update();
+        // Check if chart exists before updating
+        if (this.charts.classAttendance && this.charts.classAttendance.data) {
+            this.charts.classAttendance.data.labels = labels;
+            this.charts.classAttendance.data.datasets[0].data = presentData;
+            this.charts.classAttendance.data.datasets[1].data = absentData;
+            this.charts.classAttendance.data.datasets[2].data = lateData;
+            this.charts.classAttendance.update();
+        }
 
         // Update class attendance table
         this.updateClassAttendanceTable(classStats);
@@ -1296,9 +1317,12 @@ class AdminRecords {
         const labels = Object.keys(levelStats).filter(level => levelStats[level].total > 0);
         const data = labels.map(level => levelStats[level].total);
 
-        this.charts.levelAttendance.data.labels = labels;
-        this.charts.levelAttendance.data.datasets[0].data = data;
-        this.charts.levelAttendance.update();
+        // Check if chart exists before updating
+        if (this.charts.levelAttendance && this.charts.levelAttendance.data) {
+            this.charts.levelAttendance.data.labels = labels;
+            this.charts.levelAttendance.data.datasets[0].data = data;
+            this.charts.levelAttendance.update();
+        }
 
         // Update level comparison chart
         this.updateLevelComparisonChart(levelStats);
@@ -1350,9 +1374,12 @@ class AdminRecords {
             return stat.total > 0 ? Math.round((stat.present / stat.total) * 100) : 0;
         });
 
-        this.charts.levelComparison.data.labels = labels;
-        this.charts.levelComparison.data.datasets[0].data = attendanceRates;
-        this.charts.levelComparison.update();
+        // Check if chart exists before updating
+        if (this.charts.levelComparison && this.charts.levelComparison.data) {
+            this.charts.levelComparison.data.labels = labels;
+            this.charts.levelComparison.data.datasets[0].data = attendanceRates;
+            this.charts.levelComparison.update();
+        }
     }
 
     updateLevelAttendanceTable(levelStats) {
@@ -1440,7 +1467,7 @@ class AdminRecords {
                         ${classObj ? classObj.name : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${record.timestamp ? EducareTrack.formatTime(record.timestamp.toDate()) : 'N/A'}
+                        ${record.timestamp ? EducareTrack.formatTime(this.parseTimestamp(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${EducareTrack.getStatusColor(record.status)}">
@@ -1474,7 +1501,7 @@ class AdminRecords {
                     const classObj = this.classes.find(c => c.id === record.classId);
                     
                     return {
-                        date: record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate()) : 'N/A',
+                        date: record.timestamp ? EducareTrack.formatDate(this.parseTimestamp(record.timestamp)) : 'N/A',
                         time: record.time || 'N/A',
                         studentName: student ? student.name : 'Unknown',
                         studentId: student ? student.studentId : 'N/A',
@@ -1489,8 +1516,8 @@ class AdminRecords {
                     const classObj = this.classes.find(c => c.id === visit.classId);
                     
                     return {
-                        date: visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate()) : 'N/A',
-                        time: visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate()) : 'N/A',
+                        date: visit.timestamp ? EducareTrack.formatDate(this.parseTimestamp(visit.timestamp)) : 'N/A',
+                        time: visit.timestamp ? EducareTrack.formatTime(this.parseTimestamp(visit.timestamp)) : 'N/A',
                         studentName: student ? student.name : 'Unknown',
                         studentId: student ? student.studentId : 'N/A',
                         className: classObj ? classObj.name : 'N/A',

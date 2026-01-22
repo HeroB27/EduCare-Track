@@ -65,7 +65,7 @@ class ClassManagement {
 
     async loadClasses() {
         try {
-            const snapshot = await EducareTrack.db.collection('classes').orderBy('createdAt','desc').get();
+            const snapshot = await EducareTrack.db.collection('classes').orderBy('created_at','desc').get();
             this.classes = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             document.getElementById('totalClasses').textContent = this.classes.length;
             await this.updateStudentsCount();
@@ -80,7 +80,7 @@ class ClassManagement {
             const ids = this.classes.map(c => c.id);
             const counts = {};
             for (const id of ids) {
-                const snap = await EducareTrack.db.collection('students').where('classId','==',id).get();
+                const snap = await EducareTrack.db.collection('students').where('class_id','==',id).get();
                 counts[id] = snap.size;
             }
             this.classes = this.classes.map(c => ({...c, studentsCount: counts[c.id] || 0}));
@@ -211,7 +211,7 @@ class ClassManagement {
 
     async loadStudentsForClass(classId) {
         try {
-            const snap = await EducareTrack.db.collection('students').where('classId','==',classId).get();
+            const snap = await EducareTrack.db.collection('students').where('class_id','==',classId).get();
             const students = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             const list = document.getElementById('studentsList');
             if (!list) return;

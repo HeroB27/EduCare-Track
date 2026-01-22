@@ -48,14 +48,14 @@ class ClinicDashboard {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const [{ data: visits, error: vErr }, { data: patients, error: pErr }, statsSnapshot] = await Promise.all([
                     window.supabaseClient.from('clinicVisits')
-                        .select('id,studentId,studentName,classId,checkIn,timestamp,reason,notes')
+                        .select('id,student_id,student_name,class_id,check_in,timestamp,reason,notes')
                         .gte('timestamp', today.toISOString())
                         .lt('timestamp', tomorrow.toISOString())
                         .order('timestamp', { ascending: false })
                         .limit(10),
                     window.supabaseClient.from('students')
-                        .select('id,firstName,lastName,classId,currentStatus,parentId')
-                        .eq('currentStatus', 'in_clinic'),
+                        .select('id,first_name,last_name,class_id,current_status,parent_id')
+                        .eq('current_status', 'in_clinic'),
                     this.getClinicStats()
                 ]);
                 if (vErr) throw vErr;
@@ -67,12 +67,12 @@ class ClinicDashboard {
                 }));
                 this.currentPatients = (patients || []).map(s => ({
                     id: s.id,
-                    firstName: s.firstName,
-                    lastName: s.lastName,
-                    name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                    classId: s.classId,
-                    currentStatus: s.currentStatus,
-                    parentId: s.parentId,
+                    first_name: s.first_name,
+                    last_name: s.last_name,
+                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
+                    class_id: s.class_id,
+                    current_status: s.current_status,
+                    parent_id: s.parent_id,
                     grade: s.grade || ''
                 }));
                 this.stats = statsSnapshot;
@@ -126,7 +126,7 @@ class ClinicDashboard {
                         .lt('timestamp', tomorrow.toISOString()),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact' })
-                        .eq('currentStatus', 'in_clinic'),
+                        .eq('current_status', 'in_clinic'),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact', head: true })
                 ]);
@@ -359,7 +359,7 @@ class ClinicDashboard {
         }
 
         return this.currentPatients.map(patient => {
-            const classInfo = patient.classId || 'Unknown Class';
+            const classInfo = patient.class_id || 'Unknown Class';
             const gradeInfo = patient.grade ? ` • ${patient.grade}` : '';
             
             return `
@@ -399,9 +399,9 @@ class ClinicDashboard {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-            const type = visit.checkIn ? 'Check-in' : 'Check-out';
-            const typeColor = visit.checkIn ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
-            const icon = visit.checkIn ? '↩️' : '↪️';
+            const type = visit.check_in ? 'Check-in' : 'Check-out';
+            const typeColor = visit.check_in ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
+            const icon = visit.check_in ? '↩️' : '↪️';
             
             return `
                 <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -476,23 +476,23 @@ class ClinicDashboard {
             const student = studentDoc.data();
             
             const clinicData = {
-                studentId: studentId,
-                studentName: student.name,
-                classId: student.classId || '',
-                checkIn: checkIn,
+                student_id: studentId,
+                student_name: student.name,
+                class_id: student.class_id || '',
+                check_in: checkIn,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                 reason: reason,
                 notes: notes,
-                staffId: this.currentUser.id,
-                staffName: this.currentUser.name
+                staff_id: this.currentUser.id,
+                staff_name: this.currentUser.name
             };
 
             await firebase.firestore().collection('clinicVisits').add(clinicData);
 
             // Update student status
             await firebase.firestore().collection('students').doc(studentId).update({
-                currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                lastClinicVisit: firebase.firestore.FieldValue.serverTimestamp()
+                current_status: checkIn ? 'in_clinic' : 'in_school',
+                last_clinic_visit: firebase.firestore.FieldValue.serverTimestamp()
             });
 
             return true;

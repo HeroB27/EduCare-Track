@@ -37,15 +37,14 @@ class TeacherClinicDashboard {
 
     async loadTeacherData() {
         try {
-            // Get teacher details from Firestore
-            const teacherDoc = await firebase.firestore()
-                .collection('users')
+            // Get teacher details from database
+            const teacherDoc = await EducareTrack.db.collection('users')
                 .doc(this.teacher.id)
                 .get();
                 
             if (teacherDoc.exists) {
                 const teacherData = teacherDoc.data();
-                this.classId = teacherData.classId;
+                this.class_id = teacherData.class_id;
                 
                 // Update teacher name in UI
                 document.getElementById('teacherName').textContent = teacherData.name;
@@ -61,10 +60,9 @@ class TeacherClinicDashboard {
 
     async loadStudents() {
         try {
-            const snapshot = await firebase.firestore()
-                .collection('students')
-                .where('classId', '==', this.classId)
-                .where('isActive', '==', true)
+            const snapshot = await EducareTrack.db.collection('students')
+                .where('class_id', '==', this.class_id)
+                .where('is_active', '==', true)
                 .get();
                 
             this.students = snapshot.docs.map(doc => ({
@@ -91,20 +89,18 @@ class TeacherClinicDashboard {
                 }
             }, 15000);
         } else {
-            firebase.firestore()
-                .collection('clinicVisits')
-                .where('studentId', 'in', this.students.map(s => s.id))
-                .where('checkIn', '==', true)
+            EducareTrack.db.collection('clinic_visits')
+                .where('student_id', 'in', this.students.map(s => s.id))
+                .where('check_in', '==', true)
                 .onSnapshot(snapshot => {
                     this.handleActiveVisitsUpdate(snapshot);
                 }, error => {
                     console.error('Error listening to clinic visits:', error);
                 });
-            firebase.firestore()
-                .collection('notifications')
-                .where('targetUsers', 'array-contains', this.teacher.id)
+            EducareTrack.db.collection('notifications')
+                .where('target_users', 'array-contains', this.teacher.id)
                 .where('type', '==', 'clinic')
-                .orderBy('createdAt', 'desc')
+                .orderBy('created_at', 'desc')
                 .limit(10)
                 .onSnapshot(snapshot => {
                     this.handleNotificationsUpdate(snapshot);
@@ -117,10 +113,9 @@ class TeacherClinicDashboard {
     async loadInitialData() {
         try {
             // Load active clinic visits
-            const activeVisitsSnapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .where('studentId', 'in', this.students.map(s => s.id))
-                .where('checkIn', '==', true)
+            const activeVisitsSnapshot = await EducareTrack.db.collection('clinic_visits')
+                .where('student_id', 'in', this.students.map(s => s.id))
+                .where('check_in', '==', true)
                 .get();
                 
             this.activeVisits = activeVisitsSnapshot.docs.map(doc => ({
@@ -132,9 +127,8 @@ class TeacherClinicDashboard {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
             
-            const historySnapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .where('studentId', 'in', this.students.map(s => s.id))
+            const historySnapshot = await EducareTrack.db.collection('clinic_visits')
+                .where('student_id', 'in', this.students.map(s => s.id))
                 .where('timestamp', '>=', thirtyDaysAgo)
                 .orderBy('timestamp', 'desc')
                 .limit(20)
@@ -351,31 +345,28 @@ class TeacherClinicDashboard {
         
         try {
             // Update the clinic visit with teacher decision
-            await firebase.firestore()
-                .collection('clinicVisits')
+            await EducareTrack.db.collection('clinic_visits')
                 .doc(visitId)
                 .update({
-                    teacherDecision: decision.value,
-                    teacherNotes: teacherNotes,
-                    teacherDecisionAt: new Date(),
-                    teacherId: this.teacher.id,
-                    teacherName: this.teacher.name
+                    teacher_decision: decision.value,
+                    teacher_notes: teacherNotes,
+                    decision_timestamp: new Date(),
+                    decision_by: this.teacher.name
                 });
             
             // Create notification for clinic staff
-            const student = this.students.find(s => s.id === visit.studentId);
-            await firebase.firestore()
-                .collection('notifications')
+            const student = this.students.find(s => s.id === visit.student_id);
+            await EducareTrack.db.collection('notifications')
                 .add({
                     type: 'clinic_decision',
-                    title: 'Teacher Authorization Received',
-                    message: `${this.teacher.name} has authorized ${student ? student.name : 'student'} to be ${decision.value === 'send_home' ? 'sent home' : 'kept in clinic'}`,
-                    targetUsers: [visit.staffId], // Clinic staff who checked in the student
-                    studentId: visit.studentId,
-                    studentName: student ? student.name : 'Unknown',
-                    relatedRecord: visitId,
-                    isUrgent: false,
-                    createdAt: new Date()
+                    title: `Teacher Decision: ${decision.value}`,
+                    message: `${this.teacher.name} has ${decision.value.toLowerCase()} the clinic visit for ${student.name}. ${teacherNotes ? `Notes: ${teacherNotes}` : ''}`,
+                    target_users: ['clinic'],
+                    created_at: new Date(),
+                    created_by: this.teacher.id,
+                    related_student: student.id,
+                    related_visit: visitId,
+                    priority: decision.value === 'send_home' ? 'high' : 'normal'
                 });
             
             this.showToast('Decision saved successfully', 'success');
@@ -398,11 +389,10 @@ class TeacherClinicDashboard {
 
     async markNotificationAsRead(notificationId) {
         try {
-            await firebase.firestore()
-                .collection('notifications')
+            await EducareTrack.db.collection('notifications')
                 .doc(notificationId)
                 .update({
-                    readBy: firebase.firestore.FieldValue.arrayUnion(this.teacher.id)
+                    read_by: EducareTrack.db.fieldValue.arrayUnion(this.teacher.id)
                 });
         } catch (error) {
             console.error('Error marking notification as read:', error);
