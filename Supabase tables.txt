@@ -11,6 +11,7 @@ CREATE TABLE public.profiles (
   full_name text NOT NULL,
   username text NOT NULL,
   password text NOT NULL,
+  email text NULL,
   phone text,
   photo_url text,
   is_active boolean DEFAULT true,
