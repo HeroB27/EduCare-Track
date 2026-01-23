@@ -31,12 +31,70 @@ class GuardStudentLookup {
     async loadAllStudents() {
         try {
             this.allStudents = await EducareTrack.getStudents(true); // Force refresh
+            
+            // Enhance student data with class information and attendance
+            this.allStudents = await Promise.all(this.allStudents.map(async (student) => {
+                // Get class information to determine grade
+                if (student.class_id || student.classId) {
+                    try {
+                        const classDoc = await window.EducareTrack.db.collection('classes')
+                            .doc(student.class_id || student.classId)
+                            .get();
+                        if (classDoc.exists) {
+                            const classData = classDoc.data();
+                            student.grade = classData.grade;
+                            student.className = classData.name;
+                        }
+                    } catch (error) {
+                        console.warn('Error fetching class info for student:', student.id);
+                    }
+                }
+                
+                // Get last attendance record
+                try {
+                    const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
+                        .where('student_id', '==', student.id)
+                        .orderBy('timestamp', 'desc')
+                        .limit(1)
+                        .get();
+                    
+                    if (!attendanceSnapshot.empty) {
+                        const lastAttendance = attendanceSnapshot.docs[0].data();
+                        student.lastAttendance = lastAttendance.timestamp;
+                        student.currentStatus = lastAttendance.entry_type === 'entry' ? 'in_school' : 'out_school';
+                    }
+                } catch (error) {
+                    console.warn('Error fetching last attendance for student:', student.id);
+                }
+                
+                return student;
+            }));
+            
             this.filteredStudents = [...this.allStudents];
+            this.populateFilters();
             this.updateResultsCount();
         } catch (error) {
             console.error('Error loading students:', error);
             this.showNotification('Failed to load students', 'error');
         }
+    }
+
+    populateFilters() {
+        // Populate grade filter
+        const gradeFilter = document.getElementById('gradeFilter');
+        const grades = [...new Set(this.allStudents.map(s => s.grade || s.level).filter(Boolean))].sort();
+        gradeFilter.innerHTML = '<option value="">All Grades</option>';
+        grades.forEach(grade => {
+            gradeFilter.innerHTML += `<option value="${grade}">${grade}</option>`;
+        });
+
+        // Populate status filter
+        const statusFilter = document.getElementById('statusFilter');
+        const statuses = [...new Set(this.allStudents.map(s => s.current_status || s.currentStatus).filter(Boolean))].sort();
+        statusFilter.innerHTML = '<option value="">All Statuses</option>';
+        statuses.forEach(status => {
+            statusFilter.innerHTML += `<option value="${status}">${status}</option>`;
+        });
     }
 
     initEventListeners() {
@@ -63,17 +121,26 @@ class GuardStudentLookup {
         const statusFilter = document.getElementById('statusFilter').value;
 
         this.filteredStudents = this.allStudents.filter(student => {
+            // Create student name from first_name and last_name or use name field
+            const studentName = student.name || 
+                (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
+                'Unknown';
+            
             // Search term filter
             const matchesSearch = !searchTerm || 
-                student.name.toLowerCase().includes(searchTerm) ||
-                student.id.toLowerCase().includes(searchTerm) ||
-                (student.lrn && student.lrn.includes(searchTerm));
+                studentName.toLowerCase().includes(searchTerm) ||
+                (student.id && student.id.toLowerCase().includes(searchTerm)) ||
+                (student.lrn && student.lrn.toLowerCase().includes(searchTerm));
 
             // Grade filter
-            const matchesGrade = !gradeFilter || student.grade === gradeFilter;
+            const matchesGrade = !gradeFilter || 
+                (student.grade === gradeFilter) || 
+                (student.level === gradeFilter);
 
             // Status filter
-            const matchesStatus = !statusFilter || student.currentStatus === statusFilter;
+            const matchesStatus = !statusFilter || 
+                (student.current_status === statusFilter) || 
+                (student.currentStatus === statusFilter);
 
             return matchesSearch && matchesGrade && matchesStatus;
         });
@@ -106,10 +173,17 @@ class GuardStudentLookup {
     }
 
     renderStudentCard(student) {
-        const statusColor = EducareTrack.getStatusColor(student.currentStatus);
-        const statusText = EducareTrack.getStatusText(student.currentStatus);
+        // Create student name from first_name and last_name or use name field
+        const studentName = student.name || 
+            (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
+            'Unknown';
+            
+        const statusColor = EducareTrack.getStatusColor(student.current_status || student.currentStatus || 'out_school');
+        const statusText = EducareTrack.getStatusText(student.current_status || student.currentStatus || 'out_school');
         const lastAttendance = student.lastAttendance ? 
-            EducareTrack.formatTime(student.lastAttendance) : 'No record';
+            (student.lastAttendance.toDate ? 
+                EducareTrack.formatTime(student.lastAttendance.toDate()) : 
+                EducareTrack.formatTime(student.lastAttendance)) : 'No record';
 
         return `
             <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:border-blue-300 transition duration-200 cursor-pointer student-card"
@@ -117,10 +191,10 @@ class GuardStudentLookup {
                 <div class="flex items-start justify-between mb-3">
                     <div class="flex items-center space-x-3">
                         <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                            <span class="text-blue-600 font-semibold">${student.name.charAt(0).toUpperCase()}</span>
+                            <span class="text-blue-600 font-semibold">${studentName.charAt(0).toUpperCase()}</span>
                         </div>
                         <div>
-                            <h3 class="font-semibold text-gray-900">${student.name}</h3>
+                            <h3 class="font-semibold text-gray-900">${studentName}</h3>
                             <p class="text-sm text-gray-600">${student.id}</p>
                         </div>
                     </div>
@@ -132,11 +206,11 @@ class GuardStudentLookup {
                 <div class="space-y-2 text-sm">
                     <div class="flex justify-between">
                         <span class="text-gray-600">Grade:</span>
-                        <span class="font-medium">${student.grade}</span>
+                        <span class="font-medium">${student.grade || 'N/A'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">Class:</span>
-                        <span class="font-medium">${student.classId || 'Not assigned'}</span>
+                        <span class="font-medium">${student.className || student.classId || student.class_id || 'Not assigned'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">Last Activity:</span>
@@ -185,14 +259,21 @@ class GuardStudentLookup {
     }
 
     async loadStudentDetails(student) {
-        // Load additional data
+        // Load additional data with proper error handling
+        const parentId = student.parent_id || student.parentId;
+        
         const [attendanceHistory, clinicVisits, parentInfo] = await Promise.all([
-            EducareTrack.getAttendanceByStudent(student.id),
-            EducareTrack.getClinicVisitsByStudent(student.id),
-            EducareTrack.getUserById(student.parentId)
+            EducareTrack.getAttendanceByStudent(student.id).catch(() => []),
+            EducareTrack.getClinicVisitsByStudent(student.id).catch(() => []),
+            parentId ? EducareTrack.getUserById(parentId).catch(() => null) : Promise.resolve(null)
         ]);
 
-        document.getElementById('modalStudentName').textContent = student.name;
+        // Create student name from first_name and last_name or use name field
+        const studentName = student.name || 
+            (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
+            'Unknown';
+
+        document.getElementById('modalStudentName').textContent = studentName;
         document.getElementById('studentDetailsContent').innerHTML = this.renderStudentDetails(
             student, attendanceHistory, clinicVisits, parentInfo
         );
@@ -200,8 +281,13 @@ class GuardStudentLookup {
     }
 
     renderStudentDetails(student, attendance, clinicVisits, parent) {
-        const statusColor = EducareTrack.getStatusColor(student.currentStatus);
-        const statusText = EducareTrack.getStatusText(student.currentStatus);
+        // Create student name from first_name and last_name or use name field
+        const studentName = student.name || 
+            (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
+            'Unknown';
+            
+        const statusColor = EducareTrack.getStatusColor(student.current_status || student.currentStatus);
+        const statusText = EducareTrack.getStatusText(student.current_status || student.currentStatus);
 
         return `
             <div class="space-y-6">
@@ -220,11 +306,11 @@ class GuardStudentLookup {
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Grade:</span>
-                                <span class="font-medium">${student.grade}</span>
+                                <span class="font-medium">${student.grade || student.level || 'N/A'}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Class:</span>
-                                <span class="font-medium">${student.classId || 'Not assigned'}</span>
+                                <span class="font-medium">${student.classId || student.class_id || 'Not assigned'}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Current Status:</span>

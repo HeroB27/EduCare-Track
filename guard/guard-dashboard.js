@@ -34,15 +34,13 @@ class GuardDashboard {
 
     async loadDashboardData() {
         try {
-            // Load dashboard stats
-            const stats = await EducareTrack.getDashboardStats();
+            // Load dashboard stats with proper present/late counts
+            const stats = await this.getTodayStats();
             this.dashboardData.stats = stats;
             this.updateStatsDisplay(stats);
 
             // Load recent activity
-            const activity = await EducareTrack.getRecentActivity(10);
-            this.dashboardData.recentActivity = activity;
-            this.updateRecentActivity(activity);
+            await this.loadRecentActivity();
 
             // Load current school status
             await this.loadSchoolStatus();
@@ -55,65 +53,230 @@ class GuardDashboard {
     updateStatsDisplay(stats) {
         document.getElementById('totalStudents').textContent = stats.totalStudents || 0;
         document.getElementById('presentToday').textContent = stats.presentToday || 0;
-        document.getElementById('lateArrivals').textContent = this.dashboardData.recentActivity.filter(
-            activity => activity.status === 'late'
-        ).length;
         document.getElementById('currentlyAbsent').textContent = (stats.totalStudents - stats.presentToday) || 0;
+        document.getElementById('lateArrivals').textContent = stats.lateToday || 0;
     }
 
-    updateRecentActivity(activities) {
-        const container = document.getElementById('recentActivity');
-        
-        if (!activities || activities.length === 0) {
+    async getTodayStats() {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            // Get total students (excluding withdrawn/transferred)
+            const totalStudentsSnapshot = await window.EducareTrack.db.collection('students')
+                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
+                .get();
+            const totalStudents = totalStudentsSnapshot.size;
+            
+            // Get today's attendance entries
+            const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
+                .where('timestamp', '>=', today)
+                .where('entry_type', '==', 'entry')
+                .get();
+            
+            let presentToday = 0;
+            let lateToday = 0;
+            const uniqueStudentIds = new Set();
+            
+            attendanceSnapshot.forEach(doc => {
+                const data = doc.data();
+                const studentId = data.student_id;
+                
+                // Count each student only once per day
+                if (!uniqueStudentIds.has(studentId)) {
+                    uniqueStudentIds.add(studentId);
+                    
+                    if (data.status === 'present' || data.status === 'ontime') {
+                        presentToday++;
+                    } else if (data.status === 'late') {
+                        presentToday++; // Late students are still present
+                        lateToday++;
+                    }
+                }
+            });
+            
+            return {
+                totalStudents,
+                presentToday,
+                lateToday
+            };
+        } catch (error) {
+            console.error('Error getting today stats:', error);
+            return {
+                totalStudents: 0,
+                presentToday: 0,
+                lateToday: 0
+            };
+        }
+    }
+
+    async loadRecentActivity() {
+        try {
+            const container = document.getElementById('recentActivity');
+            container.innerHTML = ''; // Clear existing content
+            
+            const snapshot = await window.EducareTrack.db.collection('attendance')
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .get();
+            
+            const docs = snapshot.docs;
+            // Process in reverse order to show newest first
+            for (let i = docs.length - 1; i >= 0; i--) {
+                const doc = docs[i];
+                const data = doc.data();
+                let studentName = data.student_name || data.studentName;
+                
+                // If no student name in attendance record, fetch from student collection
+                if (!studentName && data.student_id) {
+                    try {
+                        const studentDoc = await window.EducareTrack.db.collection('students').doc(data.student_id).get();
+                        if (studentDoc.exists) {
+                            const studentData = studentDoc.data();
+                            studentName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim() || 'Unknown Student';
+                        }
+                    } catch (error) {
+                        console.error('Error fetching student name:', error);
+                        studentName = 'Unknown Student';
+                    }
+                }
+                
+                this.addRecentActivityItem({
+                    studentName: studentName || 'Unknown Student',
+                    time: data.time,
+                    entryType: data.entry_type || data.entryType || 'Unknown',
+                    status: data.status || 'unknown'
+                });
+            }
+        } catch (error) {
+            console.error('Error loading recent activity:', error);
+            const container = document.getElementById('recentActivity');
             container.innerHTML = `
                 <div class="text-center py-8 text-gray-500">
                     <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                     </svg>
-                    <p>No recent activity found</p>
+                    <p>Error loading recent activity</p>
                 </div>
             `;
-            return;
         }
+    }
 
-        container.innerHTML = activities.map(activity => {
-            const time = EducareTrack.formatTime(activity.timestamp);
-            const statusColor = EducareTrack.getStatusColor(activity.status);
-            const statusText = EducareTrack.getStatusText(activity.status);
-            
-            return `
-                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                            <span class="text-blue-600 font-semibold text-sm">${activity.studentName ? activity.studentName.charAt(0).toUpperCase() : 'S'}</span>
-                        </div>
-                        <div>
-                            <h4 class="text-sm font-medium text-gray-900">${activity.studentName || 'Unknown Student'}</h4>
-                            <p class="text-xs text-gray-600">${time} • ${activity.entryType === 'entry' ? 'Arrived' : 'Departed'}</p>
-                        </div>
-                    </div>
-                    <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
-                        ${statusText}
-                    </span>
-                </div>
-            `;
-        }).join('');
+    addRecentActivityItem(scanData) {
+        const recentActivityDiv = document.getElementById('recentActivity');
+        const statusColor = this.getStatusColor(scanData.status);
+        
+        const scanElement = document.createElement('div');
+        scanElement.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg';
+        scanElement.innerHTML = `
+            <div>
+                <h4 class="text-sm font-medium text-gray-900">${scanData.studentName}</h4>
+                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType}</p>
+            </div>
+            <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
+                ${this.getStatusText(scanData.status)}
+            </span>
+        `;
+        
+        if (recentActivityDiv.firstChild) {
+            recentActivityDiv.insertBefore(scanElement, recentActivityDiv.firstChild);
+        } else {
+            recentActivityDiv.appendChild(scanElement);
+        }
+        
+        if (recentActivityDiv.children.length > 10) {
+            recentActivityDiv.removeChild(recentActivityDiv.lastChild);
+        }
+    }
+
+    getStatusColor(status) {
+        const colors = {
+            'present': 'bg-green-100 text-green-800',
+            'late': 'bg-yellow-100 text-yellow-800',
+            'absent': 'bg-red-100 text-red-800',
+            'excused': 'bg-blue-100 text-blue-800',
+            'half_day': 'bg-orange-100 text-orange-800',
+            'unknown': 'bg-gray-100 text-gray-800'
+        };
+        return colors[status] || colors.unknown;
+    }
+
+    getStatusText(status) {
+        const texts = {
+            'present': 'Present',
+            'late': 'Late',
+            'absent': 'Absent',
+            'excused': 'Excused',
+            'half_day': 'Half Day',
+            'unknown': 'Unknown'
+        };
+        return texts[status] || texts.unknown;
     }
 
     async loadSchoolStatus() {
         try {
-            const students = await EducareTrack.getStudents();
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            // Get all active students (excluding withdrawn/transferred)
+            const studentsSnapshot = await window.EducareTrack.db.collection('students')
+                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
+                .get();
+            const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Get today's attendance records
+            const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
+                .where('timestamp', '>=', today)
+                .get();
+            
+            // Get today's clinic visits
+            const clinicSnapshot = await window.EducareTrack.db.collection('clinicVisits')
+                .where('timestamp', '>=', today)
+                .where('check_in', '==', true)
+                .get();
             
             const statusCounts = {
                 in_school: 0,
                 out_school: 0,
                 in_clinic: 0
             };
-
-            students.forEach(student => {
-                statusCounts[student.currentStatus] = (statusCounts[student.currentStatus] || 0) + 1;
+            
+            // Track each student's latest status today
+            const studentStatuses = new Map();
+            
+            // Process attendance records to determine in/out status
+            attendanceSnapshot.forEach(doc => {
+                const data = doc.data();
+                const studentId = data.student_id;
+                const timestamp = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+                
+                if (!studentStatuses.has(studentId) || timestamp > studentStatuses.get(studentId).timestamp) {
+                    studentStatuses.set(studentId, {
+                        status: data.entry_type === 'entry' ? 'in_school' : 'out_school',
+                        timestamp: timestamp
+                    });
+                }
             });
-
+            
+            // Process clinic visits (clinic visits override attendance status)
+            clinicSnapshot.forEach(doc => {
+                const data = doc.data();
+                const studentId = data.student_id;
+                const timestamp = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+                
+                // If student is in clinic, mark them as such
+                studentStatuses.set(studentId, {
+                    status: 'in_clinic',
+                    timestamp: timestamp
+                });
+            });
+            
+            // Count statuses for all active students
+            allStudents.forEach(student => {
+                const status = studentStatuses.get(student.id)?.status || 'out_school'; // Default to out if no record today
+                statusCounts[status] = (statusCounts[status] || 0) + 1;
+            });
+            
             this.dashboardData.schoolStatus = statusCounts;
             this.updateSchoolStatusDisplay(statusCounts);
         } catch (error) {
@@ -166,7 +329,7 @@ class GuardDashboard {
         try {
             const students = await EducareTrack.getStudents();
             const filteredStudents = students.filter(student => 
-                student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                `${student.first_name || ''} ${student.last_name || ''}`.trim().toLowerCase().includes(searchTerm.toLowerCase()) ||
                 student.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (student.lrn && student.lrn.includes(searchTerm))
             ).slice(0, 5); // Limit to 5 results
@@ -189,8 +352,8 @@ class GuardDashboard {
         resultsContainer.innerHTML = students.map(student => `
             <div class="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-200 student-result" 
                  data-student-id="${student.id}">
-                <div class="font-medium">${student.name}</div>
-                <div class="text-sm text-gray-600">${student.id} • ${student.grade}</div>
+                <div class="font-medium">${`${(student.first_name || '')} ${(student.last_name || '')}`.trim()}</div>
+                <div class="text-sm text-gray-600">${student.id}${student.classId ? ` • ${student.classId}` : ''}</div>
                 <div class="text-xs text-gray-500">${student.classId || 'No class assigned'}</div>
             </div>
         `).join('');
@@ -210,7 +373,7 @@ class GuardDashboard {
         const student = studentList.find(s => s.id === studentId);
         if (!student) return;
 
-        document.getElementById('studentSearch').value = `${student.name} (${student.id})`;
+        document.getElementById('studentSearch').value = `${(student.first_name || '' + ' ' + student.last_name || '').trim()} (${student.id})`;
         document.getElementById('studentResults').classList.add('hidden');
         
         // Store selected student for submission
@@ -232,10 +395,10 @@ class GuardDashboard {
             const [hours, minutes] = timeValue.split(':');
             now.setHours(parseInt(hours), parseInt(minutes), 0, 0);
 
-            // Use core.js to record attendance
-            await EducareTrack.recordGuardAttendance(this.selectedStudent.id, this.selectedStudent, entryType);
+            // Use core.js to record attendance with custom time
+            await EducareTrack.recordGuardAttendance(this.selectedStudent.id, this.selectedStudent, entryType, now);
             
-            this.showNotification(`${this.selectedStudent.name} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
+            this.showNotification(`${`${(this.selectedStudent.first_name || '')} ${(this.selectedStudent.last_name || '')}`.trim()} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
             this.closeManualEntry();
             
             // Reload dashboard data
@@ -269,21 +432,64 @@ class GuardDashboard {
             .onSnapshot(snapshot => {
                 snapshot.docChanges().forEach(change => {
                     if (change.type === 'added') {
-                        this.loadDashboardData(); // Refresh data
+                        // Only update stats and add single new item instead of reloading everything
+                        this.updateTodayStats();
+                        this.addNewAttendanceItem(change.doc.data());
                     }
                 });
             });
 
-        // Listen for student status changes
+        // Listen for student status changes (excluding withdrawn/transferred students)
         this.unsubscribeStudents = EducareTrack.db.collection('students')
-            .where('isActive', '==', true)
+            .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
             .onSnapshot(snapshot => {
                 snapshot.docChanges().forEach(change => {
                     if (change.type === 'modified') {
                         this.loadSchoolStatus(); // Refresh status counts
                     }
+                    if (change.type === 'added' || change.type === 'removed') {
+                        this.updateTodayStats(); // Only update stats, don't reload recent activity
+                    }
                 });
             });
+    }
+
+    async updateTodayStats() {
+        try {
+            const stats = await this.getTodayStats();
+            this.updateStatsDisplay(stats);
+        } catch (error) {
+            console.error('Error updating today stats:', error);
+        }
+    }
+
+    async addNewAttendanceItem(attendanceData) {
+        try {
+            let studentName = attendanceData.student_name || attendanceData.studentName;
+            
+            // If no student name in attendance record, fetch from student collection
+            if (!studentName && attendanceData.student_id) {
+                try {
+                    const studentDoc = await window.EducareTrack.db.collection('students').doc(attendanceData.student_id).get();
+                    if (studentDoc.exists) {
+                        const studentData = studentDoc.data();
+                        studentName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim() || 'Unknown Student';
+                    }
+                } catch (error) {
+                    console.error('Error fetching student name:', error);
+                    studentName = 'Unknown Student';
+                }
+            }
+            
+            this.addRecentActivityItem({
+                studentName: studentName || 'Unknown Student',
+                time: attendanceData.time,
+                entryType: attendanceData.entry_type || attendanceData.entryType || 'Unknown',
+                status: attendanceData.status || 'unknown'
+            });
+        } catch (error) {
+            console.error('Error adding new attendance item:', error);
+        }
     }
 
     showNotification(message, type = 'info') {
@@ -441,6 +647,12 @@ function demoTestMorningRush() {
 
 function demoTestLateArrivals() {
     if (window.guardDashboard) window.guardDashboard.demoTestLateArrivals();
+}
+
+function loadRecentActivity() {
+    if (window.guardDashboard) {
+        window.guardDashboard.loadRecentActivity();
+    }
 }
 
 function demoTestLunchExits() {
