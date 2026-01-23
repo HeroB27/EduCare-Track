@@ -2242,7 +2242,7 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,read_by,target_users,is_active,created_at,title,message,type')
+                    .select('id,readBy,target_users,is_active,created_at,title,message,type')
                     .contains('target_users', [userId])
                     .eq('is_active', true);
                 if (error || !data) return 0;
@@ -2327,7 +2327,7 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('type', type)
                     .eq('is_active', true)

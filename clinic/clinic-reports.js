@@ -43,13 +43,17 @@ class ClinicReports {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('clinicVisits')
-                    .select('id,studentId,classId,checkIn,timestamp,reason,notes')
+                    .select('id,student_id,student_name,class_id,check_in,timestamp,reason,notes,treated_by,outcome')
                     .order('timestamp', { ascending: false });
                 if (error) {
                     throw error;
                 }
                 this.visits = (data || []).map(v => ({
                     id: v.id,
+                    studentId: v.student_id,
+                    studentName: v.student_name,
+                    classId: v.class_id,
+                    checkIn: v.check_in,
                     ...v,
                     timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
                 }));

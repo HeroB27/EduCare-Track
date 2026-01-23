@@ -138,7 +138,7 @@ class ClinicCheckin {
                 });
             this.studentsListener = firebase.firestore()
                 .collection('students')
-                .where('currentStatus', '==', 'in_clinic')
+                .where('current_status', '==', 'in_clinic')
                 .onSnapshot(snapshot => {
                     this.loadCurrentPatients();
                     this.loadStatistics();
@@ -272,33 +272,68 @@ class ClinicCheckin {
             this.updateScannerStatus('Processing QR code...');
             
             let studentId = scanKey;
-            let studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
-            
-            if (!studentDoc.exists) {
-                const q = await firebase.firestore().collection('students')
-                    .where('studentId', '==', studentId)
-                    .limit(1)
-                    .get();
-                if (q.empty) {
-                    this.showScanResult('error', 'Invalid QR Code', 'Student not found in database.');
-                    return;
+            let studentDoc;
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data: student, error } = await window.supabaseClient
+                    .from('students')
+                    .select('id,first_name,last_name,current_status')
+                    .eq('id', studentId)
+                    .single();
+                if (error || !student) {
+                    const { data: students, error: listError } = await window.supabaseClient
+                        .from('students')
+                        .select('id,first_name,last_name,current_status')
+                        .eq('lrn', studentId)
+                        .limit(1);
+                    if (listError || !students || students.length === 0) {
+                        this.showScanResult('error', 'Invalid QR Code', 'Student not found in database.');
+                        return;
+                    }
+                    studentDoc = students[0];
+                    studentId = studentDoc.id;
+                } else {
+                    studentDoc = student;
                 }
-                studentDoc = q.docs[0];
-                studentId = studentDoc.id;
+            } else {
+                studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
+                if (!studentDoc.exists) {
+                    const q = await firebase.firestore().collection('students')
+                        .where('studentId', '==', studentId)
+                        .limit(1)
+                        .get();
+                    if (q.empty) {
+                        this.showScanResult('error', 'Invalid QR Code', 'Student not found in database.');
+                        return;
+                    }
+                    studentDoc = q.docs[0];
+                    studentId = studentDoc.id;
+                }
             }
             
-            const student = studentDoc.data();
+            const student = studentDoc;
             
             // Check if student is already in clinic for check-in
             if (this.currentMode === 'checkin') {
-                if (student.currentStatus === 'in_clinic') {
-                    this.showScanResult('warning', 'Already in Clinic', `${student.name} is already checked into the clinic.`);
+                const studentStatus = window.USE_SUPABASE && window.supabaseClient 
+                    ? student.current_status 
+                    : student.currentStatus;
+                if (studentStatus === 'in_clinic') {
+                    const studentName = window.USE_SUPABASE && window.supabaseClient
+                        ? `${student.first_name || ''} ${student.last_name || ''}`.trim()
+                        : student.name;
+                    this.showScanResult('warning', 'Already in Clinic', `${studentName} is already checked into the clinic.`);
                     return;
                 }
             } else {
                 // Check-out mode
-                if (student.currentStatus !== 'in_clinic') {
-                    this.showScanResult('warning', 'Not in Clinic', `${student.name} is not currently in the clinic.`);
+                const studentStatus = window.USE_SUPABASE && window.supabaseClient 
+                    ? student.current_status 
+                    : student.currentStatus;
+                if (studentStatus !== 'in_clinic') {
+                    const studentName = window.USE_SUPABASE && window.supabaseClient
+                        ? `${student.first_name || ''} ${student.last_name || ''}`.trim()
+                        : student.name;
+                    this.showScanResult('warning', 'Not in Clinic', `${studentName} is not currently in the clinic.`);
                     return;
                 }
             }
@@ -325,14 +360,24 @@ class ClinicCheckin {
         if (!this.pendingStudent) return;
         
         // Populate student info
+        const studentName = window.USE_SUPABASE && window.supabaseClient
+            ? `${this.pendingStudent.first_name || ''} ${this.pendingStudent.last_name || ''}`.trim()
+            : this.pendingStudent.name;
+        const studentGrade = window.USE_SUPABASE && window.supabaseClient
+            ? (this.pendingStudent.grade || '')
+            : (this.pendingStudent.grade || '');
+        const studentClassId = window.USE_SUPABASE && window.supabaseClient
+            ? (this.pendingStudent.class_id || 'No class')
+            : (this.pendingStudent.classId || 'No class');
+            
         document.getElementById('modalStudentInfo').innerHTML = `
             <div class="flex items-center">
                 <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                    <span class="text-blue-600 font-semibold">${this.pendingStudent.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                    <span class="text-blue-600 font-semibold">${studentName.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
                 </div>
                 <div>
-                    <h4 class="font-semibold">${this.pendingStudent.name}</h4>
-                    <p class="text-sm text-gray-600">${this.pendingStudent.grade} • ${this.pendingStudent.classId || 'No class'}</p>
+                    <h4 class="font-semibold">${studentName}</h4>
+                    <p class="text-sm text-gray-600">${studentGrade} • ${studentClassId}</p>
                 </div>
             </div>
         `;
@@ -589,10 +634,10 @@ class ClinicCheckin {
                 if (window.USE_SUPABASE && window.supabaseClient) {
                     const { data: s, error } = await window.supabaseClient
                         .from('students')
-                        .select('id,currentStatus')
+                        .select('id,current_status')
                         .eq('id', this.selectedStudent.id)
                         .single();
-                    if (!error && s && s.currentStatus === 'in_clinic') {
+                    if (!error && s && s.current_status === 'in_clinic') {
                         this.showNotification('Student is already in clinic', 'warning');
                         return;
                     }
@@ -645,21 +690,21 @@ class ClinicCheckin {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data: student, error: sErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
+                    .select('id,first_name,last_name,class_id,parent_id')
                     .eq('id', studentId)
                     .single();
                 if (sErr || !student) throw new Error('Student not found');
                 const timestamp = new Date();
                 const timeStr = timestamp.toTimeString().split(' ')[0].substring(0, 5);
                 const insertData = {
-                    studentId: studentId,
-                    studentName: [student.firstName, student.lastName].filter(Boolean).join(' '),
-                    classId: student.classId || '',
+                    student_id: studentId,
+                    student_name: [student.first_name, student.last_name].filter(Boolean).join(' '),
+                    class_id: student.class_id || '',
                     reason: reason,
-                    checkIn: !!checkIn,
+                    check_in: !!checkIn,
                     timestamp: timestamp,
                     notes: notes || '',
-                    treatedBy: this.currentUser.name || this.currentUser.id,
+                    treated_by: this.currentUser.name || this.currentUser.id,
                     outcome: medicalData.recommendations || medicalData.treatmentGiven || ''
                 };
                 const { data: inserted, error } = await window.supabaseClient
@@ -669,9 +714,9 @@ class ClinicCheckin {
                     .single();
                 if (error) throw error;
                 const newStatus = checkIn ? 'in_clinic' : 'in_school';
-                await window.supabaseClient.from('students').update({ currentStatus: newStatus }).eq('id', studentId);
+                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
                 await this.sendEnhancedClinicNotifications(
-                    { id: studentId, parentId: student.parentId, classId: student.classId, name: insertData.studentName },
+                    { id: studentId, parentId: student.parent_id, classId: student.class_id, name: insertData.student_name },
                     checkIn,
                     reason,
                     notes,
@@ -937,13 +982,13 @@ class ClinicCheckin {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,classId,currentStatus')
-                    .eq('currentStatus', 'in_clinic');
+                    .select('id,first_name,last_name,class_id,current_status')
+                    .eq('current_status', 'in_clinic');
                 if (error) throw error;
                 this.currentPatients = (data || []).map(s => ({
                     id: s.id,
-                    name: [s.firstName, s.lastName].filter(Boolean).join(' ').trim(),
-                    classId: s.classId || '',
+                    name: [s.first_name, s.last_name].filter(Boolean).join(' ').trim(),
+                    classId: s.class_id || '',
                     grade: ''
                 }));
             } else {
@@ -964,20 +1009,20 @@ class ClinicCheckin {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('clinicVisits')
-                    .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
+                    .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
                     .order('timestamp', { ascending: false })
                     .limit(10);
                 if (error) throw error;
                 this.recentVisits = (data || []).map(v => ({
                     id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.classId,
-                    checkIn: !!v.checkIn,
+                    studentId: v.student_id,
+                    studentName: v.student_name,
+                    classId: v.class_id,
+                    checkIn: !!v.check_in,
                     timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
                     reason: v.reason || '',
                     notes: v.notes || '',
-                    staffName: v.treatedBy || '',
+                    staffName: v.treated_by || '',
                     medicalFindings: '',
                     recommendations: v.outcome || ''
                 }));
@@ -1022,7 +1067,7 @@ class ClinicCheckin {
                     .from('clinicVisits')
                     .select('id', { count: 'exact', head: true })
                     .gte('timestamp', today.toISOString())
-                    .eq('checkIn', true)
+                    .eq('check_in', true)
                     .in('outcome', ['fetch_child', 'immediate_pickup', 'medical_attention']);
                 this.urgentCases = urgentCount || 0;
                 document.getElementById('urgentCases').textContent = this.urgentCases;
@@ -1037,8 +1082,8 @@ class ClinicCheckin {
                 const urgentSnapshot = await firebase.firestore()
                     .collection('clinicVisits')
                     .where('timestamp', '>=', today)
-                    .where('checkIn', '==', true)
-                    .where('recommendations', 'in', ['fetch_child', 'immediate_pickup', 'medical_attention'])
+                    .where('check_in', '==', true)
+                    .where('outcome', 'in', ['fetch_child', 'immediate_pickup', 'medical_attention'])
                     .get();
                 this.urgentCases = urgentSnapshot.size;
                 document.getElementById('urgentCases').textContent = this.urgentCases;

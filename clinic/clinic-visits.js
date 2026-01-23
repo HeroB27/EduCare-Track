@@ -49,19 +49,19 @@ class ClinicVisits {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('clinicVisits')
-                    .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
+                    .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
                     .order('timestamp', { ascending: false });
                 if (error) throw error;
                 this.visits = (data || []).map(v => ({
                     id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.classId,
+                    studentId: v.student_id,
+                    studentName: v.student_name,
+                    classId: v.class_id,
                     reason: v.reason || '',
-                    checkIn: !!v.checkIn,
+                    checkIn: !!v.check_in,
                     timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
                     notes: v.notes || '',
-                    staffName: v.treatedBy || '',
+                    staffName: v.treated_by || '',
                     recommendations: v.outcome || ''
                 }));
                 this.applyFilters();
@@ -368,13 +368,26 @@ class ClinicVisits {
                     return;
                 }
                 try {
-                    await firebase.firestore().collection('clinicVisits').doc(visitId).update({
-                        reason: newReason,
-                        notes: newNotes,
-                        updatedAt: new Date().toISOString(),
-                        updatedBy: this.currentUser.id,
-                        updatedByName: this.currentUser.name
-                    });
+                    if (window.USE_SUPABASE && window.supabaseClient) {
+                        const { error } = await window.supabaseClient
+                            .from('clinicVisits')
+                            .update({
+                                reason: newReason,
+                                notes: newNotes,
+                                updated_at: new Date().toISOString(),
+                                updated_by: this.currentUser.id
+                            })
+                            .eq('id', visitId);
+                        if (error) throw error;
+                    } else {
+                        await firebase.firestore().collection('clinicVisits').doc(visitId).update({
+                            reason: newReason,
+                            notes: newNotes,
+                            updatedAt: new Date().toISOString(),
+                            updatedBy: this.currentUser.id,
+                            updatedByName: this.currentUser.name
+                        });
+                    }
                     visit.reason = newReason;
                     visit.notes = newNotes;
                     this.applyFilters();

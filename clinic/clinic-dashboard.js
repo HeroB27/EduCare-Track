@@ -48,31 +48,35 @@ class ClinicDashboard {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const [{ data: visits, error: vErr }, { data: patients, error: pErr }, statsSnapshot] = await Promise.all([
                     window.supabaseClient.from('clinicVisits')
-                        .select('id,studentId,studentName,classId,checkIn,timestamp,reason,notes')
+                        .select('id,student_id,student_name,class_id,check_in,timestamp,reason,notes')
                         .gte('timestamp', today.toISOString())
                         .lt('timestamp', tomorrow.toISOString())
                         .order('timestamp', { ascending: false })
                         .limit(10),
                     window.supabaseClient.from('students')
-                        .select('id,firstName,lastName,classId,currentStatus,parentId')
-                        .eq('currentStatus', 'in_clinic'),
+                        .select('id,first_name,last_name,class_id,current_status,parent_id')
+                        .eq('current_status', 'in_clinic'),
                     this.getClinicStats()
                 ]);
                 if (vErr) throw vErr;
                 if (pErr) throw pErr;
                 this.recentVisits = (visits || []).map(v => ({
                     id: v.id,
+                    studentId: v.student_id,
+                    studentName: v.student_name,
+                    classId: v.class_id,
+                    checkIn: v.check_in,
                     ...v,
                     timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
                 }));
                 this.currentPatients = (patients || []).map(s => ({
                     id: s.id,
-                    firstName: s.firstName,
-                    lastName: s.lastName,
-                    name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                    classId: s.classId,
-                    currentStatus: s.currentStatus,
-                    parentId: s.parentId,
+                    firstName: s.first_name,
+                    lastName: s.last_name,
+                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
+                    classId: s.class_id,
+                    currentStatus: s.current_status,
+                    parentId: s.parent_id,
                     grade: s.grade || ''
                 }));
                 this.stats = statsSnapshot;
@@ -86,7 +90,7 @@ class ClinicDashboard {
                         .get(),
                     
                     firebase.firestore().collection('students')
-                        .where('currentStatus', '==', 'in_clinic')
+                        .where('current_status', '==', 'in_clinic')
                         .get(),
                     
                     this.getClinicStats()
@@ -126,7 +130,7 @@ class ClinicDashboard {
                         .lt('timestamp', tomorrow.toISOString()),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact' })
-                        .eq('currentStatus', 'in_clinic'),
+                        .eq('current_status', 'in_clinic'),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact', head: true })
                 ]);
