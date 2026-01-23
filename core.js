@@ -3064,28 +3064,35 @@ const EducareTrack = {
     },
 
     // Enhanced guard attendance recording
-    async recordGuardAttendance(studentId, student, entry_type) {
+    async recordGuardAttendance(studentId, student, entry_type, customTimestamp = null) {
         try {
-            const timestamp = new Date();
+            const timestamp = customTimestamp || new Date();
             const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
             const session = this.getCurrentSession();
             
             // Use existing attendance logic for status calculation
-            const isLate = entry_type === 'entry' && this.isLate(timeString);
-            const status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
+            let status;
+            if (entry_type === 'entry') {
+                const isLate = this.isLate(timeString);
+                status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
+            } else {
+                // For exit entries, use present status (they were present and now leaving)
+                status = this.ATTENDANCE_STATUS.PRESENT;
+            }
 
             const attendanceData = {
-                studentId: studentId,
-                studentName: student.name,
-                classId: student.class_id || '',
+                student_id: studentId,
+                class_id: student.class_id || '',
                 entry_type: entry_type,
-                timestamp: SupabaseFieldValue.serverTimestamp(),
+                timestamp: timestamp,
                 time: timeString,
                 session: session,
                 status: status,
-                recordedBy: this.currentUser.id,
-                recordedByName: this.currentUser.name,
-                manualEntry: false
+                remarks: '', // Empty remarks for manual entry
+                method: 'manual',
+                recorded_by: this.currentUser.id,
+                recorded_by_name: this.currentUser.name,
+                manual_entry: true
             };
 
             const attendanceRef = await this.db.collection('attendance').add(attendanceData);
@@ -3100,19 +3107,16 @@ const EducareTrack = {
             await this.createNotification({
                 type: this.NOTIFICATION_TYPES.ATTENDANCE,
                 title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
-                message: `${student.name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                target_users: [student.parent_id, ...teacherIds].filter(Boolean),
-                studentId: studentId,
-                studentName: student.name,
-                relatedRecord: attendanceRef.id
+                message: `${student.first_name || ''} ${student.last_name || ''}`.trim() + ` has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
+                target_users: [student.parent_id, ...teacherIds].filter(Boolean)
             });
 
-            console.log(`Guard attendance recorded: ${student.name} - ${entry_type} at ${timeString}`);
-
-            // Sync with reports system
-            await this.syncAttendanceToReports();
-
-            return attendanceRef.id;
+            return {
+                success: true,
+                attendanceId: attendanceRef.id,
+                status: status,
+                time: timeString
+            };
         } catch (error) {
             console.error('Error recording guard attendance:', error);
             throw error;

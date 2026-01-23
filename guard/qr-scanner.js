@@ -856,7 +856,10 @@ class QRScanner {
                 .limit(10)
                 .get();
             
-            for (const doc of snapshot.docs) {
+            const docs = snapshot.docs;
+            // Process in reverse order to show newest first
+            for (let i = docs.length - 1; i >= 0; i--) {
+                const doc = docs[i];
                 const data = doc.data();
                 let studentName = data.student_name || data.studentName;
                 
@@ -921,6 +924,7 @@ class QRScanner {
             'present': 'status-present',
             'absent': 'status-absent',
             'late': 'status-late',
+            'excused': 'status-excused',
             'in_clinic': 'status-clinic',
             'in_school': 'status-present',
             'out_school': 'status-absent',
@@ -937,6 +941,7 @@ class QRScanner {
             'present': 'Present',
             'absent': 'Absent',
             'late': 'Late',
+            'excused': 'Excused',
             'in_clinic': 'In Clinic',
             'in_school': 'Present',
             'out_school': 'Absent',
