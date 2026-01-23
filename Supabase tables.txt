@@ -9,6 +9,8 @@ CREATE TABLE public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   role text NOT NULL CHECK (role IN ('admin','teacher','parent','guard','clinic')),
   full_name text NOT NULL,
+  username text NOT NULL,
+  password text NOT NULL,
   phone text,
   photo_url text,
   is_active boolean DEFAULT true,
