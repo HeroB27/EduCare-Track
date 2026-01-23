@@ -2278,7 +2278,7 @@ const EducareTrack = {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('is_active', true)
                     .order('created_at', { ascending: false })
@@ -2369,7 +2369,7 @@ const EducareTrack = {
                 // Supabase notifications table does not have isUrgent column; return latest notifications
                 const { data, error } = await window.supabaseClient
                     .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
+                    .select('id,target_users,title,message,type,is_active,created_at,readBy')
                     .contains('target_users', [userId])
                     .eq('is_active', true)
                     .order('created_at', { ascending: false })

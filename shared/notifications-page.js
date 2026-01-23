@@ -5,8 +5,49 @@ document.addEventListener('DOMContentLoaded', async function() {
   const filterUnread = document.getElementById('filterUnread');
   const filterUrgent = document.getElementById('filterUrgent');
   const markAllRead = document.getElementById('markAllReadPage');
+  const homeButton = document.getElementById('homeButton');
 
   let currentFilter = 'all';
+
+  // Set up dynamic home button redirect
+  const setupHomeButton = () => {
+    if (!homeButton || !window.EducareTrack || !EducareTrack.currentUser) return;
+    
+    const userRole = EducareTrack.currentUser.role;
+    let redirectUrl = 'index.html'; // default fallback
+    
+    switch(userRole) {
+      case 'admin':
+        redirectUrl = 'admin/admin-dashboard.html';
+        break;
+      case 'teacher':
+        redirectUrl = 'teacher/teacher-dashboard.html';
+        break;
+      case 'clinic':
+        redirectUrl = 'clinic/clinic-dashboard.html';
+        break;
+      case 'guard':
+        redirectUrl = 'guard/guard-dashboard.html';
+        break;
+      case 'parent':
+        redirectUrl = 'parent/parent-dashboard.html';
+        break;
+      default:
+        redirectUrl = 'index.html';
+    }
+    
+    homeButton.href = redirectUrl;
+  };
+
+  // Check for user and setup home button
+  const checkUserAndSetup = () => {
+    if (window.EducareTrack && EducareTrack.currentUser) {
+      setupHomeButton();
+    } else {
+      // Wait a bit for user to be loaded
+      setTimeout(checkUserAndSetup, 100);
+    }
+  };
 
   const load = async () => {
     try {
@@ -78,4 +119,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   });
 
   await load();
+  
+  // Setup home button redirect after page loads
+  checkUserAndSetup();
 });
