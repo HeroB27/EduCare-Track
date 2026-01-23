@@ -130,8 +130,8 @@ class GuardReports {
             }
         });
 
-        // Get total number of students for attendance rate calculation
-        const totalStudents = await EducareTrack.getCollectionCount('students', [['isActive', '==', true]]);
+        // Get total number of enrolled students (excluding withdrawn/transferred)
+        const totalStudents = await EducareTrack.getCollectionCount('students', [['current_status', 'not-in', ['withdrawn', 'transferred', 'graduated']]]);
         
         // Fill missing dates in range
         const filled = {};

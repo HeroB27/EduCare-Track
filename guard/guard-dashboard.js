@@ -61,6 +61,25 @@ class GuardDashboard {
         document.getElementById('currentlyAbsent').textContent = (stats.totalStudents - stats.presentToday) || 0;
     }
 
+    async loadRecentActivity() {
+        try {
+            const activity = await EducareTrack.getRecentActivity(10);
+            this.dashboardData.recentActivity = activity;
+            this.updateRecentActivity(activity);
+        } catch (error) {
+            console.error('Error loading recent activity:', error);
+            const container = document.getElementById('recentActivity');
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <p>Error loading recent activity</p>
+                </div>
+            `;
+        }
+    }
+
     updateRecentActivity(activities) {
         const container = document.getElementById('recentActivity');
         
@@ -82,15 +101,10 @@ class GuardDashboard {
             const statusText = EducareTrack.getStatusText(activity.status);
             
             return `
-                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                            <span class="text-blue-600 font-semibold text-sm">${activity.studentName ? activity.studentName.charAt(0).toUpperCase() : 'S'}</span>
-                        </div>
-                        <div>
-                            <h4 class="text-sm font-medium text-gray-900">${activity.studentName || 'Unknown Student'}</h4>
-                            <p class="text-xs text-gray-600">${time} • ${activity.entryType === 'entry' ? 'Arrived' : 'Departed'}</p>
-                        </div>
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-900">${activity.studentName || 'Unknown Student'}</h4>
+                        <p class="text-xs text-gray-600">${time} • ${activity.entryType === 'entry' ? 'Arrived' : 'Departed'}</p>
                     </div>
                     <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
                         ${statusText}
@@ -166,7 +180,7 @@ class GuardDashboard {
         try {
             const students = await EducareTrack.getStudents();
             const filteredStudents = students.filter(student => 
-                student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                `${student.first_name || ''} ${student.last_name || ''}`.trim().toLowerCase().includes(searchTerm.toLowerCase()) ||
                 student.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (student.lrn && student.lrn.includes(searchTerm))
             ).slice(0, 5); // Limit to 5 results
@@ -189,8 +203,8 @@ class GuardDashboard {
         resultsContainer.innerHTML = students.map(student => `
             <div class="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-200 student-result" 
                  data-student-id="${student.id}">
-                <div class="font-medium">${student.name}</div>
-                <div class="text-sm text-gray-600">${student.id} • ${student.grade}</div>
+                <div class="font-medium">${(student.first_name || '' + ' ' + student.last_name || '').trim()}</div>
+                <div class="text-sm text-gray-600">${student.id}${student.classId ? ` • ${student.classId}` : ''}</div>
                 <div class="text-xs text-gray-500">${student.classId || 'No class assigned'}</div>
             </div>
         `).join('');
@@ -210,7 +224,7 @@ class GuardDashboard {
         const student = studentList.find(s => s.id === studentId);
         if (!student) return;
 
-        document.getElementById('studentSearch').value = `${student.name} (${student.id})`;
+        document.getElementById('studentSearch').value = `${(student.first_name || '' + ' ' + student.last_name || '').trim()} (${student.id})`;
         document.getElementById('studentResults').classList.add('hidden');
         
         // Store selected student for submission
@@ -235,7 +249,7 @@ class GuardDashboard {
             // Use core.js to record attendance
             await EducareTrack.recordGuardAttendance(this.selectedStudent.id, this.selectedStudent, entryType);
             
-            this.showNotification(`${this.selectedStudent.name} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
+            this.showNotification(`${(this.selectedStudent.first_name || '' + ' ' + this.selectedStudent.last_name || '').trim()} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
             this.closeManualEntry();
             
             // Reload dashboard data
@@ -274,9 +288,9 @@ class GuardDashboard {
                 });
             });
 
-        // Listen for student status changes
+        // Listen for student status changes (excluding withdrawn/transferred students)
         this.unsubscribeStudents = EducareTrack.db.collection('students')
-            .where('isActive', '==', true)
+            .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
             .onSnapshot(snapshot => {
                 snapshot.docChanges().forEach(change => {
                     if (change.type === 'modified') {
@@ -441,6 +455,12 @@ function demoTestMorningRush() {
 
 function demoTestLateArrivals() {
     if (window.guardDashboard) window.guardDashboard.demoTestLateArrivals();
+}
+
+function loadRecentActivity() {
+    if (window.guardDashboard) {
+        window.guardDashboard.loadRecentActivity();
+    }
 }
 
 function demoTestLunchExits() {

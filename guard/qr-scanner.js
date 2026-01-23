@@ -20,7 +20,7 @@ class QRScanner {
         this.attendanceLogic = new AttendanceLogic();
         
         this.initEventListeners();
-        this.loadRecentScans();
+        this.loadRecentScans().catch(error => console.error('Error loading recent scans:', error));
         this.checkAuth();
         this.loadAbsentStudents();
         this.updateModeDisplay();
@@ -323,7 +323,7 @@ class QRScanner {
                 return;
             }
             
-            console.log('✅ Student found:', student.name, 'ID:', student.id, 'StudentID:', student.studentId);
+            console.log('✅ Student found:', `${student.first_name || ''} ${student.last_name || ''}`.trim(), 'ID:', student.id, 'StudentID:', student.studentId);
             
             this.currentStudent = student;
             
@@ -355,7 +355,7 @@ class QRScanner {
 
         // Field: studentId
         try {
-            let byStudentId = await col.where('studentId', '==', candidate).limit(1).get();
+            let byStudentId = await col.where('student_id', '==', candidate).limit(1).get();
             if (!byStudentId.empty) {
                 console.log('✅ Found by studentId field');
                 const doc = byStudentId.docs[0];
@@ -363,7 +363,7 @@ class QRScanner {
             }
             const altCandidate = candidate.toUpperCase();
             if (altCandidate !== candidate) {
-                byStudentId = await col.where('studentId', '==', altCandidate).limit(1).get();
+                byStudentId = await col.where('student_id', '==', altCandidate).limit(1).get();
                 if (!byStudentId.empty) {
                     console.log('✅ Found by studentId (uppercase)');
                     const doc = byStudentId.docs[0];
@@ -403,7 +403,7 @@ class QRScanner {
 
         // Field: name (exact, last resort)
         try {
-            const byName = await col.where('name', '==', candidate).limit(1).get();
+            const byName = await col.where('first_name', '==', candidate).limit(1).get();
             if (!byName.empty) {
                 console.log('✅ Found by name');
                 const doc = byName.docs[0];
@@ -479,8 +479,8 @@ class QRScanner {
             const attendanceData = {
                 studentId: studentId,
                 student_id: studentId, // Snake case
-                studentName: student.name,
-                student_name: student.name, // Snake case
+                studentName: `${student.first_name || ''} ${student.last_name || ''}`.trim(),
+                student_name: `${student.first_name || ''} ${student.last_name || ''}`.trim(), // Snake case
                 classId: student.class_id || student.classId || '',
                 class_id: student.class_id || student.classId || '', // Snake case
                 entryType: entryType,
@@ -520,17 +520,18 @@ class QRScanner {
             
             this.showResult('success', 
                 `${actionText} Recorded`, 
-                `${student.name} ${actionVerb} at ${timeString} (${remarks})`,
+                `${(student.first_name || '' + ' ' + student.last_name || '').trim()} ${actionVerb} at ${timeString} (${remarks})`,
                 studentId
             );
             
             // Add to recent scans
             this.addRecentScan({
-                studentName: student.name,
+                studentName: `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                 time: timeString,
                 entryType: entryType,
                 status: status,
-                remarks: remarks
+                remarks: remarks,
+                classId: student.class_id || student.classId
             });
             
             // Reload absent students list
@@ -565,7 +566,7 @@ class QRScanner {
             const notificationTitle = entryType === 'entry' ? 'Student Arrival' : 'Student Departure';
             
             // Create detailed message
-            let message = `${student.name} has ${actionType} at ${timeString}`;
+            let message = `${(student.first_name || '' + ' ' + student.last_name || '').trim()} has ${actionType} at ${timeString}`;
             if (remarks) {
                 message += `. ${remarks}`;
             }
@@ -583,7 +584,7 @@ class QRScanner {
                 targetUsers: targetUsers,
                 studentId: student.id,
                 student_id: student.id,
-                studentName: student.name,
+                studentName: `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                 isUrgent: status === 'late' || status === 'half_day',
                 relatedRecord: attendanceId,
                 createdAt: new Date(),
@@ -598,7 +599,7 @@ class QRScanner {
                 await window.EducareTrack.db.collection('notifications').add(notificationData);
             }
 
-            console.log(`Notification sent to ${targetUsers.length} users for ${student.name}`);
+            console.log(`Notification sent to ${targetUsers.length} users for ${(student.first_name || '' + ' ' + student.last_name || '').trim()}`);
             
         } catch (error) {
             console.error('Error sending enhanced notifications:', error);
@@ -617,9 +618,9 @@ class QRScanner {
                 const homeroomTeacherQuery = await window.EducareTrack.db
                     .collection('users')
                     .where('role', '==', 'teacher')
-                    .where('classId', '==', classId) // Keeping classId for legacy compatibility
-                    .where('isHomeroom', '==', true)
-                    .where('isActive', '==', true)
+                    .where('class_id', '==', classId) // Updated to snake_case
+                    .where('is_homeroom', '==', true)
+                    .where('is_active', '==', true)
                     .limit(1)
                     .get();
                     
@@ -631,8 +632,8 @@ class QRScanner {
                 const classTeachersQuery = await window.EducareTrack.db
                     .collection('users')
                     .where('role', '==', 'teacher')
-                    .where('assignedClasses', 'array-contains', classId)
-                    .where('isActive', '==', true)
+                    .where('assigned_classes', 'array-contains', classId)
+                    .where('is_active', '==', true)
                     .limit(3)
                     .get();
                     
@@ -643,19 +644,28 @@ class QRScanner {
                 });
             }
 
-            // If no teachers found for class, try to find teachers by grade level
-            if (teacherIds.length === 0 && student.grade) {
-                const gradeTeachersQuery = await window.EducareTrack.db
-                    .collection('users')
-                    .where('role', '==', 'teacher')
-                    .where('assignedGrades', 'array-contains', student.grade)
-                    .where('isActive', '==', true)
-                    .limit(2)
-                    .get();
-                    
-                gradeTeachersQuery.docs.forEach(doc => {
-                    teacherIds.push(doc.id);
-                });
+            // If no teachers found for class, try to find teachers by grade level from class info
+            if (teacherIds.length === 0 && student.class_id) {
+                // Get class info to determine grade
+                try {
+                    const classDoc = await window.EducareTrack.db.collection('classes').doc(student.class_id).get();
+                    if (classDoc.exists) {
+                        const classData = classDoc.data();
+                        const gradeTeachersQuery = await window.EducareTrack.db
+                            .collection('users')
+                            .where('role', '==', 'teacher')
+                            .where('assigned_subjects', 'array-contains', classData.grade)
+                            .where('is_active', '==', true)
+                            .limit(2)
+                            .get();
+                            
+                        gradeTeachersQuery.docs.forEach(doc => {
+                            teacherIds.push(doc.id);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error getting class info for grade lookup:', error);
+                }
             }
 
             return teacherIds;
@@ -673,9 +683,9 @@ class QRScanner {
             
             const snapshot = await window.EducareTrack.db
                 .collection('attendance')
-                .where('studentId', '==', studentId)
+                .where('student_id', '==', studentId)
                 .where('timestamp', '>=', today)
-                .where('entryType', '==', 'entry')
+                .where('entry_type', '==', 'entry')
                 .where('session', '==', 'morning')
                 .limit(1)
                 .get();
@@ -704,10 +714,10 @@ class QRScanner {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            // Get all active students
+            // Get all enrolled students (excluding withdrawn/transferred)
             const studentsSnapshot = await window.EducareTrack.db
                 .collection('students')
-                .where('isActive', '==', true)
+                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
                 .get();
                 
             const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -716,12 +726,12 @@ class QRScanner {
             const attendanceSnapshot = await window.EducareTrack.db
                 .collection('attendance')
                 .where('timestamp', '>=', today)
-                .where('entryType', '==', 'entry')
+                .where('entry_type', '==', 'entry')
                 .get();
                 
             const presentStudentIds = new Set();
             attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().studentId);
+                presentStudentIds.add(doc.data().student_id);
             });
             
             // Find absent students
@@ -754,8 +764,8 @@ class QRScanner {
             return `
                 <div class="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-200">
                     <div>
-                        <h4 class="text-sm font-medium text-gray-900">${student.name}</h4>
-                        <p class="text-xs text-gray-600">${student.id} • ${student.grade}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
+                        <h4 class="text-sm font-medium text-gray-900">${(student.first_name || '' + ' ' + student.last_name || '').trim()}</h4>
+                        <p class="text-xs text-gray-600">${student.id}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
                         <p class="text-xs text-red-600 mt-1">${status.remarks}</p>
                     </div>
                     <span class="px-2 py-1 text-xs font-semibold rounded-full ${this.getStatusColor(status.status)}">
@@ -821,7 +831,7 @@ class QRScanner {
         scanElement.innerHTML = `
             <div>
                 <h4 class="text-sm font-medium text-gray-900">${scanData.studentName}</h4>
-                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType} • ${scanData.remarks}</p>
+                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType}</p>
             </div>
             <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
                 ${this.getStatusText(scanData.status)}
@@ -839,26 +849,41 @@ class QRScanner {
         }
     }
 
-    loadRecentScans() {
-        window.EducareTrack.db.collection('attendance')
-            .orderBy('timestamp', 'desc')
-            .limit(10)
-            .get()
-            .then(snapshot => {
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    this.addRecentScan({
-                        studentName: data.studentName,
-                        time: data.time,
-                        entryType: data.entryType,
-                        status: data.status,
-                        remarks: data.remarks || ''
-                    });
+    async loadRecentScans() {
+        try {
+            const snapshot = await window.EducareTrack.db.collection('attendance')
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .get();
+            
+            for (const doc of snapshot.docs) {
+                const data = doc.data();
+                let studentName = data.student_name || data.studentName;
+                
+                // If no student name in attendance record, fetch from student collection
+                if (!studentName && data.student_id) {
+                    try {
+                        const studentDoc = await window.EducareTrack.db.collection('students').doc(data.student_id).get();
+                        if (studentDoc.exists) {
+                            const studentData = studentDoc.data();
+                            studentName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim() || 'Unknown Student';
+                        }
+                    } catch (error) {
+                        console.error('Error fetching student name:', error);
+                        studentName = 'Unknown Student';
+                    }
+                }
+                
+                this.addRecentScan({
+                    studentName: studentName || 'Unknown Student',
+                    time: data.time,
+                    entryType: data.entry_type || data.entryType || 'Unknown',
+                    status: data.status || 'unknown'
                 });
-            })
-            .catch(error => {
-                console.error('Error loading recent scans:', error);
-            });
+            }
+        } catch (error) {
+            console.error('Error loading recent scans:', error);
+        }
     }
 
     updateScannerStatus(message) {

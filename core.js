@@ -1976,7 +1976,7 @@ const EducareTrack = {
 
             const notificationsPromises = chunks.map(chunk =>
                 db.collection('notifications')
-                    .where('studentId', 'in', chunk)
+                    .where('student_id', 'in', chunk)
                     .get()
             );
 
@@ -2064,7 +2064,7 @@ const EducareTrack = {
                 }));
             } else {
                 const snapshot = await db.collection('attendance')
-                    .where('studentId', '==', studentId)
+                    .where('student_id', '==', studentId)
                     .orderBy('timestamp', 'desc')
                     .limit(50)
                     .get();
@@ -2097,7 +2097,7 @@ const EducareTrack = {
                 }));
             } else {
                 const snapshot = await db.collection('clinicVisits')
-                    .where('studentId', '==', studentId)
+                    .where('student_id', '==', studentId)
                     .orderBy('timestamp', 'desc')
                     .limit(50)
                     .get();
@@ -2377,7 +2377,7 @@ const EducareTrack = {
             } else {
                 const snapshot = await db.collection('notifications')
                     .where('target_users', 'array-contains', userId)
-                    .where('isUrgent', '==', true)
+                    .where('is_urgent', '==', true)
                     .where('is_active', '==', true)
                     .orderBy('createdAt', 'desc')
                     .limit(limit)
@@ -3602,7 +3602,7 @@ const EducareTrack = {
                 const teacherQuery = await db.collection('users')
                     .where('role', '==', this.USER_TYPES.TEACHER)
                     .where('class_id', '==', student.class_id)
-                    .where('isHomeroom', '==', true)
+                    .where('is_homeroom', '==', true)
                     .get();
                 let teacherId = null;
                 if (!teacherQuery.empty) {
@@ -5377,7 +5377,7 @@ const EducareTrack = {
                         .select('id')
                         .eq('role', this.USER_TYPES.TEACHER)
                         .eq('class_id', studentClassId)
-                        .eq('isHomeroom', true);
+                        .eq('is_homeroom', true);
                     
                     if (!hrError && homeroom) {
                         homeroom.forEach(t => ids.push(t.id));
@@ -5407,7 +5407,7 @@ const EducareTrack = {
                     const homeroomSnap = await db.collection('users')
                         .where('role', '==', this.USER_TYPES.TEACHER)
                         .where('class_id', '==', studentClassId)
-                        .where('isHomeroom', '==', true)
+                        .where('is_homeroom', '==', true)
                         .get();
                     homeroomSnap.forEach(doc => ids.push(doc.id));
 
@@ -5416,7 +5416,7 @@ const EducareTrack = {
                     if (subjects.length > 0) {
                         const subjectsSnap = await db.collection('users')
                             .where('role', '==', this.USER_TYPES.TEACHER)
-                            .where('assignedClasses', 'array-contains', studentClassId)
+                            .where('assigned_classes', 'array-contains', studentClassId)
                             .get();
                         subjectsSnap.forEach(doc => ids.push(doc.id));
                     }
