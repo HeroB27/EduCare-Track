@@ -92,8 +92,8 @@ class ParentDashboard {
             // Update children count
             document.getElementById('totalChildren').textContent = this.children.length;
             
-            // Update children overview
-            this.updateChildrenOverview();
+            // Update children overview (now async)
+            await this.updateChildrenOverview();
             
             // Calculate today's stats
             await this.calculateTodayStats();
@@ -103,7 +103,7 @@ class ParentDashboard {
         }
     }
 
-    updateChildrenOverview() {
+    async updateChildrenOverview() {
         const container = document.getElementById('childrenOverview');
         
         if (this.children.length === 0) {
@@ -117,27 +117,56 @@ class ParentDashboard {
             return;
         }
 
-        container.innerHTML = this.children.map(child => `
+        // Fetch class information for all children
+        const classIds = [...new Set(this.children.map(child => child.class_id || child.classId).filter(Boolean))];
+        const classMap = new Map();
+        
+        if (classIds.length > 0 && window.USE_SUPABASE && window.supabaseClient) {
+            try {
+                const { data: classes, error } = await window.supabaseClient
+                    .from('classes')
+                    .select('*')
+                    .in('id', classIds);
+                
+                if (!error && classes) {
+                    classes.forEach(cls => classMap.set(cls.id, cls));
+                }
+            } catch (error) {
+                console.error('Error fetching class information:', error);
+            }
+        }
+
+        container.innerHTML = this.children.map(child => {
+            const childName = child.name || [child.first_name, child.last_name].filter(Boolean).join(' ');
+            const className = child.classId || child.class_id;
+            const status = child.currentStatus || child.current_status;
+            
+            // Get class information
+            const classInfo = className ? classMap.get(className) : null;
+            const grade = classInfo?.grade || child.grade || 'N/A';
+            const level = classInfo?.level || child.level || 'N/A';
+            
+            return `
             <div class="bg-white rounded-lg shadow-md p-6 card-hover">
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center">
                         <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mr-3">
-                            <span class="text-green-600 font-semibold">${child.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                            <span class="text-green-600 font-semibold">${childName ? childName.split(' ').map(n => n[0]).join('').substring(0, 2) : '??'}</span>
                         </div>
                         <div>
-                            <h3 class="font-semibold text-gray-800">${child.name}</h3>
-                            <p class="text-sm text-gray-600">${child.grade} • ${child.level}</p>
+                            <h3 class="font-semibold text-gray-800">${childName || 'Unknown'}</h3>
+                            <p class="text-sm text-gray-600">${grade} • ${level}</p>
                         </div>
                     </div>
-                    <span class="px-2 py-1 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(child.currentStatus)}">
-                        ${EducareTrack.getStatusText(child.currentStatus)}
+                    <span class="px-2 py-1 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(status)}">
+                        ${EducareTrack.getStatusText(status)}
                     </span>
                 </div>
                 
                 <div class="space-y-2 text-sm text-gray-600">
                     <div class="flex justify-between">
                         <span>Class:</span>
-                        <span class="font-medium">${child.classId || 'Not assigned'}</span>
+                        <span class="font-medium">${classInfo?.name || className || 'Not assigned'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span>Last Update:</span>
@@ -156,7 +185,8 @@ class ParentDashboard {
                     </button>
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
     }
 
     async calculateTodayStats() {
@@ -168,26 +198,56 @@ class ParentDashboard {
             const lateStudents = new Set();
             let clinicVisits = 0;
 
-            for (const child of this.children) {
-                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('studentId', '==', child.id)
-                    .where('timestamp', '>=', today)
-                    .where('entryType', '==', 'entry')
-                    .get();
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                // Use Supabase queries
+                const childIds = this.children.map(child => child.id);
+                
+                const [attendanceRes, clinicRes] = await Promise.all([
+                    window.supabaseClient
+                        .from('attendance')
+                        .select('*')
+                        .in('student_id', childIds)
+                        .gte('timestamp', today.toISOString())
+                        .eq('entry_type', 'entry'),
+                    window.supabaseClient
+                        .from('clinicVisits')
+                        .select('*')
+                        .in('student_id', childIds)
+                        .gte('timestamp', today.toISOString())
+                        .eq('check_in', true)
+                ]);
 
-                attendanceSnapshot.forEach(doc => {
-                    const record = doc.data();
-                    if (record.status === 'present') presentStudents.add(child.id);
-                    if (record.status === 'late') lateStudents.add(child.id);
+                // Process attendance data
+                (attendanceRes.data || []).forEach(record => {
+                    if (record.status === 'present') presentStudents.add(record.student_id);
+                    if (record.status === 'late') lateStudents.add(record.student_id);
                 });
 
-                const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                    .where('studentId', '==', child.id)
-                    .where('timestamp', '>=', today)
-                    .where('checkIn', '==', true)
-                    .get();
+                // Count clinic visits
+                clinicVisits = (clinicRes.data || []).length;
+            } else {
+                // Fallback to Firebase (if still needed)
+                for (const child of this.children) {
+                    const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                        .where('student_id', '==', child.id)
+                        .where('timestamp', '>=', today)
+                        .where('entry_type', '==', 'entry')
+                        .get();
 
-                clinicVisits += clinicSnapshot.size;
+                    attendanceSnapshot.forEach(doc => {
+                        const record = doc.data();
+                        if (record.status === 'present') presentStudents.add(child.id);
+                        if (record.status === 'late') lateStudents.add(child.id);
+                    });
+
+                    const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                        .where('student_id', '==', child.id)
+                        .where('timestamp', '>=', today)
+                        .where('check_in', '==', true)
+                        .get();
+
+                    clinicVisits += clinicSnapshot.size;
+                }
             }
 
             document.getElementById('presentToday').textContent = presentStudents.size;
@@ -225,7 +285,7 @@ class ParentDashboard {
                             <p class="text-xs text-gray-500">${item.message}</p>
                         </div>
                     </div>
-                    <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                    <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                 </div>
             `).join('');
         } catch (error) {
@@ -325,35 +385,68 @@ class ParentDashboard {
             const content = document.getElementById('childDetailsContent');
 
             // Get child's class info
-            const classInfo = child.classId ? await EducareTrack.getClassById(child.classId) : null;
+            const className = child.classId || child.class_id;
+            let classInfo = null;
+            
+            if (className && window.USE_SUPABASE && window.supabaseClient) {
+                const { data: classData, error } = await window.supabaseClient
+                    .from('classes')
+                    .select('*')
+                    .eq('id', className)
+                    .single();
+                
+                if (!error && classData) {
+                    classInfo = classData;
+                }
+            }
 
             // Get today's attendance
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('studentId', '==', childId)
-                .where('timestamp', '>=', today)
-                .orderBy('timestamp', 'desc')
-                .limit(1)
-                .get();
-
+            
             let todayAttendance = null;
-            if (!attendanceSnapshot.empty) {
-                todayAttendance = attendanceSnapshot.docs[0].data();
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const attendanceRes = await window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .eq('student_id', childId)
+                    .gte('timestamp', today.toISOString())
+                    .order('timestamp', { ascending: false })
+                    .limit(1);
+                
+                if (attendanceRes.data && attendanceRes.data.length > 0) {
+                    todayAttendance = attendanceRes.data[0];
+                }
+            } else {
+                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
+                    .where('student_id', '==', childId)
+                    .where('timestamp', '>=', today)
+                    .orderBy('timestamp', 'desc')
+                    .limit(1)
+                    .get();
+
+                if (!attendanceSnapshot.empty) {
+                    todayAttendance = attendanceSnapshot.docs[0].data();
+                }
             }
+
+            const childName = child.name || [child.first_name, child.last_name].filter(Boolean).join(' ');
+            const status = child.currentStatus || child.current_status;
+            const grade = classInfo?.grade || child.grade || 'N/A';
+            const level = classInfo?.level || child.level || 'N/A';
 
             content.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div class="md:col-span-1">
                         <div class="bg-gray-100 rounded-lg p-4 text-center">
                             <div class="w-20 h-20 rounded-full bg-green-200 flex items-center justify-center mx-auto mb-3">
-                                <span class="text-green-600 font-bold text-xl">${child.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                                <span class="text-green-600 font-bold text-xl">${childName ? childName.split(' ').map(n => n[0]).join('').substring(0, 2) : '??'}</span>
                             </div>
-                            <h3 class="font-semibold text-lg">${child.name}</h3>
-                            <p class="text-gray-600">${child.grade} • ${child.level}</p>
+                            <h3 class="font-semibold text-lg">${childName || 'Unknown'}</h3>
+                            <p class="text-gray-600">${grade} • ${level}</p>
                             <div class="mt-2">
-                                <span class="px-3 py-1 rounded-full text-sm font-medium ${EducareTrack.getStatusColor(child.currentStatus)}">
-                                    ${EducareTrack.getStatusText(child.currentStatus)}
+                                <span class="px-3 py-1 rounded-full text-sm font-medium ${EducareTrack.getStatusColor(status)}">
+                                    ${EducareTrack.getStatusText(status)}
                                 </span>
                             </div>
                         </div>
@@ -366,7 +459,7 @@ class ParentDashboard {
                                 <div class="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span class="text-gray-600">Student ID:</span>
-                                        <p class="font-medium">${child.studentId || 'N/A'}</p>
+                                        <p class="font-medium">${child.id || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <span class="text-gray-600">LRN:</span>
@@ -388,7 +481,7 @@ class ParentDashboard {
                                 ${todayAttendance ? `
                                     <div class="bg-gray-50 rounded-lg p-3">
                                         <div class="flex justify-between items-center">
-                                            <span class="font-medium">${todayAttendance.entryType === 'entry' ? 'Arrival' : 'Departure'}</span>
+                                            <span class="font-medium">${todayAttendance.entry_type === 'entry' ? 'Arrival' : 'Departure'}</span>
                                             <span class="px-2 py-1 rounded text-xs ${EducareTrack.getStatusColor(todayAttendance.status)}">
                                                 ${todayAttendance.status}
                                             </span>

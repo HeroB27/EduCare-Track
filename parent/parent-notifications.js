@@ -83,8 +83,8 @@ class ParentNotifications {
             }
 
             let query = EducareTrack.db.collection('notifications')
-                .where('targetUsers', 'array-contains', this.currentUser.id)
-                .orderBy('createdAt', 'desc')
+                .where('target_users', 'array-contains', this.currentUser.id)
+                .orderBy('created_at', 'desc')
                 .limit(20);
 
             if (loadMore && this.lastVisible) {

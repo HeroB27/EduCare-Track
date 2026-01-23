@@ -29,6 +29,19 @@ class ClinicCheckin {
 
     async init() {
         try {
+            // Handle URL parameters (e.g., reason from dashboard)
+            const urlParams = new URLSearchParams(window.location.search);
+            const reasonFromUrl = urlParams.get('reason');
+            if (reasonFromUrl) {
+                // Set the reason when page loads
+                setTimeout(() => {
+                    const reasonElement = document.getElementById('checkinReason');
+                    if (reasonElement) {
+                        reasonElement.value = reasonFromUrl;
+                    }
+                }, 100);
+            }
+
             await this.checkAuth();
             await this.loadCurrentPatients();
             await this.loadRecentVisits();
@@ -675,7 +688,7 @@ class ClinicCheckin {
             await this.loadStatistics();
             
             this.showNotification(
-                `${this.selectedStudent.name} ${checkIn ? 'checked into' : 'checked out from'} clinic`, 
+                `${this.selectedStudent?.name || 'Student'} ${checkIn ? 'checked into' : 'checked out from'} clinic`, 
                 'success'
             );
             
@@ -765,28 +778,34 @@ class ClinicCheckin {
 
     async sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData = {}, timeStr = '') {
         try {
-            const parentId = student.parentId;
+            const parentId = student.parentId || student.parent_id;
             let teacherId = null;
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                if (student.classId) {
+            
+            // Validate parent ID
+            if (!parentId) {
+                console.warn('No parent ID found for student:', student.id || student.studentId);
+            }
+            
+            // Find homeroom teacher
+            const classId = student.classId || student.class_id;
+            if (classId) {
+                if (window.USE_SUPABASE && window.supabaseClient) {
                     const { data: homeroom, error: hrErr } = await window.supabaseClient
                         .from('users')
                         .select('id')
                         .eq('role', 'teacher')
-                        .eq('classId', student.classId)
-                        .eq('isHomeroom', true)
+                        .eq('class_id', classId)  // Fixed: was clas_id
+                        .eq('is_homeroom', true)
                         .limit(1);
                     if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
                         teacherId = homeroom[0].id;
                     }
-                }
-            } else {
-                if (student.classId) {
+                } else {
                     const teacherQuery = await firebase.firestore()
                         .collection('users')
                         .where('role', '==', 'teacher')
-                        .where('classId', '==', student.classId)
-                        .where('isHomeroom', '==', true)
+                        .where('class_id', '==', classId)
+                        .where('is_homeroom', '==', true)
                         .limit(1)
                         .get();
                     if (!teacherQuery.empty) {
@@ -795,13 +814,28 @@ class ClinicCheckin {
                 }
             }
 
-            const targetUsers = [parentId];
+            // Build target users array, ensuring no null/undefined values
+            const targetUsers = [];
+            if (parentId) targetUsers.push(parentId);
             if (teacherId) targetUsers.push(teacherId);
+
+            // Check if we have any valid recipients
+            if (targetUsers.length === 0) {
+                console.warn('No valid recipients for clinic notification:', {
+                    studentId: student.id || student.studentId,
+                    parentId: parentId,
+                    teacherId: teacherId,
+                    classId: classId
+                });
+                // Don't send notification if no recipients
+                return;
+            }
 
             const action = checkIn ? 'checked into' : 'checked out from';
             const notificationTitle = checkIn ? 'Clinic Check-in' : 'Clinic Check-out';
             
-            let message = `${student.name} has ${action} the clinic.`;
+            const studentName = student.name || student.student_name || `${student.first_name || ''} ${student.last_name || ''}`.trim();
+            let message = `${studentName} has ${action} the clinic.`;
             if (timeStr) {
                 message += `\nTime ${checkIn ? 'In' : 'Out'}: ${timeStr}`;
             }
@@ -809,7 +843,6 @@ class ClinicCheckin {
             // Add medical assessment details for check-ins
             if (checkIn) {
                 message += `\nReason: ${reason}`;
-                
                 
                 if (medicalData.medicalFindings) {
                     message += `\nFindings: ${medicalData.medicalFindings}`;
@@ -844,18 +877,31 @@ class ClinicCheckin {
                 type: 'clinic',
                 title: notificationTitle,
                 message: message,
-                targetUsers: targetUsers
+                target_users: targetUsers
             };
+            
+            console.log('Sending clinic notification to:', targetUsers);
+            
             if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
                 await window.EducareTrack.createNotification(notificationData);
+            } else if (window.USE_SUPABASE && window.supabaseClient) {
+                // Supabase notification
+                await window.supabaseClient.from('notifications').insert({
+                    target_users: targetUsers,
+                    title: notificationTitle,
+                    message: message,
+                    type: 'clinic',
+                    created_at: new Date().toISOString()
+                });
             } else {
+                // Firebase notification
                 await firebase.firestore().collection('notifications').add({
                     ...notificationData,
                     createdAt: new Date().toISOString()
                 });
             }
             
-            console.log(`Enhanced notifications sent for ${student.name}'s clinic ${checkIn ? 'check-in' : 'check-out'}`);
+            console.log(`Enhanced notifications sent for ${studentName}'s clinic ${checkIn ? 'check-in' : 'check-out'}`);
             
         } catch (error) {
             console.error('Error sending clinic notifications:', error);
@@ -888,14 +934,14 @@ class ClinicCheckin {
                 const term = `%${query}%`;
                 const { data, error } = await window.supabaseClient
                     .from('students')
-                    .select('id,firstName,lastName,currentStatus,studentId')
-                    .or(`firstName.ilike.${term},lastName.ilike.${term},studentId.ilike.${term}`);
+                    .select('id,first_name,last_name,current_status')
+                    .or(`first_name.ilike.${term},last_name.ilike.${term}`);
                 if (error) throw error;
                 students = (data || []).map(s => ({
                     id: s.id,
-                    name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                    currentStatus: s.currentStatus,
-                    studentId: s.studentId
+                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
+                    currentStatus: s.current_status,
+                    studentId: s.id
                 })).slice(0, 5);
             } else {
                 const snapshot = await firebase.firestore()
@@ -1060,7 +1106,8 @@ class ClinicCheckin {
                     .from('clinicVisits')
                     .select('id', { count: 'exact', head: true })
                     .gte('timestamp', today.toISOString())
-                    .lt('timestamp', tomorrow.toISOString());
+                    .lt('timestamp', tomorrow.toISOString())
+                    .eq('check_in', true);
                 this.todayVisits = visitsCount || 0;
                 document.getElementById('todayVisits').textContent = this.todayVisits;
                 const { count: urgentCount } = await window.supabaseClient
@@ -1076,6 +1123,7 @@ class ClinicCheckin {
                     .collection('clinicVisits')
                     .where('timestamp', '>=', today)
                     .where('timestamp', '<', tomorrow)
+                    .where('check_in', '==', true)
                     .get();
                 this.todayVisits = todaySnapshot.size;
                 document.getElementById('todayVisits').textContent = this.todayVisits;

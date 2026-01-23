@@ -1,4 +1,3 @@
-
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
@@ -72,12 +71,12 @@ CREATE TABLE public.excuseLetters (
 );
 CREATE TABLE public.notifications (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  targetUsers ARRAY,
+  target_users ARRAY,
   title text,
   message text,
   type text,
   is_active boolean DEFAULT true,
-  createdAt timestamp with time zone DEFAULT now(),
+  created_at timestamp with time zone DEFAULT now(),
   readBy ARRAY,
   CONSTRAINT notifications_pkey PRIMARY KEY (id)
 );
@@ -142,9 +141,9 @@ CREATE TABLE public.users (
   is_homeroom boolean,
   assigned_classes ARRAY,
   assigned_subjects ARRAY,
-  capabilities JSONB DEFAULT '[]'::jsonb,
   password_changed_at timestamp with time zone,
   login_attempts integer DEFAULT 0,
   locked_until timestamp with time zone,
+  capabilities jsonb DEFAULT '[]'::jsonb,
   CONSTRAINT users_pkey PRIMARY KEY (id)
 );

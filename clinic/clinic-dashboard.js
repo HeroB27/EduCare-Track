@@ -127,7 +127,8 @@ class ClinicDashboard {
                     window.supabaseClient.from('clinicVisits')
                         .select('id,reason,timestamp', { count: 'exact' })
                         .gte('timestamp', today.toISOString())
-                        .lt('timestamp', tomorrow.toISOString()),
+                        .lt('timestamp', tomorrow.toISOString())
+                        .eq('check_in', true),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact' })
                         .eq('current_status', 'in_clinic'),
@@ -156,6 +157,7 @@ class ClinicDashboard {
                     firebase.firestore().collection('clinicVisits')
                         .where('timestamp', '>=', today)
                         .where('timestamp', '<', tomorrow)
+                        .where('check_in', '==', true)
                         .get(),
                     
                     firebase.firestore().collection('students')
@@ -316,7 +318,7 @@ class ClinicDashboard {
                                 <span class="text-sm font-medium text-gray-700">Health Reports</span>
                             </button>
                             
-                            <button onclick="this.quickCheckoutAll()" class="p-4 border border-gray-300 rounded-lg text-center hover:bg-red-50 hover:border-red-500 transition duration-200 group">
+                            <button onclick="clinicDashboard.quickCheckoutAll()" class="p-4 border border-gray-300 rounded-lg text-center hover:bg-red-50 hover:border-red-500 transition duration-200 group">
                                 <svg class="w-8 h-8 text-red-600 mx-auto mb-2 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
                                 </svg>
@@ -476,41 +478,90 @@ class ClinicDashboard {
     async recordClinicVisit(studentId, reason, notes, checkIn) {
         try {
             let student;
-            if (window.EducareTrack && window.EducareTrack.db) {
-                const doc = await window.EducareTrack.db.collection('students').doc(studentId).get();
-                if (!doc.exists) throw new Error('Student not found');
-                student = doc.data();
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data: studentData, error: sErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id,first_name,last_name,class_id,parent_id')
+                    .eq('id', studentId)
+                    .single();
+                if (sErr || !studentData) throw new Error('Student not found');
+                student = studentData;
+                
+                const timestamp = new Date();
+                const insertData = {
+                    student_id: studentId,
+                    student_name: [student.first_name, student.last_name].filter(Boolean).join(' '),
+                    class_id: student.class_id || '',
+                    reason: reason,
+                    check_in: !!checkIn,
+                    timestamp: timestamp,
+                    notes: notes || '',
+                    treated_by: this.currentUser.name || this.currentUser.id
+                };
+                
+                const { data: inserted, error } = await window.supabaseClient
+                    .from('clinicVisits')
+                    .insert(insertData)
+                    .select('id')
+                    .single();
+                if (error) throw error;
+                
+                const newStatus = checkIn ? 'in_clinic' : 'in_school';
+                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+                
+                // Send notifications to parents and teachers
+                await this.sendClinicNotifications(
+                    { id: studentId, parentId: student.parent_id, classId: student.class_id, name: insertData.student_name },
+                    checkIn,
+                    reason,
+                    notes
+                );
+                
+                return inserted.id;
             } else {
-                const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
+                // Firebase fallback
+                let studentDoc;
+                if (window.EducareTrack && window.EducareTrack.db) {
+                    studentDoc = await window.EducareTrack.db.collection('students').doc(studentId).get();
+                } else {
+                    studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
+                }
                 if (!studentDoc.exists) throw new Error('Student not found');
                 student = studentDoc.data();
-            }
-            
-            const clinicData = {
-                studentId: studentId,
-                studentName: student.name,
-                classId: student.classId || student.class_id || '',
-                class_id: student.classId || student.class_id || '',
-                checkIn: checkIn,
-                timestamp: new Date(),
-                reason: reason,
-                notes: notes,
-                staffId: this.currentUser.id,
-                staffName: this.currentUser.name
-            };
+                
+                const clinicData = {
+                    studentId: studentId,
+                    studentName: student.name,
+                    classId: student.classId || student.class_id || '',
+                    checkIn: checkIn,
+                    timestamp: new Date(),
+                    reason: reason,
+                    notes: notes,
+                    staffId: this.currentUser.id,
+                    staffName: this.currentUser.name
+                };
 
-            if (window.EducareTrack && window.EducareTrack.db) {
-                await window.EducareTrack.db.collection('clinicVisits').add(clinicData);
-                await window.EducareTrack.db.collection('students').doc(studentId).update({
-                    currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                    lastClinicVisit: new Date()
-                });
-            } else {
-                await firebase.firestore().collection('clinicVisits').add(clinicData);
-                await firebase.firestore().collection('students').doc(studentId).update({
-                    currentStatus: checkIn ? 'in_clinic' : 'in_school',
-                    lastClinicVisit: new Date()
-                });
+                if (window.EducareTrack && window.EducareTrack.db) {
+                    await window.EducareTrack.db.collection('clinicVisits').add(clinicData);
+                    await window.EducareTrack.db.collection('students').doc(studentId).update({
+                        currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                        lastClinicVisit: new Date()
+                    });
+                } else {
+                    await firebase.firestore().collection('clinicVisits').add(clinicData);
+                    await firebase.firestore().collection('students').doc(studentId).update({
+                        currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                        lastClinicVisit: new Date()
+                    });
+                }
+                
+                // Send notifications to parents and teachers
+                await this.sendClinicNotifications(
+                    { id: studentId, parentId: student.parentId || student.parent_id, classId: student.classId || student.class_id, name: student.name },
+                    checkIn,
+                    reason,
+                    notes
+                );
             }
 
             return true;
@@ -518,6 +569,108 @@ class ClinicDashboard {
             console.error('Error recording clinic visit:', error);
             throw error;
         }
+    }
+
+    async sendClinicNotifications(student, checkIn, reason, notes) {
+        try {
+            const parentId = student.parentId || student.parent_id;
+            let teacherId = null;
+            
+            // Validate parent ID
+            if (!parentId) {
+                console.warn('No parent ID found for student:', student.id);
+            }
+            
+            // Find homeroom teacher
+            const classId = student.classId || student.class_id;
+            if (classId) {
+                if (window.USE_SUPABASE && window.supabaseClient) {
+                    const { data: homeroom, error: hrErr } = await window.supabaseClient
+                        .from('users')
+                        .select('id')
+                        .eq('role', 'teacher')
+                        .eq('class_id', classId)
+                        .eq('is_homeroom', true)
+                        .limit(1);
+                    if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
+                        teacherId = homeroom[0].id;
+                    }
+                } else {
+                    const teacherQuery = await firebase.firestore()
+                        .collection('users')
+                        .where('role', '==', 'teacher')
+                        .where('class_id', '==', classId)
+                        .where('is_homeroom', '==', true)
+                        .limit(1)
+                        .get();
+                    if (!teacherQuery.empty) {
+                        teacherId = teacherQuery.docs[0].id;
+                    }
+                }
+            }
+
+            // Build target users array, ensuring no null/undefined values
+            const targetUsers = [];
+            if (parentId) targetUsers.push(parentId);
+            if (teacherId) targetUsers.push(teacherId);
+
+            // Check if we have any valid recipients
+            if (targetUsers.length === 0) {
+                console.warn('No valid recipients for clinic notification:', {
+                    studentId: student.id,
+                    parentId: parentId,
+                    teacherId: teacherId,
+                    classId: classId
+                });
+                // Don't send notification if no recipients
+                return;
+            }
+
+            const action = checkIn ? 'checked into' : 'checked out from';
+            const notificationTitle = checkIn ? 'Clinic Check-in' : 'Clinic Check-out';
+            
+            let message = `${student.name} has ${action} the clinic.`;
+            if (reason) message += `\nReason: ${reason}`;
+            if (notes) message += `\nNotes: ${notes}`;
+
+            const notificationData = {
+                type: 'clinic',
+                title: notificationTitle,
+                message: message,
+                target_users: targetUsers
+            };
+            
+            console.log('Sending clinic notification to:', targetUsers);
+            
+            if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
+                await window.EducareTrack.createNotification(notificationData);
+            } else if (window.USE_SUPABASE && window.supabaseClient) {
+                // Supabase notification
+                await window.supabaseClient.from('notifications').insert({
+                    target_users: targetUsers,
+                    title: notificationTitle,
+                    message: message,
+                    type: 'clinic',
+                    created_at: new Date().toISOString()
+                });
+            } else {
+                // Firebase notification
+                await firebase.firestore().collection('notifications').add({
+                    ...notificationData,
+                    createdAt: new Date().toISOString()
+                });
+            }
+            
+            console.log(`Clinic notification sent for ${student.name}'s ${checkIn ? 'check-in' : 'check-out'}`);
+            
+        } catch (error) {
+            console.error('Error sending clinic notifications:', error);
+        }
+    }
+
+    async quickCheckIn(reason) {
+        // Redirect to check-in page with reason parameter
+        window.location.href = `clinic-checkin.html?reason=${encodeURIComponent(reason)}`;
     }
 
     // Utility Methods

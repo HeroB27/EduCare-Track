@@ -1511,7 +1511,7 @@ const EducareTrack = {
                     ...classData,
                     subjects: this.getSubjectsForLevel(classData.level, classData.strand, classData.grade),
                     is_active: true,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
+                    created_at: SupabaseFieldValue.serverTimestamp(),
                     createdBy: this.currentUser.id
                 };
 
@@ -1817,7 +1817,6 @@ const EducareTrack = {
                     .from('students')
                     .select('*')
                     .eq('parent_id', parentId)
-                    .eq('is_active', true);
                 
                 if (err1) throw err1;
 
@@ -1834,7 +1833,6 @@ const EducareTrack = {
                         .from('students')
                         .select('*')
                         .in('id', parentUser.children)
-                        .eq('is_active', true);
                      if (!err3 && childrenData) {
                          studentsFromChildren = childrenData;
                      }
@@ -1900,11 +1898,6 @@ const EducareTrack = {
                 fromParentChildren = results2.flatMap(snap => snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             }
 
-            const unique = new Map();
-            byParent.forEach(s => { if (s.is_active !== false) unique.set(s.id, s); });
-            fromParentChildren.forEach(s => { if (s.is_active !== false) unique.set(s.id, s); });
-
-            return Array.from(unique.values());
         } catch (error) {
             console.error('Error getting students by parent:', error);
             return [];
@@ -1927,7 +1920,7 @@ const EducareTrack = {
                     window.supabaseClient
                         .from('notifications')
                         .select('*')
-                        .in('student_id', childIds)
+                        .contains('target_users', [this.currentUser.id]) // Check if parent ID is in targetUsers array
                         .order('created_at', { ascending: false })
                         .limit(20),
                     window.supabaseClient
@@ -1944,8 +1937,7 @@ const EducareTrack = {
                     title: n.title,
                     message: n.message,
                     timestamp: new Date(n.created_at),
-                    studentId: n.student_id,
-                    isRead: n.is_read
+                    isRead: n.read_by && n.read_by.includes(this.currentUser.id)
                 }));
 
                 const attendance = (attendanceRes.data || []).map(a => ({
@@ -2132,7 +2124,7 @@ const EducareTrack = {
                     message: notificationData.message,
                     type: notificationData.type,
                     is_active: true,
-                    createdAt: new Date(),
+                    created_at: new Date(),
                     readBy: []
                 };
                 const { data, error } = await window.supabaseClient.from('notifications').insert(row).select('id').single();
@@ -2144,7 +2136,7 @@ const EducareTrack = {
             } else {
                 const notification = {
                     ...notificationData,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
+                    created_at: SupabaseFieldValue.serverTimestamp(),
                     readBy: [],
                     isUrgent: notificationData.isUrgent || false,
                     is_active: true
@@ -2434,7 +2426,7 @@ const EducareTrack = {
                 const notification = {
                     ...notificationData,
                     id: notificationRef.id,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
+                    created_at: SupabaseFieldValue.serverTimestamp(),
                     readBy: [],
                     isUrgent: notificationData.isUrgent || false,
                     is_active: true
@@ -3270,7 +3262,6 @@ const EducareTrack = {
                     timestamp: timestamp,
                     recordedBy: attendanceData.recordedBy,
                     notes: attendanceData.notes || '',
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
                     manualEntry: true
                 };
                 const added = await db.collection('attendance').add(attendanceRecord);
@@ -3546,17 +3537,15 @@ const EducareTrack = {
                 if (studentErr || !student) {
                     throw new Error('Student not found');
                 }
-                const timeString = new Date().toTimeString().split(' ')[0].substring(0, 5);
                 const row = {
-                    studentId: studentId,
+                    student_id: studentId,
+                    student_name: `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                     class_id: student.class_id || '',
                     check_in: !!check_in,
                     timestamp: new Date(),
                     reason: reason || '',
                     notes: notes || '',
-                    staffId: this.currentUser.id,
-                    staffName: this.currentUser.name,
-                    time: timeString
+                    treated_by: this.currentUser.name || this.currentUser.id
                 };
                 const { data: inserted, error } = await window.supabaseClient.from('clinicVisits').insert(row).select('id').single();
                 if (error) {
@@ -3571,9 +3560,9 @@ const EducareTrack = {
                 const { data: homeroom, error: hrErr } = await window.supabaseClient
                     .from('users')
                     .select('id')
-                    .eq('role', this.USER_TYPES.TEACHER)
-                    .eq('classId', student.classId || '')
-                    .eq('isHomeroom', true)
+                    .eq('role', 'teacher')
+                    .eq('class_id', student.class_id || '')
+                    .eq('is_homeroom', true)
                     .limit(1);
                 if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
                     teacherId = homeroom[0].id;
@@ -3581,10 +3570,10 @@ const EducareTrack = {
                 await this.createNotification({
                     type: this.NOTIFICATION_TYPES.CLINIC,
                     title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
-                    message: `${(student.firstName || '')} ${(student.lastName || '')} has ${check_in ? 'checked into' : 'checked out from'} the clinic.${reason ? ' Reason: ' + reason : ''}`,
-                    target_users: [student.parentId, teacherId].filter(Boolean),
+                    message: `${student.first_name || ''} ${student.last_name || ''} has ${check_in ? 'checked into' : 'checked out from'} the clinic.${reason ? ' Reason: ' + reason : ''}`,
+                    target_users: [student.parent_id, teacherId].filter(Boolean),
                     studentId: student.id,
-                    studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
+                    studentName: `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                     relatedRecord: inserted.id
                 });
                 return inserted.id;
@@ -3649,7 +3638,7 @@ const EducareTrack = {
                 ...announcementData,
                 createdBy: this.currentUser.id,
                 createdByName: this.currentUser.name,
-                createdAt: SupabaseFieldValue.serverTimestamp(),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 is_active: true
             };
 
