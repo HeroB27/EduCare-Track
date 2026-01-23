@@ -121,35 +121,39 @@ class TeacherDashboard {
             today.setHours(0, 0, 0, 0);
 
             // Get today's attendance
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', today)
-                .where('classId', '==', this.currentUser.classId)
-                .get();
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id,status,entry_type')
+                .gte('timestamp', today.toISOString())
+                .eq('class_id', this.currentUser.classId);
+
+            if (attendanceError) throw attendanceError;
 
             const presentStudents = new Set();
             const lateStudents = new Set();
             const clinicStudents = new Set();
 
-            attendanceSnapshot.forEach(doc => {
-                const record = doc.data();
-                if (record.entryType === 'entry') {
+            (attendanceData || []).forEach(record => {
+                if (record.entry_type === 'entry') {
                     if (record.status === 'late') {
-                        lateStudents.add(record.studentId);
+                        lateStudents.add(record.student_id);
                     } else if (record.status === 'present') {
-                        presentStudents.add(record.studentId);
+                        presentStudents.add(record.student_id);
                     }
                 }
             });
 
             // Get current clinic visits
-            const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('checkIn', '==', true)
-                .where('classId', '==', this.currentUser.classId)
-                .get();
+            const { data: clinicData, error: clinicError } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('student_id')
+                .eq('check_in', true)
+                .eq('class_id', this.currentUser.classId);
 
-            clinicSnapshot.forEach(doc => {
-                const visit = doc.data();
-                clinicStudents.add(visit.studentId);
+            if (clinicError) throw clinicError;
+
+            (clinicData || []).forEach(visit => {
+                clinicStudents.add(visit.student_id);
             });
 
             // Cache late count for status card update
@@ -188,71 +192,59 @@ class TeacherDashboard {
         try {
             let attendanceActivities = [];
             let clinicActivities = [];
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const classId = this.currentUser.classId;
-                const [{ data: attendance, error: aErr }, { data: clinic, error: cErr }, { data: students, error: sErr }] = await Promise.all([
-                    window.supabaseClient.from('attendance')
-                        .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks')
-                        .eq('classId', classId)
-                        .order('timestamp', { ascending: false })
-                        .limit(10),
-                    window.supabaseClient.from('clinicVisits')
-                        .select('id,studentId,classId,checkIn,timestamp,reason,notes')
-                        .eq('classId', classId)
-                        .order('timestamp', { ascending: false })
-                        .limit(10),
-                    window.supabaseClient.from('students')
-                        .select('id,firstName,lastName')
-                        .eq('classId', classId)
-                ]);
-                if (aErr) throw aErr;
-                if (cErr) throw cErr;
-                if (sErr) throw sErr;
-                const nameById = new Map((students || []).map(s => [s.id, `${s.firstName || ''} ${s.lastName || ''}`.trim()]));
-                attendanceActivities = (attendance || []).map(r => ({
-                    id: r.id,
-                    type: 'attendance',
-                    ...r,
-                    studentName: nameById.get(r.studentId) || 'Student',
-                    timestamp: r.timestamp ? new Date(r.timestamp) : new Date()
-                }));
-                clinicActivities = (clinic || []).map(r => ({
-                    id: r.id,
-                    type: 'clinic',
-                    ...r,
-                    studentName: nameById.get(r.studentId) || 'Student',
-                    timestamp: r.timestamp ? new Date(r.timestamp) : new Date()
-                }));
-            } else {
-                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('classId', '==', this.currentUser.classId)
-                    .orderBy('timestamp', 'desc')
-                    .limit(10)
-                    .get();
-                const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
-                    .where('classId', '==', this.currentUser.classId)
-                    .orderBy('timestamp', 'desc')
-                    .limit(10)
-                    .get();
-                attendanceActivities = attendanceSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    type: 'attendance',
-                    ...doc.data()
-                }));
-                clinicActivities = clinicSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    type: 'clinic',
-                    ...doc.data()
-                }));
-            }
+            
+            const classId = this.currentUser.classId;
+            const [{ data: attendance, error: aErr }, { data: clinic, error: cErr }, { data: students, error: sErr }] = await Promise.all([
+                window.supabaseClient.from('attendance')
+                    .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks')
+                    .eq('class_id', classId)
+                    .order('timestamp', { ascending: false })
+                    .limit(10),
+                window.supabaseClient.from('clinic_visits')
+                    .select('id,student_id,class_id,check_in,timestamp,reason,notes')
+                    .eq('class_id', classId)
+                    .order('timestamp', { ascending: false })
+                    .limit(10),
+                window.supabaseClient.from('students')
+                    .select('id,full_name')
+                    .eq('class_id', classId)
+            ]);
+            
+            if (aErr) throw aErr;
+            if (cErr) throw cErr;
+            if (sErr) throw sErr;
+            
+            const nameById = new Map((students || []).map(s => [s.id, s.full_name || s.name]));
+            
+            attendanceActivities = (attendance || []).map(r => ({
+                id: r.id,
+                type: 'attendance',
+                studentId: r.student_id,
+                classId: r.class_id,
+                entryType: r.entry_type,
+                timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+                time: r.time,
+                session: r.session,
+                status: r.status,
+                remarks: r.remarks,
+                studentName: nameById.get(r.student_id) || 'Student'
+            }));
+            
+            clinicActivities = (clinic || []).map(r => ({
+                id: r.id,
+                type: 'clinic',
+                studentId: r.student_id,
+                classId: r.class_id,
+                checkIn: r.check_in,
+                timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+                reason: r.reason,
+                notes: r.notes,
+                studentName: nameById.get(r.student_id) || 'Student'
+            }));
 
             // Combine and sort by timestamp
             const allActivities = [...attendanceActivities, ...clinicActivities]
-                .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
-                    return new Date(bt) - new Date(at);
-                })
+                .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10);
 
             const container = document.getElementById('recentActivity');
@@ -280,7 +272,7 @@ class TeacherDashboard {
                                     <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `;
                 } else {
@@ -297,7 +289,7 @@ class TeacherDashboard {
                                     ${item.reason ? `<p class="text-xs text-gray-400">Reason: ${item.reason}</p>` : ''}
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `;
                 }
@@ -341,50 +333,19 @@ class TeacherDashboard {
     }
 
     setupRealTimeListeners() {
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            this.realTimeListeners = [];
-            if (this.pollTimer) {
-                clearInterval(this.pollTimer);
-            }
-            this.pollTimer = setInterval(async () => {
-                try {
-                    await this.loadRecentActivity();
-                    await this.loadNotifications();
-                    await this.refreshDashboardStats();
-                } catch (e) {
-                    console.error('Polling error:', e);
-                }
-            }, 15000);
-        } else {
-            const attendanceListener = EducareTrack.db.collection('attendance')
-                .where('classId', '==', this.currentUser.classId)
-                .onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'added') {
-                            this.handleNewActivity(change.doc.data());
-                        }
-                    });
-                });
-            const clinicListener = EducareTrack.db.collection('clinicVisits')
-                .where('classId', '==', this.currentUser.classId)
-                .onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'added' || change.type === 'modified') {
-                            this.refreshDashboardStats();
-                        }
-                    });
-                });
-            const notificationListener = EducareTrack.db.collection('notifications')
-                .where('targetUsers', 'array-contains', this.currentUser.id)
-                .onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'added') {
-                            this.handleNewNotification(change.doc.data());
-                        }
-                    });
-                });
-            this.realTimeListeners = [attendanceListener, clinicListener, notificationListener];
+        this.realTimeListeners = [];
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
         }
+        this.pollTimer = setInterval(async () => {
+            try {
+                await this.loadRecentActivity();
+                await this.loadNotifications();
+                await this.refreshDashboardStats();
+            } catch (e) {
+                console.error('Polling error:', e);
+            }
+        }, 15000);
     }
 
     handleNewActivity(activity) {
@@ -677,33 +638,41 @@ class TeacherDashboard {
         try {
             const container = document.getElementById('clinicValidations');
             if (!container || !this.currentUser?.classId) return;
-            const snapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('classId', '==', this.currentUser.classId)
-                .where('checkIn', '==', true)
-                .where('teacherValidationStatus', '==', 'pending')
-                .get();
-            const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-                .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
-                    return new Date(bt) - new Date(at);
-                })
-                .slice(0, 10);
+
+            const { data: itemsData, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('class_id', this.currentUser.classId)
+                .eq('check_in', true)
+                .eq('teacherValidationStatus', 'pending')
+                .order('timestamp', { ascending: false })
+                .limit(10);
+
+            if (error) throw error;
+
+            const items = (itemsData || []).map(doc => ({
+                id: doc.id,
+                ...doc,
+                studentName: doc.student_name || doc.studentName,
+                medicalFindings: doc.medical_findings || doc.medicalFindings,
+                timestamp: doc.timestamp ? new Date(doc.timestamp) : new Date()
+            }));
+
             if (items.length === 0) {
                 container.innerHTML = '<div class="text-gray-500 text-sm">No pending validations</div>';
                 return;
             }
             container.innerHTML = items.map(v => `
-                <div class=\"flex items-center justify-between border border-gray-200 rounded-md p-3\">\n
-                    <div>\n
-                        <div class=\"text-sm font-medium text-gray-800\">${v.studentName}</div>\n
-                        <div class=\"text-xs text-gray-500\">${v.reason || ''}</div>\n
-                        <div class=\"text-xs text-gray-400\">${v.medicalFindings ? v.medicalFindings.substring(0, 60) + '…' : ''}</div>\n
-                    </div>\n
-                    <div class=\"flex items-center space-x-2\">\n
-                        <button class=\"px-2 py-1 text-xs rounded bg-green-100 text-green-700\" data-visit-id=\"${v.id}\" data-action=\"approve\">Approve</button>\n
-                        <button class=\"px-2 py-1 text-xs rounded bg-red-100 text-red-700\" data-visit-id=\"${v.id}\" data-action=\"reject\">Reject</button>\n
-                    </div>\n
+                <div class="flex items-center justify-between border border-gray-200 rounded-md p-3">
+                    <div>
+                        <div class="text-sm font-medium text-gray-800">${v.studentName}</div>
+                        <div class="text-xs text-gray-500">${v.reason || ''}</div>
+                        <div class="text-xs text-gray-400">${v.medicalFindings ? v.medicalFindings.substring(0, 60) + '…' : ''}</div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button class="px-2 py-1 text-xs rounded bg-green-100 text-green-700" data-visit-id="${v.id}" data-action="approve">Approve</button>
+                        <button class="px-2 py-1 text-xs rounded bg-red-100 text-red-700" data-visit-id="${v.id}" data-action="reject">Reject</button>
+                    </div>
                 </div>
             `).join('');
             container.querySelectorAll('button[data-visit-id]').forEach(btn => {

@@ -181,7 +181,7 @@ class ParentDashboard {
                     if (record.status === 'late') lateStudents.add(child.id);
                 });
 
-                const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
                     .where('studentId', '==', child.id)
                     .where('timestamp', '>=', today)
                     .where('checkIn', '==', true)

@@ -59,20 +59,16 @@ class SettingsManager {
         try {
             let settings = null;
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('system_settings')
-                    .select('value')
-                    .eq('key', 'attendance_schedule')
-                    .single();
-                
-                if (data) settings = data.value;
-                // If error (e.g. not found), we stick to null -> default
-            } else {
-                // Firestore Fallback
-                const doc = await window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').get();
-                if (doc.exists) settings = doc.data();
+            if (!window.supabaseClient) {
+                throw new Error('Supabase client not initialized');
             }
+            const { data, error } = await window.supabaseClient
+                .from('system_settings')
+                .select('value')
+                .eq('key', 'attendance_schedule')
+                .single();
+            
+            if (data) settings = data.value;
 
             this.populateForm(settings || this.defaultSchedule);
 
@@ -100,20 +96,18 @@ class SettingsManager {
         const settings = Object.fromEntries(formData.entries());
 
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { error } = await window.supabaseClient
-                    .from('system_settings')
-                    .upsert({ 
-                        key: 'attendance_schedule', 
-                        value: settings,
-                        updated_at: new Date().toISOString()
-                    }, { onConflict: 'key' });
-
-                if (error) throw error;
-            } else {
-                // Firestore Fallback
-                await window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').set(settings);
+            if (!window.supabaseClient) {
+                throw new Error('Supabase client not initialized');
             }
+            const { error } = await window.supabaseClient
+                .from('system_settings')
+                .upsert({ 
+                    key: 'attendance_schedule', 
+                    value: settings,
+                    updated_at: new Date().toISOString()
+                }, { onConflict: 'key' });
+
+            if (error) throw error;
             alert('Settings saved successfully!');
         } catch (error) {
             console.error('Error saving settings:', error);

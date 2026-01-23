@@ -235,6 +235,78 @@ class UserManagement {
         const isEditing = !!this.currentEditingUser;
         const roleName = this.currentRole.charAt(0).toUpperCase() + this.currentRole.slice(1);
 
+        let roleSpecificFields = '';
+        if (this.currentRole === 'guard') {
+            roleSpecificFields = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">Shift</label>
+                         <select id="guardShift" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="Morning" ${user?.shift === 'Morning' ? 'selected' : ''}>Morning</option>
+                            <option value="Afternoon" ${user?.shift === 'Afternoon' ? 'selected' : ''}>Afternoon</option>
+                            <option value="Night" ${user?.shift === 'Night' ? 'selected' : ''}>Night</option>
+                         </select>
+                    </div>
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">Assigned Gate</label>
+                         <input type="text" id="guardGate" value="${user?.assignedGate || user?.assigned_gate || ''}" 
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            `;
+        } else if (this.currentRole === 'clinic') {
+             roleSpecificFields = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">License No.</label>
+                         <input type="text" id="clinicLicense" value="${user?.licenseNo || user?.license_no || ''}" 
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">Position</label>
+                         <input type="text" id="clinicPosition" value="${user?.position || ''}" 
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            `;
+        } else if (this.currentRole === 'admin') {
+             const availablePermissions = ['manage_users', 'manage_classes', 'manage_content', 'view_reports', 'system_settings'];
+             const rawPermissions = user?.permissions;
+             let permissions = [];
+             if (Array.isArray(rawPermissions)) {
+                permissions = rawPermissions;
+             } else if (rawPermissions && typeof rawPermissions === 'object') {
+                if (rawPermissions.all) {
+                    permissions = [...availablePermissions];
+                } else {
+                    permissions = availablePermissions.filter(p => rawPermissions[p]);
+                }
+             }
+             
+             const permissionCheckboxes = availablePermissions.map(p => `
+                <label class="flex items-center space-x-2">
+                    <input type="checkbox" class="admin-permission-checkbox rounded text-blue-600 focus:ring-blue-500" value="${p}" ${permissions.includes(p) ? 'checked' : ''}>
+                    <span class="text-sm text-gray-700">${p.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                </label>
+             `).join('');
+
+             roleSpecificFields = `
+                <div class="grid grid-cols-1 gap-4">
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">Position</label>
+                         <input type="text" id="adminPosition" value="${user?.position || ''}" 
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Permissions</label>
+                        <div class="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded border border-gray-200">
+                            ${permissionCheckboxes}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         return `
             <div class="p-6">
                 <div class="flex justify-between items-center mb-4">
@@ -283,13 +355,9 @@ class UserManagement {
                                 <input type="tel" id="userPhone" value="${user?.phone || ''}" 
                                        class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
-                                <input type="text" id="userEmployeeId" value="${user?.employeeId || ''}" 
-                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            </div>
                         </div>
+                        
+                        ${roleSpecificFields}
                         
                         <div class="flex justify-end mt-6">
                             <button type="button" onclick="userManagement.nextStaffStep(2)" 
@@ -402,8 +470,14 @@ class UserManagement {
     validateCurrentStaffStep() {
         if (this.currentStep === 1) {
             const name = document.getElementById('userName')?.value;
+            const email = document.getElementById('userEmail')?.value;
+            
             if (!name) {
                 this.showNotification('Please enter name', 'error');
+                return false;
+            }
+            if (!email) {
+                this.showNotification('Please enter email', 'error');
                 return false;
             }
         } else if (this.currentStep === 2) {
@@ -427,16 +501,39 @@ class UserManagement {
         const name = document.getElementById('userName').value;
         const email = document.getElementById('userEmail').value;
         const phone = document.getElementById('userPhone').value;
-        const employeeId = document.getElementById('userEmployeeId').value;
         const username = document.getElementById('staffUsername').value;
+        const role = this.currentRole;
+        const roleName = role.charAt(0).toUpperCase() + role.slice(1);
+
+        let roleSpecificDetails = '';
+        if (role === 'guard') {
+            const shift = document.getElementById('guardShift').value;
+            const gate = document.getElementById('guardGate').value;
+            roleSpecificDetails = `
+                <p><strong>Shift:</strong> ${shift}</p>
+                <p><strong>Assigned Gate:</strong> ${gate || 'N/A'}</p>
+            `;
+        } else if (role === 'clinic') {
+            const license = document.getElementById('clinicLicense').value;
+            const position = document.getElementById('clinicPosition').value;
+            roleSpecificDetails = `
+                <p><strong>License No.:</strong> ${license || 'N/A'}</p>
+                <p><strong>Position:</strong> ${position || 'N/A'}</p>
+            `;
+        } else if (role === 'admin') {
+            const position = document.getElementById('adminPosition').value;
+            roleSpecificDetails = `
+                <p><strong>Position:</strong> ${position || 'N/A'}</p>
+            `;
+        }
         
         preview.innerHTML = `
             <p><strong>Name:</strong> ${name}</p>
             <p><strong>Email:</strong> ${email || 'N/A'}</p>
             <p><strong>Phone:</strong> ${phone || 'N/A'}</p>
-            <p><strong>Employee ID:</strong> ${employeeId || 'N/A'}</p>
             <p><strong>Username:</strong> ${username}</p>
-            <p><strong>Role:</strong> ${this.currentRole.charAt(0).toUpperCase() + this.currentRole.slice(1)}</p>
+            <p><strong>Role:</strong> ${roleName}</p>
+            ${roleSpecificDetails}
         `;
     }
 
@@ -809,12 +906,27 @@ class UserManagement {
                             </select>
                         </div>
                     </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Occupation</label>
+                            <input type="text" id="parentOccupation" value="${user?.occupation || ''}" 
+                                   class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                         <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                            <input type="text" id="parentAddress" value="${user?.address || ''}" 
+                                   class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
                     
+                    <!-- 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Emergency Contact</label>
                         <input type="tel" id="emergencyContact" value="${user?.emergencyContact || ''}" 
                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
+                    -->
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
@@ -881,7 +993,7 @@ class UserManagement {
             'Grade 12 - STEM', 'Grade 12 - HUMSS', 'Grade 12 - ABM', 'Grade 12 - ICT'
         ];
 
-        // If we have classes from Firestore, use them, otherwise use default options
+        // If we have classes from Supabase, use them, otherwise use default options
         if (this.classes.length > 0) {
             return this.classes.map(cls => 
                 `<option value="${cls.id}" ${(this.currentEditingUser?.classId === cls.id || this.currentEditingUser?.class_id === cls.id) ? 'selected' : ''}>
@@ -895,6 +1007,65 @@ class UserManagement {
                 </option>`
             ).join('');
         }
+    }
+
+    getClassFromSelection(selection) {
+        if (!selection) return null;
+        return this.classes.find(cls =>
+            cls.id === selection ||
+            cls.name === selection ||
+            cls.grade === selection ||
+            `${cls.grade}${cls.strand ? ' - ' + cls.strand : ''}` === selection
+        );
+    }
+
+    getClassLabel(selection) {
+        if (!selection) return '';
+        const cls = this.getClassFromSelection(selection);
+        if (!cls) return selection;
+        const grade = cls.grade || cls.name || '';
+        return `${grade}${cls.strand ? ' - ' + cls.strand : ''}`;
+    }
+
+    parseClassName(className) {
+        const raw = (className || '').trim();
+        if (!raw) return { level: 'Elementary', grade: '', strand: null };
+        let grade = raw;
+        let strand = null;
+        if (raw.includes('-')) {
+            const parts = raw.split('-').map(p => p.trim()).filter(Boolean);
+            if (parts[0]) grade = parts[0];
+            if (parts[1]) strand = parts[1].replace(/[()]/g, '').trim();
+        } else {
+            const match = raw.match(/^(.*?)\s*\((.*?)\)\s*$/);
+            if (match) {
+                grade = match[1].trim();
+                strand = match[2].trim();
+            }
+        }
+
+        let level = 'Elementary';
+        if (grade.includes('Kinder')) {
+            level = 'Kindergarten';
+        } else {
+            const gradeNum = parseInt(grade.replace(/\D/g, ''), 10);
+            if (!Number.isNaN(gradeNum)) {
+                if (gradeNum >= 1 && gradeNum <= 6) level = 'Elementary';
+                else if (gradeNum >= 7 && gradeNum <= 10) level = 'Highschool';
+                else if (gradeNum >= 11 && gradeNum <= 12) level = 'Senior High';
+            }
+        }
+
+        if (strand) {
+            const upper = strand.toUpperCase();
+            if (upper.includes('STEM')) strand = 'STEM';
+            else if (upper.includes('HUMSS')) strand = 'HUMSS';
+            else if (upper.includes('ABM')) strand = 'ABM';
+            else if (upper.includes('ICT')) strand = 'ICT';
+            else if (upper.includes('TVL')) strand = 'TVL';
+        }
+
+        return { level, grade, strand: strand || null };
     }
 
     // Handle class change to update available subjects
@@ -913,7 +1084,8 @@ class UserManagement {
         }
 
         // Get subjects based on class selection
-        const subjects = this.getSubjectsForClass(selectedClass);
+        const classLabel = this.getClassLabel(selectedClass);
+        const subjects = this.getSubjectsForClass(classLabel);
         
         if (subjects.length === 0) {
             subjectSelection.innerHTML = '<p class="text-gray-500">No subjects available for this class</p>';
@@ -1121,8 +1293,14 @@ class UserManagement {
     validateCurrentStep() {
         if (this.currentStep === 1) { // Info
             const name = document.getElementById('teacherName')?.value;
+            const email = document.getElementById('teacherEmail')?.value;
+            
             if (!name) {
                 this.showNotification('Please enter teacher name', 'error');
+                return false;
+            }
+            if (!email) {
+                this.showNotification('Please enter teacher email', 'error');
                 return false;
             }
         } else if (this.currentStep === 2) { // Advisory
@@ -1162,7 +1340,8 @@ class UserManagement {
         const phone = document.getElementById('teacherPhone').value;
         
         const hasAdvisory = document.getElementById('hasAdvisory').checked;
-        const selectedClass = hasAdvisory ? document.getElementById('teacherClass').value : 'None';
+        const selectedClassValue = hasAdvisory ? document.getElementById('teacherClass').value : '';
+        const selectedClass = hasAdvisory ? (this.getClassLabel(selectedClassValue) || selectedClassValue) : 'None';
         
         const username = document.getElementById('teacherUsername').value;
         
@@ -1220,6 +1399,32 @@ class UserManagement {
         `;
     }
 
+    async createAuthUser(email, password, metadata) {
+        // Create a temporary client to avoid signing out the admin
+        // We need the URL and Key. Assuming supabaseConfig is global or we can get it from the window
+        const url = (typeof supabaseConfig !== 'undefined' ? supabaseConfig.url : '') || window.supabaseClient.supabaseUrl;
+        const key = (typeof supabaseConfig !== 'undefined' ? supabaseConfig.anonKey : '') || window.supabaseClient.supabaseKey;
+
+        if (!url || !key) {
+            throw new Error('Supabase configuration not found. Cannot create auth user.');
+        }
+
+        const tempClient = window.supabase.createClient(url, key);
+        
+        const { data, error } = await tempClient.auth.signUp({
+            email,
+            password,
+            options: {
+                data: metadata
+            }
+        });
+
+        if (error) throw error;
+        if (!data.user) throw new Error('User creation failed - no user returned');
+        
+        return data.user.id;
+    }
+
     async saveTeacher() {
         try {
             this.showLoading();
@@ -1231,11 +1436,9 @@ class UserManagement {
             if (hasAdvisory) {
                 assignedClass = document.getElementById('teacherClass').value;
                 if (assignedClass) {
-                    // Find or create class in Firestore/Supabase
+                    // Find or create class in Supabase
                     if (this.classes.length > 0) {
-                        const existingClass = this.classes.find(cls => 
-                            cls.id === assignedClass || cls.name === assignedClass
-                        );
+                        const existingClass = this.getClassFromSelection(assignedClass);
                         if (!existingClass) {
                             // Create new class
                             classId = await this.createClass(assignedClass);
@@ -1248,88 +1451,119 @@ class UserManagement {
                 }
             }
 
-            const userData = {
-                name: document.getElementById('teacherName').value,
-                email: document.getElementById('teacherEmail').value || '',
-                phone: document.getElementById('teacherPhone').value || '',
-                classId: classId,
-                class_id: classId, // Add snake_case for Supabase compatibility
-                assignedClass: assignedClass,
-                // assignedSubjects: this.selectedSubjects, // Deprecated in favor of capabilities
-                capabilities: this.teacherCapabilities,
-                isHomeroom: hasAdvisory,
-                is_gatekeeper: document.getElementById('isGatekeeper').checked,
-                username: document.getElementById('teacherUsername').value,
-                role: 'teacher',
-                is_active: true,
-                created_by: window.EducareTrack.currentUser.id,
-                createdBy: window.EducareTrack.currentUser.id
+            const name = document.getElementById('teacherName').value;
+            const phone = document.getElementById('teacherPhone').value || '';
+            const username = document.getElementById('teacherUsername').value;
+            // Generate a dummy email if not provided, for Auth purposes
+            const emailInput = document.getElementById('teacherEmail').value;
+            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
+            
+            const password = document.getElementById('teacherPassword').value;
+
+            // Prepare data for 'teachers' table
+            const teacherData = {
+                employee_no: username, // Mapping Username -> Employee No
+                is_homeroom: hasAdvisory,
+                assigned_subjects: this.teacherCapabilities.map(cap => cap.subject) // Flatten capabilities to subjects array
             };
 
-            const password = document.getElementById('teacherPassword').value;
+            // Prepare data for 'profiles' table
+            const profileData = {
+                full_name: name,
+                phone: phone,
+                role: 'teacher',
+                is_active: true,
+                username: username
+            };
+
             if (password) {
-                userData.password = password;
+                profileData.password = password;
             }
 
             if (this.currentEditingUser) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .update({
-                            name: userData.name,
-                            email: userData.email,
-                            phone: userData.phone,
-                            class_id: userData.class_id,
-                            username: userData.username,
-                            password: userData.password, // Only if provided, but here we set it in object if exists
-                            capabilities: userData.capabilities,
-                            is_gatekeeper: userData.is_gatekeeper,
-                            is_active: userData.is_active,
-                            updated_at: new Date().toISOString()
-                            // updated_by: window.EducareTrack.currentUser.id
-                        })
-                        .eq('id', this.currentEditingUser.id);
-                    
-                    if (error) throw error;
-                } else {
-                    await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
-                        ...userData,
-                        updated_at: new Date(),
-                        updated_by: window.EducareTrack.currentUser.id
-                    });
-                }
-                this.showNotification('Teacher updated successfully', 'success');
-            } else {
-                const teacherId = window.EducareTrack.generateUserId('teacher', userData.phone);
+                // Update existing user
+                // 1. Update Profile
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .update(profileData)
+                    .eq('id', this.currentEditingUser.id);
                 
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .insert([{
-                            id: teacherId,
-                            name: userData.name,
-                            email: userData.email,
-                            phone: userData.phone,
-                            class_id: userData.class_id,
-                            capabilities: userData.capabilities,
-                            is_gatekeeper: userData.is_gatekeeper,
-                            username: userData.username,
-                            password: userData.password,
-                            role: 'teacher',
-                            is_active: true,
-                            created_at: new Date().toISOString()
-                            // created_by: window.EducareTrack.currentUser.id
-                        }]);
+                if (profileError) throw profileError;
 
-                    if (error) throw error;
-                } else {
-                    const teacherData = {
-                        ...userData,
-                        id: teacherId,
-                        created_at: new Date()
-                    };
-                    await window.EducareTrack.db.collection('users').doc(teacherId).set(teacherData);
+                // 2. Update Teacher Data
+                const { error: teacherError } = await window.supabaseClient
+                    .from('teachers')
+                    .update(teacherData)
+                    .eq('id', this.currentEditingUser.id); // One-to-one mapping
+
+                if (teacherError) throw teacherError;
+
+                // 3. Update Class Adviser if applicable
+                if (hasAdvisory && classId) {
+                    // Clear previous advisory class for this teacher
+                    await window.supabaseClient
+                        .from('classes')
+                        .update({ adviser_id: null })
+                        .eq('adviser_id', this.currentEditingUser.id);
+
+                    // Set new advisory class
+                    const { error: classError } = await window.supabaseClient
+                        .from('classes')
+                        .update({ adviser_id: this.currentEditingUser.id })
+                        .eq('id', classId);
+                    
+                    if (classError) console.error('Error updating class adviser:', classError);
+                } else if (!hasAdvisory) {
+                    // If advisory was removed, clear it
+                    await window.supabaseClient
+                        .from('classes')
+                        .update({ adviser_id: null })
+                        .eq('adviser_id', this.currentEditingUser.id);
                 }
+                
+                // Note: We don't update Auth email/password here as it requires service role or user action
+                this.showNotification('Teacher updated successfully', 'success');
+
+            } else {
+                // Create new user
+                if (!password) throw new Error('Password is required for new users');
+
+                // 1. Create Auth User
+                const userId = await this.createAuthUser(email, password, {
+                    full_name: name,
+                    role: 'teacher'
+                });
+
+                // 2. Insert Profile
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .insert([{
+                        id: userId,
+                        ...profileData
+                    }]);
+                
+                if (profileError) throw profileError;
+
+                // 3. Insert Teacher Data
+                const { error: teacherError } = await window.supabaseClient
+                    .from('teachers')
+                    .insert([{
+                        id: userId,
+                        ...teacherData
+                    }]);
+
+                if (teacherError) throw teacherError;
+
+                // 4. Update Class Adviser if applicable
+                if (hasAdvisory && classId) {
+                    const { error: classError } = await window.supabaseClient
+                        .from('classes')
+                        .update({ adviser_id: userId })
+                        .eq('id', classId);
+                    
+                    if (classError) console.error('Error updating class adviser:', classError);
+                }
+
                 this.showNotification('Teacher created successfully', 'success');
             }
 
@@ -1345,66 +1579,39 @@ class UserManagement {
 
     async createClass(className) {
         try {
-            // Parse class name to determine level and strand
-            let level = 'Elementary';
-            let grade = className;
-            let strand = null;
+            const parsed = this.parseClassName(className);
+            const level = parsed.level;
+            const grade = parsed.grade || className;
+            const strand = parsed.strand;
 
-            if (className === 'Kinder') {
-                level = 'Kindergarten';
-            } else if (className.includes('Grade 11') || className.includes('Grade 12')) {
-                level = 'Senior High';
-                if (className.includes('STEM')) {
-                    strand = 'STEM';
-                } else if (className.includes('HUMSS')) {
-                    strand = 'HUMSS';
-                } else if (className.includes('ABM')) {
-                    strand = 'ABM';
-                } else if (className.includes('ICT')) {
-                    strand = 'TVL';
-                }
-            } else if (className.includes('Grade 7') || className.includes('Grade 8') || 
-                       className.includes('Grade 9') || className.includes('Grade 10')) {
-                level = 'Highschool';
-            }
+            // Generate UUID for new class
+            const newClassId = crypto.randomUUID();
 
             const classData = {
-                name: className,
-                grade: grade,
+                id: newClassId,
                 level: level,
+                grade: grade,
                 strand: strand,
-                subjects: this.getSubjectsForClass(className),
                 is_active: true,
                 created_at: new Date().toISOString()
-                // created_by: window.EducareTrack.currentUser.id
             };
 
-            let classId;
-
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('classes')
-                    .insert([classData])
-                    .select('id')
-                    .single();
-                
-                if (error) throw error;
-                classId = data.id;
-            } else {
-                const classRef = await window.EducareTrack.db.collection('classes').add({
-                    ...classData,
-                    created_at: new Date()
-                });
-                classId = classRef.id;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('classes')
+                .insert([classData])
+                .select('id')
+                .single();
+            
+            if (error) throw error;
+            const classId = data.id;
             
             // Add to local classes array
-            this.classes.push({ id: classId, ...classData });
+            this.classes.push({ ...classData, name: className, level, subjects: this.getSubjectsForClass(className) });
             
             return classId;
         } catch (error) {
             console.error('Error creating class:', error);
-            return className; // Fallback to class name as ID
+            return null;
         }
     }
 
@@ -1422,17 +1629,12 @@ class UserManagement {
         try {
             // Verify student exists
             let exists = false;
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('students')
-                    .select('id')
-                    .eq('id', childId)
-                    .single();
-                exists = !!data && !error;
-            } else {
-                const doc = await window.EducareTrack.db.collection('students').doc(childId).get();
-                exists = doc.exists;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .eq('id', childId)
+                .single();
+            exists = !!data && !error;
 
             if (!exists) {
                 this.showNotification('Student ID not found', 'error');
@@ -1477,87 +1679,101 @@ class UserManagement {
         try {
             this.showLoading();
 
-            const userData = {
-                name: document.getElementById('userName').value,
-                email: document.getElementById('userEmail').value || '',
-                phone: document.getElementById('userPhone').value || '',
-                username: document.getElementById('staffUsername').value,
-                role: this.currentRole,
-                is_active: true
-            };
-
+            const name = document.getElementById('userName').value;
+            const emailInput = document.getElementById('userEmail').value;
+            const phone = document.getElementById('userPhone').value;
+            const username = document.getElementById('staffUsername').value;
+            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
             const password = document.getElementById('staffPassword').value;
-            if (password) {
-                userData.password = password;
+
+            // Prepare role-specific data
+            let roleData = {};
+            let roleTable = '';
+
+            if (this.currentRole === 'guard') {
+                roleTable = 'guards';
+                roleData = {
+                    shift: document.getElementById('guardShift').value,
+                    assigned_gate: document.getElementById('guardGate').value
+                };
+            } else if (this.currentRole === 'clinic') {
+                roleTable = 'clinic_staff';
+                roleData = {
+                    license_no: document.getElementById('clinicLicense').value,
+                    position: document.getElementById('clinicPosition').value
+                };
+            } else if (this.currentRole === 'admin') {
+                roleTable = 'admin_staff';
+                const permissionCheckboxes = document.querySelectorAll('.admin-permission-checkbox:checked');
+                const selectedPermissions = Array.from(permissionCheckboxes).map(cb => cb.value);
+                
+                roleData = {
+                    position: document.getElementById('adminPosition').value,
+                    permissions: selectedPermissions
+                };
             }
 
-            // Add employee ID for guard and clinic staff
-            // Note: Supabase schema might not have employee_id, so we only use it for preview or local storage if needed
-            // userData.employeeId = document.getElementById('userEmployeeId').value || '';
-            // userData.employee_id = userData.employeeId; // snake_case
+            const profileData = {
+                full_name: name,
+                phone: phone,
+                email: email,
+                role: this.currentRole,
+                is_active: true,
+                username: username
+            };
+
+            if (password) {
+                profileData.password = password;
+            }
 
             if (this.currentEditingUser) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const updateData = {
-                        name: userData.name,
-                        email: userData.email,
-                        phone: userData.phone,
-                        username: userData.username,
-                        is_active: userData.is_active,
-                        updated_at: new Date().toISOString()
-                        // updated_by: window.EducareTrack.currentUser.id
-                    };
-                    
-                    if (password) updateData.password = password;
-                    // if (userData.employee_id) updateData.employee_id = userData.employee_id;
+                // Update existing user
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .update(profileData)
+                    .eq('id', this.currentEditingUser.id);
+                
+                if (profileError) throw profileError;
 
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .update(updateData)
+                if (roleTable) {
+                    const { error: roleError } = await window.supabaseClient
+                        .from(roleTable)
+                        .update(roleData)
                         .eq('id', this.currentEditingUser.id);
-                    
-                    if (error) throw error;
-                } else {
-                    await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
-                        ...userData,
-                        updated_at: new Date(),
-                        updated_by: window.EducareTrack.currentUser.id
-                    });
+
+                    if (roleError) throw roleError;
                 }
+                
                 this.showNotification('User updated successfully', 'success');
             } else {
-                // Create new user - generate ID using EducareTrack method
-                const userId = window.EducareTrack.generateUserId(this.currentRole, userData.phone);
+                // Create new user
+                if (!password) throw new Error('Password is required for new users');
+
+                const userId = await this.createAuthUser(email, password, {
+                    full_name: name,
+                    role: this.currentRole
+                });
+
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .insert([{
+                        id: userId,
+                        ...profileData
+                    }]);
                 
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const insertData = {
-                        id: userId,
-                        name: userData.name,
-                        email: userData.email,
-                        phone: userData.phone,
-                        username: userData.username,
-                        password: userData.password,
-                        role: this.currentRole,
-                        is_active: true,
-                        created_at: new Date().toISOString()
-                        // created_by: window.EducareTrack.currentUser.id
-                    };
-                    
-                    // if (userData.employee_id) insertData.employee_id = userData.employee_id;
+                if (profileError) throw profileError;
 
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .insert([insertData]);
+                if (roleTable) {
+                    const { error: roleError } = await window.supabaseClient
+                        .from(roleTable)
+                        .insert([{
+                            id: userId,
+                            ...roleData
+                        }]);
 
-                    if (error) throw error;
-                } else {
-                    const newUserData = {
-                        ...userData,
-                        id: userId,
-                        created_at: new Date()
-                    };
-                    await window.EducareTrack.db.collection('users').doc(userId).set(newUserData);
+                    if (roleError) throw roleError;
                 }
+
                 this.showNotification('User created successfully', 'success');
             }
 
@@ -1575,89 +1791,113 @@ class UserManagement {
         try {
             this.showLoading();
 
-            const userData = {
-                name: document.getElementById('parentName').value,
-                email: document.getElementById('parentEmail').value || '',
-                phone: document.getElementById('parentPhone').value,
-                relationship: document.getElementById('parentRelationship').value,
-                emergencyContact: document.getElementById('emergencyContact').value || '',
-                emergency_contact: document.getElementById('emergencyContact').value || '', // snake_case
-                children: this.tempChildren || [],
-                username: document.getElementById('parentUsername').value,
-                role: 'parent',
-                is_active: true
+            const name = document.getElementById('parentName').value;
+            const emailInput = document.getElementById('parentEmail').value;
+            const phone = document.getElementById('parentPhone').value;
+            const relationship = document.getElementById('parentRelationship').value;
+            // const emergencyContact = document.getElementById('emergencyContact').value || ''; // Removed from UI
+            const occupation = document.getElementById('parentOccupation').value || '';
+            const address = document.getElementById('parentAddress').value || '';
+            
+            const username = document.getElementById('parentUsername').value;
+            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
+            
+            const password = document.getElementById('parentPassword').value;
+
+            const parentData = {
+                address: address,
+                occupation: occupation
             };
 
-            const password = document.getElementById('parentPassword').value;
+            const profileData = {
+                full_name: name,
+                phone: phone,
+                role: 'parent',
+                is_active: true,
+                username: username
+            };
+
             if (password) {
-                userData.password = password;
+                profileData.password = password;
             }
 
             if (this.currentEditingUser) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const updateData = {
-                        name: userData.name,
-                        email: userData.email,
-                        phone: userData.phone,
-                        relationship: userData.relationship,
-                        emergency_contact: userData.emergency_contact,
-                        children: userData.children,
-                        username: userData.username,
-                        is_active: userData.is_active,
-                        updated_at: new Date().toISOString()
-                        // updated_by: window.EducareTrack.currentUser.id
-                    };
-                    
-                    if (password) updateData.password = password;
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .update(profileData)
+                    .eq('id', this.currentEditingUser.id);
+                
+                if (profileError) throw profileError;
 
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .update(updateData)
-                        .eq('id', this.currentEditingUser.id);
+                const { error: parentError } = await window.supabaseClient
+                    .from('parents')
+                    .update(parentData)
+                    .eq('id', this.currentEditingUser.id);
+
+                if (parentError) throw parentError;
+
+                // Update Children (Parent Students)
+                // Delete existing links first to ensure clean state
+                await window.supabaseClient
+                    .from('parent_students')
+                    .delete()
+                    .eq('parent_id', this.currentEditingUser.id);
                     
-                    if (error) throw error;
-                } else {
-                    await window.EducareTrack.db.collection('users').doc(this.currentEditingUser.id).update({
-                        ...userData,
-                        updated_at: new Date(),
-                        updated_by: window.EducareTrack.currentUser.id
-                    });
+                if (this.tempChildren && this.tempChildren.length > 0) {
+                     const parentStudents = this.tempChildren.map(studentId => ({
+                        parent_id: this.currentEditingUser.id,
+                        student_id: studentId,
+                        relationship: relationship
+                     }));
+                     
+                     const { error: linkError } = await window.supabaseClient
+                        .from('parent_students')
+                        .insert(parentStudents);
+                        
+                     if (linkError) throw linkError;
                 }
+                
                 this.showNotification('Parent updated successfully', 'success');
             } else {
-                // Create new parent - generate ID using EducareTrack method
-                const parentId = window.EducareTrack.generateUserId('parent', userData.phone);
+                if (!password) throw new Error('Password is required for new users');
+
+                const userId = await this.createAuthUser(email, password, {
+                    full_name: name,
+                    role: 'parent'
+                });
+
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .insert([{
+                        id: userId,
+                        ...profileData
+                    }]);
                 
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const insertData = {
-                        id: parentId,
-                        name: userData.name,
-                        email: userData.email,
-                        phone: userData.phone,
-                        relationship: userData.relationship,
-                        emergency_contact: userData.emergency_contact,
-                        children: userData.children,
-                        username: userData.username,
-                        password: userData.password,
-                        role: 'parent',
-                        is_active: true,
-                        created_at: new Date().toISOString()
-                        // created_by: window.EducareTrack.currentUser.id
-                    };
+                if (profileError) throw profileError;
 
-                    const { error } = await window.supabaseClient
-                        .from('users')
-                        .insert([insertData]);
+                const { error: parentError } = await window.supabaseClient
+                    .from('parents')
+                    .insert([{
+                        id: userId,
+                        ...parentData
+                    }]);
 
-                    if (error) throw error;
-                } else {
-                    const parentData = {
-                        ...userData,
-                        id: parentId,
-                        created_at: new Date()
-                    };
-                    await window.EducareTrack.db.collection('users').doc(parentId).set(parentData);
+                if (parentError) throw parentError;
+
+                if (this.tempChildren && this.tempChildren.length > 0) {
+                     const parentStudents = this.tempChildren.map(studentId => ({
+                        parent_id: userId,
+                        student_id: studentId,
+                        relationship: relationship
+                     }));
+                     
+                     const { error: linkError } = await window.supabaseClient
+                        .from('parent_students')
+                        .insert(parentStudents);
+                        
+                     if (linkError) throw linkError;
                 }
+
                 this.showNotification('Parent created successfully', 'success');
             }
 
@@ -1698,9 +1938,13 @@ class UserManagement {
     async toggleUserStatus(userId, newStatus) {
         try {
             this.showLoading();
-            await window.EducareTrack.db.collection('users').doc(userId).update({
-                is_active: newStatus
-            });
+            const { error } = await window.supabaseClient
+                .from('profiles')
+                .update({ is_active: newStatus })
+                .eq('id', userId);
+                
+            if (error) throw error;
+
             this.showNotification(`User ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
             await this.loadUsers();
             this.hideLoading();

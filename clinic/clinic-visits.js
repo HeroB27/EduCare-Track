@@ -46,40 +46,24 @@ class ClinicVisits {
 
     async loadVisits() {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
-                    .order('timestamp', { ascending: false });
-                if (error) throw error;
-                this.visits = (data || []).map(v => ({
-                    id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.classId,
-                    reason: v.reason || '',
-                    checkIn: !!v.checkIn,
-                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
-                    notes: v.notes || '',
-                    staffName: v.treatedBy || '',
-                    recommendations: v.outcome || ''
-                }));
-                this.applyFilters();
-            } else {
-                const snapshot = await firebase.firestore()
-                    .collection('clinicVisits')
-                    .orderBy('timestamp', 'desc')
-                    .get();
-                this.visits = snapshot.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        id: doc.id,
-                        ...data,
-                        timestamp: data.timestamp?.toDate() || new Date()
-                    };
-                });
-                this.applyFilters();
-            }
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
+                .order('timestamp', { ascending: false });
+            if (error) throw error;
+            this.visits = (data || []).map(v => ({
+                id: v.id,
+                studentId: v.studentId,
+                studentName: v.studentName,
+                classId: v.classId,
+                reason: v.reason || '',
+                checkIn: !!v.checkIn,
+                timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
+                notes: v.notes || '',
+                staffName: v.treatedBy || '',
+                recommendations: v.outcome || ''
+            }));
+            this.applyFilters();
         } catch (error) {
             console.error('Error loading visits:', error);
             this.showError('Failed to load clinic visits');
@@ -368,13 +352,19 @@ class ClinicVisits {
                     return;
                 }
                 try {
-                    await firebase.firestore().collection('clinicVisits').doc(visitId).update({
-                        reason: newReason,
-                        notes: newNotes,
-                        updatedAt: new Date().toISOString(),
-                        updatedBy: this.currentUser.id,
-                        updatedByName: this.currentUser.name
-                    });
+                    const { error } = await window.supabaseClient
+                        .from('clinic_visits')
+                        .update({
+                            reason: newReason,
+                            notes: newNotes,
+                            updatedAt: new Date().toISOString(),
+                            updatedBy: this.currentUser.id,
+                            updatedByName: this.currentUser.name
+                        })
+                        .eq('id', visitId);
+
+                    if (error) throw error;
+
                     visit.reason = newReason;
                     visit.notes = newNotes;
                     this.applyFilters();

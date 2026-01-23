@@ -2,6 +2,10 @@
 // OPTIMIZED VERSION for Fast Performance
 // COMPLETE K-12 CURRICULUM SUPPORT WITH REPORTS & ANALYTICS
 
+if (typeof window !== 'undefined' && typeof window.exports === 'undefined') {
+    window.exports = {};
+}
+
 const SupabaseFieldValue = {
     serverTimestamp: () => new Date(),
     arrayUnion: (...values) => ({ __op: 'arrayUnion', values }),
@@ -256,22 +260,12 @@ class SupabaseFirestore {
         return new SupabaseBatch(this.client);
     }
 }
-const firebase = {
-    firestore: (() => {
-        const fn = () => new SupabaseFirestore(window.supabaseClient);
-        fn.FieldValue = SupabaseFieldValue;
-        fn.FieldPath = { documentId: () => 'id' };
-        return fn;
-    })(),
-    storage: null,
-    apps: [{ name: 'supabase' }],
-    initializeApp: () => ({})
-};
-const db = firebase.firestore();
+const db = new SupabaseFirestore(window.supabaseClient);
+// Expose FieldValue on db instance for compatibility
+db.FieldValue = SupabaseFieldValue;
+
 let storage = null;
-if (typeof window !== 'undefined' && window.supabaseClient && typeof window.USE_SUPABASE === 'undefined') {
-    window.USE_SUPABASE = true;
-}
+window.USE_SUPABASE = true;
 
 // Cache for frequently accessed data
 const dataCache = {
@@ -646,34 +640,28 @@ const EducareTrack = {
     initEssentialListeners() {
         if (!this.currentUser) return;
 
+        // Notification listener
+        if (this.notificationsListener) {
+            this.notificationsListener();
+        }
+
         // Only notifications for now - other data loaded on demand
-        this.notificationsListener = db.collection('notifications')
-            .where('target_users', 'array-contains', this.currentUser.id)
-            .where('is_active', '==', true)
-            .orderBy('created_at', 'desc')
-            .limit(10)
-            .onSnapshot(snapshot => {
-                if (!this.notificationsInitialized) {
-                    this.notificationsInitialized = true;
-                    this.updateNotificationBadge();
-                    return;
-                }
-                const changes = snapshot.docChanges();
-                const newNotifications = [];
-                for (const change of changes) {
-                    if (change.type === 'added') {
-                        const notification = { id: change.doc.id, ...change.doc.data() };
-                        if (!notification.read_by || !notification.read_by.includes(this.currentUser.id)) {
-                            newNotifications.push(notification);
-                        }
+        const subscription = window.supabaseClient
+            .channel('public:notifications')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, payload => {
+                const newNotification = payload.new;
+                if (newNotification.target_users && newNotification.target_users.includes(this.currentUser.id)) {
+                    // Check if active
+                    if (newNotification.is_active) {
+                        this.handleNewNotifications([{ id: newNotification.id, ...newNotification }]);
                     }
                 }
-                if (newNotifications.length > 0) {
-                    this.handleNewNotifications(newNotifications);
-                }
-            }, error => {
-                console.error('Notifications listener error:', error);
-            });
+            })
+            .subscribe();
+            
+        this.notificationsListener = () => {
+            window.supabaseClient.removeChannel(subscription);
+        };
     },
 
     // ==================== CURRICULUM METHODS ====================
@@ -805,25 +793,33 @@ const EducareTrack = {
     // Get subject teachers for a class
     async getSubjectTeachers(classId, subject) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('users')
-                    .select('id,email,name,role,phone,is_active,assigned_classes,assigned_subjects,class_id,is_homeroom')
-                    .eq('role', this.USER_TYPES.TEACHER)
-                    .contains('assigned_subjects', [subject])
-                    .contains('assigned_classes', [classId])
-                    .eq('is_active', true);
-                if (error || !data) return [];
-                return data.map(u => ({ id: u.id, ...u }));
-            } else {
-                const snapshot = await db.collection('users')
-                    .where('role', '==', this.USER_TYPES.TEACHER)
-                    .where('assigned_subjects', 'array-contains', subject)
-                    .where('assigned_classes', 'array-contains', classId)
-                    .where('is_active', '==', true)
-                    .get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
+            // Updated to use profiles and teachers tables
+            // Note: New schema links teachers to classes via adviser_id (homeroom) only
+            // or implicitly via assigned_subjects. We fetch teachers who have this subject.
+            const { data: teachers, error } = await window.supabaseClient
+                .from('teachers')
+                .select('id, assigned_subjects')
+                .contains('assigned_subjects', [subject]);
+            
+            if (error || !teachers) return [];
+
+            const teacherIds = teachers.map(t => t.id);
+            if (teacherIds.length === 0) return [];
+
+            const { data: profiles, error: profError } = await window.supabaseClient
+                .from('profiles')
+                .select('id, full_name, email, phone, role, is_active')
+                .in('id', teacherIds)
+                .eq('is_active', true);
+            
+            if (profError || !profiles) return [];
+
+            return profiles.map(p => ({
+                id: p.id,
+                name: p.full_name, // Map for legacy compatibility
+                ...p,
+                assigned_subjects: [subject] // inferred
+            }));
         } catch (error) {
             console.error('Error getting subject teachers:', error);
             return [];
@@ -832,30 +828,48 @@ const EducareTrack = {
 
     // ==================== USER MANAGEMENT ====================
 
+    // Check for existing session
+    async checkSession() {
+        try {
+            const stored = localStorage.getItem('educareTrack_user') || sessionStorage.getItem('educareTrack_user');
+            if (!stored) return null;
+            
+            const userData = JSON.parse(stored);
+            if (!userData || !userData.id) return null;
+            
+            // Verify with server
+            const user = await this.getUserById(userData.id);
+            if (!user || !user.is_active) {
+                this.logout();
+                return null;
+            }
+            
+            this.currentUser = user;
+            this.currentUserRole = user.role;
+            this.initEssentialListeners();
+            
+            return this.currentUser;
+        } catch (error) {
+            console.error('Session check failed:', error);
+            return null;
+        }
+    },
+
     async login(userId, role = null) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient.from('users').select('*').eq('id', userId).single();
-                if (error || !data) {
-                    throw new Error('User not found');
-                }
-                if (role && data.role !== role) {
-                    throw new Error(`User is not a ${role}`);
-                }
-                this.currentUser = { id: data.id, ...data };
-                this.currentUserRole = data.role;
-            } else {
-                const userDoc = await db.collection('users').doc(userId).get();
-                if (!userDoc.exists) {
-                    throw new Error('User not found');
-                }
-                const userData = userDoc.data();
-                if (role && userData.role !== role) {
-                    throw new Error(`User is not a ${role}`);
-                }
-                this.currentUser = { id: userId, ...userData };
-                this.currentUserRole = userData.role;
+            // Updated to use getUserById for full profile
+            const user = await this.getUserById(userId);
+            
+            if (!user) {
+                throw new Error('User not found');
             }
+            
+            if (role && user.role !== role) {
+                throw new Error(`User is not a ${role}`);
+            }
+            
+            this.currentUser = user;
+            this.currentUserRole = user.role;
 
             localStorage.setItem('educareTrack_user', JSON.stringify(this.currentUser));
             sessionStorage.setItem('educareTrack_user', JSON.stringify(this.currentUser));
@@ -864,7 +878,7 @@ const EducareTrack = {
             if (this.config.enableNotificationPermissionPrompt) { await this.initializeNotificationPermissions(); }
             this.initEssentialListeners();
 
-            console.log(`User logged in: ${this.currentUser.name || this.currentUser.email || this.currentUser.id}`);
+            console.log(`User logged in: ${this.currentUser.name || this.currentUser.full_name || this.currentUser.id}`);
             return this.currentUser;
         } catch (error) {
             console.error('Login failed:', error);
@@ -894,13 +908,17 @@ const EducareTrack = {
     // Get dashboard statistics
     async getDashboardStats() {
         try {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
             // Use Promise.all for parallel queries
-            const [studentsCount, teachersCount, parentsCount, classesCount, todayCount] = await Promise.all([
+            const [studentsCount, teachersCount, parentsCount, classesCount, todayCount, attendanceSummary] = await Promise.all([
                 this.getCollectionCount('students'),
-                this.getCollectionCount('users', [['role', '==', 'teacher'], ['is_active', '==', true]]),
-                this.getCollectionCount('users', [['role', '==', 'parent'], ['is_active', '==', true]]),
+                this.getCollectionCount('profiles', [['role', '==', 'teacher'], ['is_active', '==', true]]),
+                this.getCollectionCount('profiles', [['role', '==', 'parent'], ['is_active', '==', true]]),
                 this.getCollectionCount('classes'),
-                this.getTodayAttendanceCount()
+                this.getTodayAttendanceCount(),
+                this.getAttendanceSummary(startDate, endDate)
             ]);
 
             const stats = {
@@ -909,7 +927,9 @@ const EducareTrack = {
                 totalParents: parentsCount,
                 totalClasses: classesCount,
                 presentToday: todayCount,
-                attendanceRate: studentsCount > 0 ? Math.round((todayCount / studentsCount) * 100) : 0
+                attendanceRate: studentsCount > 0
+                    ? Math.round((attendanceSummary.uniquePresent / studentsCount) * 100)
+                    : 0
             };
 
             // Cache the stats
@@ -938,27 +958,22 @@ const EducareTrack = {
     // Optimized: Get count without loading all documents
     async getCollectionCount(collectionName, conditions = []) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let builder = window.supabaseClient.from(collectionName).select('id', { count: 'exact', head: true });
-                const apply = (field, op, val) => {
-                    if (op === '==' || op === 'eq') {
-                        builder = builder.eq(field, val);
-                    }
-                };
-                const conds = Array.isArray(conditions) ? conditions : [];
-                const effectiveConds = collectionName === 'students' ? conds.filter(c => c[0] !== 'is_active') : conds;
-                effectiveConds.forEach(c => apply(c[0], c[1], c[2]));
-                const { count, error } = await builder;
-                if (error) return 0;
-                return count || 0;
-            } else {
-                let query = db.collection(collectionName);
-                conditions.forEach(condition => {
-                    query = query.where(...condition);
-                });
-                const snapshot = await query.get();
-                return snapshot.size;
-            }
+            let builder = window.supabaseClient.from(collectionName).select('id', { count: 'exact', head: true });
+            const apply = (field, op, val) => {
+                if (op === '==' || op === 'eq') builder = builder.eq(field, val);
+                else if (op === '>') builder = builder.gt(field, val);
+                else if (op === '>=') builder = builder.gte(field, val);
+                else if (op === '<') builder = builder.lt(field, val);
+                else if (op === '<=') builder = builder.lte(field, val);
+                else if (op === '!=') builder = builder.neq(field, val);
+                else if (op === 'in') builder = builder.in(field, val);
+            };
+            const conds = Array.isArray(conditions) ? conditions : [];
+            const effectiveConds = collectionName === 'students' ? conds.filter(c => c[0] !== 'is_active') : conds;
+            effectiveConds.forEach(c => apply(c[0], c[1], c[2]));
+            const { count, error } = await builder;
+            if (error) return 0;
+            return count || 0;
         } catch (error) {
             console.error(`Error counting ${collectionName}:`, error);
             return 0;
@@ -968,28 +983,42 @@ const EducareTrack = {
     // Fast: Get today's attendance count
     async getTodayAttendanceCount() {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const { count, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id', { count: 'exact', head: true })
-                    .gte('timestamp', today.toISOString())
-                    .eq('entry_type', 'entry');
-                if (error) return 0;
-                return count || 0;
-            } else {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const snapshot = await db.collection('attendance')
-                    .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
-                    .get();
-                return snapshot.size;
-            }
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const { count, error } = await window.supabaseClient
+                .from('attendance')
+                .select('id', { count: 'exact', head: true })
+                .gte('timestamp', today.toISOString())
+                .eq('entry_type', 'entry');
+            if (error) return 0;
+            return count || 0;
         } catch (error) {
             console.error('Error getting today attendance count:', error);
             return 0;
+        }
+    },
+
+    async getAttendanceSummary(startDate, endDate) {
+        try {
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id,status')
+                .gte('timestamp', start.toISOString())
+                .lte('timestamp', end.toISOString());
+            if (error) return { uniquePresent: 0 };
+            const presentIds = new Set();
+            (data || []).forEach(row => {
+                if (row.status === 'present' || row.status === 'late') {
+                    presentIds.add(row.student_id || row.studentId);
+                }
+            });
+            return { uniquePresent: presentIds.size };
+        } catch (error) {
+            console.error('Error getting attendance summary:', error);
+            return { uniquePresent: 0 };
         }
     },
 
@@ -1009,7 +1038,6 @@ const EducareTrack = {
             }
 
             // Generate IDs
-            const parentId = this.generateUserId('parent');
             const studentId = this.generateStudentId(studentData.lrn);
 
             // Upload photo if provided (non-blocking) - only if storage is available
@@ -1021,226 +1049,131 @@ const EducareTrack = {
                     console.warn('Photo upload failed, continuing without photo:', photoError);
                 }
             } else if (studentPhoto && !this.storage) {
-                console.warn('Photo upload skipped: Firebase Storage not available');
+                console.warn('Photo upload skipped: Supabase Storage not available');
             }
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Supabase implementation using sequential writes (manual transaction)
-                
-                // 1. Create Parent
-                const parentDoc = {
-                    id: parentId,
-                    name: parentData.name,
-                    phone: parentData.phone,
-                    address: parentData.address,
-                    email: parentData.email || '',
-                    role: 'parent',
-                    relationship: parentData.relationship || 'parent',
-                    emergency_contact: parentData.emergencyContact || parentData.phone, // snake_case
-                    children: [studentId],
-                    username: parentData.username,
-                    password: parentData.password,
-                    is_active: true,
-                    created_at: new Date().toISOString()
-                    // created_by: this.currentUser.id // snake_case
-                };
+            // Supabase implementation using sequential writes (manual transaction)
+            
+            // 1. Create Parent (Profile + Parent Record)
+            const parentId = parentData.id || crypto.randomUUID();
+            
+            const profileDoc = {
+                id: parentId,
+                role: 'parent',
+                full_name: parentData.name,
+                phone: parentData.phone,
+                photo_url: null,
+                is_active: true,
+                created_at: new Date().toISOString()
+            };
 
-                const { error: parentError } = await window.supabaseClient
-                    .from('users')
-                    .insert([parentDoc]);
+            const parentRecordDoc = {
+                id: parentId,
+                address: parentData.address,
+                occupation: parentData.occupation || '',
+                created_at: new Date().toISOString()
+            };
 
-                if (parentError) throw new Error('Failed to create parent: ' + parentError.message);
+            // Insert into profiles first
+            const { error: profileError } = await window.supabaseClient
+                .from('profiles')
+                .insert([profileDoc]);
 
-                // 2. Resolve/Create Class
-                let resolvedClassId = studentData.classId || '';
-                if (!resolvedClassId) {
-                    try {
-                        let className = studentData.grade;
-                        if (studentData.level !== this.STUDENT_LEVELS.KINDERGARTEN && studentData.strand) {
-                            className = `${studentData.grade} ${studentData.strand}`;
-                        }
+            if (profileError) throw new Error('Failed to create parent profile: ' + profileError.message);
+
+            // Insert into parents
+            const { error: parentError } = await window.supabaseClient
+                .from('parents')
+                .insert([parentRecordDoc]);
+
+            if (parentError) {
+                // Rollback profile
+                await window.supabaseClient.from('profiles').delete().eq('id', parentId);
+                throw new Error('Failed to create parent record: ' + parentError.message);
+            }
+
+            // 2. Resolve/Create Class
+            let resolvedClassId = studentData.classId || '';
+            if (!resolvedClassId) {
+                try {
+                    let className = studentData.grade;
+                    if (studentData.level !== this.STUDENT_LEVELS.KINDERGARTEN && studentData.strand) {
+                        className = `${studentData.grade} ${studentData.strand}`;
+                    }
+                    
+                    // Check if class exists
+                    // Note: Supabase classes table has 'grade' and 'strand', not 'name'
+                    // We try to match by grade and strand
+                    let query = window.supabaseClient
+                        .from('classes')
+                        .select('id')
+                        .eq('grade', studentData.grade)
+                        .limit(1);
+
+                    if (studentData.strand) {
+                        query = query.eq('strand', studentData.strand);
+                    } else {
+                        query = query.is('strand', null);
+                    }
+
+                    const { data: existingClasses } = await query;
                         
-                        // Check if class exists
-                        const { data: existingClasses } = await window.supabaseClient
-                            .from('classes')
-                            .select('id')
-                            .eq('name', className)
-                            .limit(1);
-
-                        if (existingClasses && existingClasses.length > 0) {
-                            resolvedClassId = existingClasses[0].id;
-                        } else {
-                            // Create class
-                            const clsSubjects = studentData.level === this.STUDENT_LEVELS.Senior_High_School && studentData.strand
-                                ? this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade)
-                                : this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                            
-                            const newClass = {
-                                name: className,
-                                grade: studentData.grade,
-                                level: studentData.level,
-                                strand: studentData.strand || null,
-                                subjects: clsSubjects,
-                                is_active: true,
-                                created_at: new Date().toISOString()
-                                // created_by: this.currentUser.id
-                            };
-                            
-                            const { data: createdClass, error: classError } = await window.supabaseClient
-                                .from('classes')
-                                .insert([newClass])
-                                .select();
-                                
-                            if (!classError && createdClass && createdClass.length > 0) {
-                                resolvedClassId = createdClass[0].id;
-                            }
-                        }
-                    } catch (e) {
-                        console.error('Error resolving class:', e);
-                        resolvedClassId = '';
+                    if (existingClasses && existingClasses.length > 0) {
+                        resolvedClassId = existingClasses[0].id;
                     }
+                } catch (e) {
+                    console.error('Error resolving class:', e);
+                    resolvedClassId = '';
                 }
-
-                // 3. Create Student
-                const studentDoc = {
-                    id: studentId,
-                    student_id: studentId, // snake_case
-                    name: studentData.name,
-                    lrn: studentData.lrn,
-                    grade: studentData.grade,
-                    level: studentData.level,
-                    class_id: resolvedClassId, // snake_case
-                    parent_id: parentId, // snake_case
-                    photo_url: photoUrl, // snake_case
-                    qr_code: studentId, // snake_case
-                    address: parentData.address, // Inherit from parent
-                    emergency_contact: parentData.emergencyContact || parentData.phone, // Inherit from parent
-                    current_status: 'out_school',
-                    is_active: true,
-                    created_at: new Date().toISOString()
-                    // created_by: this.currentUser.id // snake_case
-                };
-
-                // Add strand/subjects
-                if (studentData.level === this.STUDENT_LEVELS.Senior_High_School) {
-                    studentDoc.strand = studentData.strand;
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade);
-                } else {
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                }
-
-                const { error: studentError } = await window.supabaseClient
-                    .from('students')
-                    .insert([studentDoc]);
-
-                if (studentError) {
-                    // Rollback parent creation
-                    await window.supabaseClient.from('users').delete().eq('id', parentId);
-                    throw new Error('Failed to create student: ' + studentError.message);
-                }
-
-                this.clearCache();
-                console.log(`Student enrolled (Supabase): ${studentData.name}`);
-                return { parentId, studentId };
-
-            } else {
-                // Firebase implementation
-                // Batch write for atomic operations
-                const batch = db.batch();
-
-                // Parent document
-                const parentRef = db.collection('users').doc(parentId);
-                batch.set(parentRef, {
-                    id: parentId,
-                    name: parentData.name,
-                    phone: parentData.phone,
-                    address: parentData.address,
-                    email: parentData.email || '',
-                    role: 'parent',
-                    relationship: parentData.relationship || 'parent',
-                    emergencyContact: parentData.emergencyContact || parentData.phone,
-                    children: [studentId],
-                    username: parentData.username,
-                    password: parentData.password,
-                    is_active: true,
-                    created_at: SupabaseFieldValue.serverTimestamp(),
-                    createdBy: this.currentUser.id
-                });
-
-                let resolvedClassId = studentData.classId || '';
-                if (!resolvedClassId) {
-                    try {
-                        let className = studentData.grade;
-                        if (studentData.level !== this.STUDENT_LEVELS.KINDERGARTEN && studentData.strand) {
-                            className = `${studentData.grade} ${studentData.strand}`;
-                        }
-                        let q = db.collection('classes').where('name', '==', className);
-                        const snap = await q.get();
-                        if (!snap.empty) {
-                            resolvedClassId = snap.docs[0].id;
-                        } else {
-                            const base = studentData.grade.toLowerCase().replace(/\s+/g, '');
-                            const slug = studentData.strand ? `${base}-${studentData.strand.toLowerCase()}` : base;
-                            const doc = await db.collection('classes').doc(slug).get();
-                            if (doc.exists) {
-                                resolvedClassId = doc.id;
-                            } else {
-                                const clsSubjects = studentData.level === this.STUDENT_LEVELS.Senior_High_School && studentData.strand
-                                    ? this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade)
-                                    : this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                                const ref = await db.collection('classes').add({
-                                    name: className,
-                                    grade: studentData.grade,
-                                    level: studentData.level,
-                                    strand: studentData.strand || null,
-                                    subjects: clsSubjects,
-                                    is_active: true,
-                                    created_at: SupabaseFieldValue.serverTimestamp(),
-                                    createdBy: this.currentUser.id
-                                });
-                                resolvedClassId = ref.id;
-                            }
-                        }
-                    } catch (e) {
-                        resolvedClassId = '';
-                    }
-                }
-
-                // Student document with curriculum data
-                const studentRef = db.collection('students').doc(studentId);
-                const studentDoc = {
-                    id: studentId,
-                    studentId: studentId,
-                    name: studentData.name,
-                    lrn: studentData.lrn,
-                    grade: studentData.grade,
-                    level: studentData.level,
-                    class_id: resolvedClassId,
-                    parent_id: parentId,
-                    photo_url: photoUrl,
-                    qrCode: studentId,
-                    current_status: 'out_school',
-                    is_active: true,
-                    created_at: SupabaseFieldValue.serverTimestamp(),
-                    createdBy: this.currentUser.id
-                };
-
-                // Add strand for Senior High students
-                if (studentData.level === this.STUDENT_LEVELS.Senior_High_School) {
-                    studentDoc.strand = studentData.strand;
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade);
-                } else {
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                }
-
-                batch.set(studentRef, studentDoc);
-
-                await batch.commit();
-                this.clearCache(); // Clear cache since data changed
-
-                console.log(`Student enrolled: ${studentData.name} with ${studentDoc.subjects.length} subjects`);
-                return { parentId, studentId };
             }
+
+            // 3. Create Student
+            const studentDoc = {
+                id: studentId,
+                lrn: studentData.lrn,
+                full_name: studentData.name,
+                // grade: studentData.grade, // Removed: Not in Supabase schema
+                strand: studentData.strand || null,
+                class_id: resolvedClassId,
+                address: parentData.address,
+                current_status: 'enrolled',
+                photo_url: photoUrl,
+                created_at: new Date().toISOString()
+            };
+
+            const { error: studentError } = await window.supabaseClient
+                .from('students')
+                .insert([studentDoc]);
+
+            if (studentError) {
+                // Rollback parent
+                await window.supabaseClient.from('parents').delete().eq('id', parentId);
+                await window.supabaseClient.from('profiles').delete().eq('id', parentId);
+                throw new Error('Failed to create student: ' + studentError.message);
+            }
+
+            // 4. Create Parent-Student Link
+            const linkDoc = {
+                parent_id: parentId,
+                student_id: studentId,
+                relationship: parentData.relationship || 'Parent'
+            };
+            
+            const { error: linkError } = await window.supabaseClient
+                .from('parent_students')
+                .insert([linkDoc]);
+
+            if (linkError) {
+                 // Rollback student
+                 await window.supabaseClient.from('students').delete().eq('id', studentId);
+                 await window.supabaseClient.from('parents').delete().eq('id', parentId);
+                 await window.supabaseClient.from('profiles').delete().eq('id', parentId);
+                 throw new Error('Failed to link parent and student: ' + linkError.message);
+            }
+
+            this.clearCache();
+            console.log(`Student enrolled (Supabase): ${studentData.name}`);
+            return { parentId, studentId };
         } catch (error) {
             console.error('Error enrolling student:', error);
             throw error;
@@ -1273,153 +1206,77 @@ const EducareTrack = {
                 }
             }
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // 1. Resolve/Create Class
-                let resolvedClassId = studentData.classId || '';
-                if (!resolvedClassId) {
-                    try {
-                        let className = studentData.grade;
-                        if (studentData.level !== this.STUDENT_LEVELS.KINDERGARTEN && studentData.strand) {
-                            className = `${studentData.grade} ${studentData.strand}`;
-                        }
-                        
-                        const { data: existingClasses } = await window.supabaseClient
-                            .from('classes')
-                            .select('id')
-                            .eq('name', className)
-                            .limit(1);
+            // 1. Resolve/Create Class
+            let resolvedClassId = studentData.classId || '';
+            if (!resolvedClassId) {
+                try {
+                    // Note: Supabase classes table has 'grade' and 'strand', not 'name'
+                    // We try to match by grade and strand
+                    let query = window.supabaseClient
+                        .from('classes')
+                        .select('id')
+                        .eq('grade', studentData.grade)
+                        .limit(1);
 
-                        if (existingClasses && existingClasses.length > 0) {
-                            resolvedClassId = existingClasses[0].id;
-                        } else {
-                            const clsSubjects = studentData.level === this.STUDENT_LEVELS.Senior_High_School && studentData.strand
-                                ? this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade)
-                                : this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                            
-                            const newClass = {
-                                name: className,
-                                grade: studentData.grade,
-                                level: studentData.level,
-                                strand: studentData.strand || null,
-                                subjects: clsSubjects,
-                                is_active: true,
-                                created_at: new Date().toISOString()
-                                // created_by: this.currentUser.id
-                            };
-                            
-                            const { data: createdClass, error: classError } = await window.supabaseClient
-                                .from('classes')
-                                .insert([newClass])
-                                .select();
-                                
-                            if (!classError && createdClass && createdClass.length > 0) {
-                                resolvedClassId = createdClass[0].id;
-                            }
-                        }
-                    } catch (e) {
-                        console.error('Error resolving class:', e);
-                        resolvedClassId = '';
+                    if (studentData.strand) {
+                        query = query.eq('strand', studentData.strand);
+                    } else {
+                        query = query.is('strand', null);
                     }
-                }
 
-                // 2. Create Student
-                const studentDoc = {
-                    id: studentId,
-                    student_id: studentId,
-                    name: studentData.name,
-                    lrn: studentData.lrn,
-                    grade: studentData.grade,
-                    level: studentData.level,
-                    class_id: resolvedClassId,
-                    parent_id: parentId,
-                    photo_url: photoUrl,
-                    qr_code: studentId,
-                    address: studentData.address, // Inherit from parent (passed in studentData)
-                    emergency_contact: studentData.emergencyContact, // Inherit from parent
-                    current_status: 'out_school',
-                    is_active: true,
-                    created_at: new Date().toISOString()
-                    // created_by: this.currentUser.id
-                };
-
-                // Add strand/subjects
-                if (studentData.level === this.STUDENT_LEVELS.Senior_High_School) {
-                    studentDoc.strand = studentData.strand;
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade);
-                } else {
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                }
-
-                const { error: studentError } = await window.supabaseClient
-                    .from('students')
-                    .insert([studentDoc]);
-
-                if (studentError) throw new Error('Failed to create student: ' + studentError.message);
-
-                // 3. Update Parent's children array (append)
-                const { data: parentData, error: parentFetchError } = await window.supabaseClient
-                    .from('users')
-                    .select('children')
-                    .eq('id', parentId)
-                    .single();
-
-                if (!parentFetchError && parentData) {
-                    const currentChildren = parentData.children || [];
-                    if (!currentChildren.includes(studentId)) {
-                        await window.supabaseClient
-                            .from('users')
-                            .update({ children: [...currentChildren, studentId] })
-                            .eq('id', parentId);
+                    const { data: existingClasses } = await query;
+                    
+                    if (existingClasses && existingClasses.length > 0) {
+                        resolvedClassId = existingClasses[0].id;
                     }
+                } catch (e) {
+                    console.error('Error resolving class:', e);
+                    resolvedClassId = '';
                 }
-
-                this.clearCache();
-                return studentId;
-
-            } else {
-                // Firebase implementation
-                const batch = db.batch();
-
-                // Resolve Class (Simplified for brevity, similar to Supabase logic or use existing classId)
-                let resolvedClassId = studentData.classId || '';
-                // ... (Class resolution logic omitted for brevity, assume passed or handled)
-
-                const studentRef = db.collection('students').doc(studentId);
-                const studentDoc = {
-                    id: studentId,
-                    studentId: studentId,
-                    name: studentData.name,
-                    lrn: studentData.lrn,
-                    grade: studentData.grade,
-                    level: studentData.level,
-                    class_id: resolvedClassId,
-                    parent_id: parentId,
-                    photo_url: photoUrl,
-                    qrCode: studentId,
-                    current_status: 'out_school',
-                    is_active: true,
-                    created_at: SupabaseFieldValue.serverTimestamp(),
-                    createdBy: this.currentUser.id
-                };
-                 if (studentData.level === this.STUDENT_LEVELS.Senior_High_School) {
-                    studentDoc.strand = studentData.strand;
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, studentData.strand, studentData.grade);
-                } else {
-                    studentDoc.subjects = this.getSubjectsForLevel(studentData.level, null, studentData.grade);
-                }
-
-                batch.set(studentRef, studentDoc);
-
-                // Update Parent
-                const parentRef = db.collection('users').doc(parentId);
-                batch.update(parentRef, {
-                    children: firebase.firestore.FieldValue.arrayUnion(studentId)
-                });
-
-                await batch.commit();
-                this.clearCache();
-                return studentId;
             }
+
+            // 2. Create Student
+            const studentDoc = {
+                id: studentId,
+                lrn: studentData.lrn,
+                full_name: studentData.name,
+                // grade: studentData.grade, // Removed: Not in Supabase schema
+                strand: studentData.strand || null,
+                class_id: resolvedClassId,
+                address: studentData.address,
+                current_status: 'enrolled',
+                photo_url: photoUrl,
+                created_at: new Date().toISOString()
+            };
+
+            // Add strand/subjects logic if needed, but schema doesn't have subjects in students table
+            // skipping subjects array as it's not in new schema for students table
+
+            const { error: studentError } = await window.supabaseClient
+                .from('students')
+                .insert([studentDoc]);
+
+            if (studentError) throw new Error('Failed to create student: ' + studentError.message);
+
+            // 3. Link Parent and Student
+            const linkDoc = {
+                parent_id: parentId,
+                student_id: studentId,
+                relationship: 'Parent'
+            };
+
+            const { error: linkError } = await window.supabaseClient
+                .from('parent_students')
+                .insert([linkDoc]);
+
+            if (linkError) {
+                // Rollback student
+                await window.supabaseClient.from('students').delete().eq('id', studentId);
+                throw new Error('Failed to link parent and student: ' + linkError.message);
+            }
+
+            this.clearCache();
+            return studentId;
         } catch (error) {
             console.error('Error enrolling student only:', error);
             throw error;
@@ -1452,14 +1309,9 @@ const EducareTrack = {
         return `EDU-${year}-${last4LRN}-${studentNumber}`;
     },
 
-    // Upload student photo to Firebase Storage (only if storage is available)
+    // Upload student photo to Supabase Storage
     async uploadStudentPhoto(photoFile, studentId) {
         try {
-            // Check if storage is available
-            if (!this.storage) {
-                throw new Error('Firebase Storage is not available. Please include the Firebase Storage script.');
-            }
-
             const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
             if (!validTypes.includes(photoFile.type)) {
                 throw new Error('Invalid file type');
@@ -1470,11 +1322,26 @@ const EducareTrack = {
             }
 
             const fileExtension = photoFile.name.split('.').pop();
-            const fileName = `students/${studentId}/photo.${fileExtension}`;
-            const storageRef = this.storage.ref().child(fileName);
+            const fileName = `${studentId}/photo.${fileExtension}`;
             
-            const snapshot = await storageRef.put(photoFile);
-            return await snapshot.ref.getDownloadURL();
+            // Upload to Supabase Storage bucket 'student-photos'
+            const { data, error } = await window.supabaseClient
+                .storage
+                .from('student-photos')
+                .upload(fileName, photoFile, {
+                    cacheControl: '3600',
+                    upsert: true
+                });
+
+            if (error) throw error;
+
+            // Get public URL
+            const { data: { publicUrl } } = window.supabaseClient
+                .storage
+                .from('student-photos')
+                .getPublicUrl(fileName);
+                
+            return publicUrl;
         } catch (error) {
             console.error('Error uploading student photo:', error);
             throw error;
@@ -1488,39 +1355,23 @@ const EducareTrack = {
                 throw new Error('Only admins can create classes');
             }
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const newClass = {
-                    ...classData,
-                    subjects: this.getSubjectsForLevel(classData.level, classData.strand, classData.grade),
-                    is_active: true,
-                    created_at: new Date().toISOString()
-                    // created_by: this.currentUser.id
-                };
+            const newClass = {
+                ...classData,
+                subjects: this.getSubjectsForLevel(classData.level, classData.strand, classData.grade),
+                is_active: true,
+                created_at: new Date().toISOString()
+                // created_by: this.currentUser.id
+            };
 
-                const { data, error } = await window.supabaseClient
-                    .from('classes')
-                    .insert([newClass])
-                    .select();
-                
-                if (error) throw error;
-                this.clearCache();
-                console.log(`Class created (Supabase): ${classData.name}`);
-                return data[0].id;
-            } else {
-                const classDoc = {
-                    ...classData,
-                    subjects: this.getSubjectsForLevel(classData.level, classData.strand, classData.grade),
-                    is_active: true,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
-                    createdBy: this.currentUser.id
-                };
-
-                const classRef = await db.collection('classes').add(classDoc);
-                this.clearCache(); // Clear cache
-                
-                console.log(`Class created: ${classData.name} with ${classDoc.subjects.length} subjects`);
-                return classRef.id;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('classes')
+                .insert([newClass])
+                .select();
+            
+            if (error) throw error;
+            this.clearCache();
+            console.log(`Class created (Supabase): ${classData.name}`);
+            return data[0].id;
         } catch (error) {
             console.error('Error creating class:', error);
             throw error;
@@ -1536,35 +1387,116 @@ const EducareTrack = {
         }
 
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('users')
-                    .select('id,name,email,role,phone,is_active,username,assigned_classes,assigned_subjects,capabilities,class_id,is_homeroom')
-                    .eq('is_active', true)
-                    .limit(100);
-                if (error) throw error;
-                dataCache.users = (data || []).map(u => ({
+            const { data, error } = await window.supabaseClient
+                .from('profiles')
+                .select(`
+                    id, full_name, role, phone, is_active, photo_url, username, password, email,
+                    teachers ( employee_no, is_homeroom, assigned_subjects, classes ( id, grade, strand ) ),
+                    parents ( address, occupation ),
+                    guards ( shift, assigned_gate ),
+                    clinic_staff ( license_no, position ),
+                    admin_staff ( position, permissions )
+                `)
+                .eq('is_active', true)
+                .limit(100);
+            
+            if (error) throw error;
+            
+            dataCache.users = (data || []).map(u => {
+                // Helper to extract single object from join result (which might be array or object)
+                const getRoleData = (data) => Array.isArray(data) ? data[0] : data;
+                
+                let roleData = {};
+                if (u.role === 'teacher') roleData = getRoleData(u.teachers) || {};
+                else if (u.role === 'parent') roleData = getRoleData(u.parents) || {};
+                else if (u.role === 'guard') roleData = getRoleData(u.guards) || {};
+                else if (u.role === 'clinic') roleData = getRoleData(u.clinic_staff) || {};
+                else if (u.role === 'admin') roleData = getRoleData(u.admin_staff) || {};
+
+                return {
                     ...u,
-                    assignedClasses: u.assigned_classes,
-                    assignedSubjects: u.assigned_subjects,
-                    capabilities: u.capabilities || [],
-                    classId: u.class_id,
-                    isHomeroom: u.is_homeroom
-                }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.users;
-            } else {
-                const snapshot = await db.collection('users')
-                    .where('is_active', '==', true)
-                    .limit(100)
-                    .get();
-                dataCache.users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.users;
-            }
+                    ...roleData, // Flatten role specific fields
+                    name: u.full_name, // Map for backward compatibility
+                    fullName: u.full_name,
+                    // Map role specific fields to camelCase if needed by UI
+                    assignedSubjects: roleData.assigned_subjects || [],
+                    isHomeroom: roleData.is_homeroom,
+                    employeeId: roleData.employee_no,
+                    username: u.username || roleData.employee_no || u.id, // Prioritize profile username
+                    password: u.password,
+                    // Common fields
+                    assignedClasses: roleData.classes || [],
+                    capabilities: [] // Not available in new schema
+                };
+            });
+            dataCache.lastUpdated = Date.now();
+            return dataCache.users;
         } catch (error) {
-            console.error('Error getting users:', error);
+            console.error('Error getting users:', error.message || error, error.details || '', error.hint || '');
             return [];
+        }
+    },
+
+    async getUserById(userId) {
+        try {
+            // Check cache first if available
+            if (dataCache.users) {
+                const cachedUser = dataCache.users.find(u => u.id === userId);
+                // If found in cache, we might still want to fetch fresh details (especially children for parents)
+                // But for basic editing, cache might be enough. Let's fetch fresh to be safe for editing.
+            }
+
+            const { data, error } = await window.supabaseClient
+                .from('profiles')
+                .select(`
+                    id, full_name, role, phone, is_active, photo_url, username, password, email,
+                    teachers ( employee_no, is_homeroom, assigned_subjects, classes ( id, grade, strand ) ),
+                    parents ( address, occupation ),
+                    guards ( shift, assigned_gate ),
+                    clinic_staff ( license_no, position ),
+                    admin_staff ( position, permissions )
+                `)
+                .eq('id', userId)
+                .single();
+            
+            if (error) throw error;
+            if (!data) return null;
+
+            // Helper to extract single object from join result
+            const getRoleData = (data) => Array.isArray(data) ? data[0] : data;
+            
+            let roleData = {};
+            if (data.role === 'teacher') roleData = getRoleData(data.teachers) || {};
+            else if (data.role === 'parent') roleData = getRoleData(data.parents) || {};
+            else if (data.role === 'guard') roleData = getRoleData(data.guards) || {};
+            else if (data.role === 'clinic') roleData = getRoleData(data.clinic_staff) || {};
+            else if (data.role === 'admin') roleData = getRoleData(data.admin_staff) || {};
+
+            // If it's a parent, fetch children
+            let children = [];
+            if (data.role === 'parent') {
+                children = await this.getStudentsByParent(userId);
+            }
+
+            return {
+                ...data,
+                ...roleData, // Flatten role specific fields
+                name: data.full_name, // Map for backward compatibility
+                fullName: data.full_name,
+                // Map role specific fields to camelCase if needed by UI
+                assignedSubjects: roleData.assigned_subjects || [],
+                isHomeroom: roleData.is_homeroom,
+                employeeId: roleData.employee_no,
+                username: data.username || roleData.employee_no || data.id,
+                password: data.password,
+                // Common fields
+                assignedClasses: roleData.classes || [],
+                children: children,
+                capabilities: [] // Not available in new schema
+            };
+        } catch (error) {
+            console.error('Error getting user by ID:', error);
+            return null;
         }
     },
 
@@ -1574,32 +1506,48 @@ const EducareTrack = {
         }
 
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
+            const [{ data: students, error: sErr }, { data: relations, error: rErr }, { data: classes, error: cErr }] = await Promise.all([
+                window.supabaseClient
                     .from('students')
                     .select('*')
-                    .limit(200);
+                    .limit(200),
+                window.supabaseClient
+                    .from('parent_students')
+                    .select('student_id,parent_id'),
+                window.supabaseClient
+                    .from('classes')
+                    .select('id,grade,strand')
+            ]);
 
-                if (error) throw error;
+            if (sErr) throw sErr;
 
-                dataCache.students = (data || []).map(s => ({
+            const parentMap = new Map();
+            (relations || []).forEach(r => {
+                parentMap.set(r.student_id, r.parent_id);
+            });
+            
+            const classMap = new Map();
+            (classes || []).forEach(c => {
+                classMap.set(c.id, c);
+            });
+
+            dataCache.students = (students || []).map(s => {
+                const classInfo = classMap.get(s.class_id);
+                return {
                     ...s,
+                    name: s.full_name, // Map for backward compatibility
+                    fullName: s.full_name,
                     classId: s.class_id,
-                    parentId: s.parent_id,
+                    parentId: parentMap.get(s.id),
+                    parent_id: parentMap.get(s.id), // For backward compatibility
                     emergencyContact: s.emergency_contact,
-                    grade: s.level
-                }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.students;
-            } else {
-                const snapshot = await db.collection('students')
-                    .limit(200) // Limit results
-                    .get();
-                    
-                dataCache.students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.students;
-            }
+                    grade: classInfo ? classInfo.grade : (s.level || ''),
+                    section: classInfo ? classInfo.section : '',
+                    strand: s.strand || (classInfo ? classInfo.strand : '')
+                };
+            });
+            dataCache.lastUpdated = Date.now();
+            return dataCache.students;
         } catch (error) {
             console.error('Error getting students:', error);
             return [];
@@ -1612,22 +1560,15 @@ const EducareTrack = {
         }
 
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('classes')
-                    .select('*')
-                    .eq('is_active', true)
-                    .limit(50);
-                if (error) throw error;
-                dataCache.classes = (data || []).map(c => ({ ...c }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.classes;
-            } else {
-                const snapshot = await db.collection('classes').limit(50).get();
-                dataCache.classes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                dataCache.lastUpdated = Date.now();
-                return dataCache.classes;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('is_active', true)
+                .limit(50);
+            if (error) throw error;
+            dataCache.classes = (data || []).map(c => ({ ...c }));
+            dataCache.lastUpdated = Date.now();
+            return dataCache.classes;
         } catch (error) {
             console.error('Error getting classes:', error);
             return [];
@@ -1637,39 +1578,42 @@ const EducareTrack = {
     // Get students by level and strand
     async getStudentsByLevel(level, strand = null) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let query = window.supabaseClient
-                    .from('students')
-                    .select('*')
-                    .eq('level', level)
-                    .eq('is_active', true);
-                
-                if (strand) {
-                    query = query.eq('strand', strand);
-                }
-                
-                const { data, error } = await query;
-                if (error) throw error;
-                
-                return (data || []).map(s => ({
-                    ...s,
-                    classId: s.class_id,
-                    parentId: s.parent_id,
-                    emergencyContact: s.emergency_contact,
-                    grade: s.level
-                }));
-            }
-
-            let query = db.collection('students')
-                .where('level', '==', level)
-                .where('is_active', '==', true);
-
+            let query = window.supabaseClient
+                .from('students')
+                .select('*')
+                .eq('level', level)
+                .eq('is_active', true);
+            
             if (strand) {
-                query = query.where('strand', '==', strand);
+                query = query.eq('strand', strand);
             }
-
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            const { data, error } = await query;
+            if (error) throw error;
+            
+            // Fetch parent mappings
+            const studentIds = (data || []).map(s => s.id);
+            let parentMap = new Map();
+            
+            if (studentIds.length > 0) {
+                const { data: relations } = await window.supabaseClient
+                    .from('parent_students')
+                    .select('student_id, parent_id')
+                    .in('student_id', studentIds);
+                    
+                (relations || []).forEach(r => {
+                    parentMap.set(r.student_id, r.parent_id);
+                });
+            }
+            
+            return (data || []).map(s => ({
+                ...s,
+                classId: s.class_id,
+                parentId: parentMap.get(s.id),
+                parent_id: parentMap.get(s.id),
+                emergencyContact: s.emergency_contact,
+                grade: s.level
+            }));
         } catch (error) {
             console.error('Error getting students by level:', error);
             return [];
@@ -1679,25 +1623,20 @@ const EducareTrack = {
     // Get recent student enrollments
     async getRecentEnrollments(limit = 5) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('students')
-                    .select('*')
-                    .eq('is_active', true)
-                    .order('created_at', { ascending: false })
-                    .limit(limit);
-                
-                if (error) throw error;
-                return data || [];
-            }
-
-            const snapshot = await db.collection('students')
-                .where('is_active', '==', true)
-                .orderBy('created_at', 'desc')
-                .limit(limit)
-                .get();
-
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .eq('is_active', true)
+                .order('created_at', { ascending: false })
+                .limit(limit);
+            
+            if (error) throw error;
+            return (data || []).map(s => ({
+                ...s,
+                name: s.full_name,
+                classId: s.class_id,
+                grade: s.level
+            }));
         } catch (error) {
             console.error('Error getting recent enrollments:', error);
             return [];
@@ -1707,59 +1646,30 @@ const EducareTrack = {
     // Fast: Get recent activity with limit
     async getRecentActivity(limit = 10) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
-                    .order('timestamp', { ascending: false })
-                    .limit(limit);
-                if (error || !data) {
-                    return [];
-                }
-                const ids = Array.from(new Set(data.map(r => r.student_id).filter(Boolean)));
-                let namesById = {};
-                if (ids.length > 0) {
-                    const { data: students } = await window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,class_id')
-                        .in('id', ids);
-                    (students || []).forEach(s => {
-                        namesById[s.id] = [s.first_name, s.last_name].filter(Boolean).join(' ');
-                    });
-                }
-                return data.map(row => ({
-                    id: row.id,
-                    ...row,
-                    studentName: namesById[row.student_id] || 'Unknown Student'
-                }));
-            } else {
-                const snapshot = await db.collection('attendance')
-                    .orderBy('timestamp', 'desc')
-                    .limit(limit)
-                    .get();
-                
-                const attendanceData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                // Fetch student names for Firestore
-                const studentIds = Array.from(new Set(attendanceData.map(r => r.student_id).filter(Boolean)));
-                let namesById = {};
-                
-                if (studentIds.length > 0) {
-                    const studentsSnapshot = await db.collection('students')
-                        .where('id', 'in', studentIds)
-                        .get();
-                    
-                    studentsSnapshot.docs.forEach(doc => {
-                        const student = doc.data();
-                        namesById[doc.id] = [student.first_name, student.last_name].filter(Boolean).join(' ') || 'Unknown Student';
-                    });
-                }
-                
-                return attendanceData.map(row => ({
-                    ...row,
-                    studentName: namesById[row.student_id] || 'Unknown Student'
-                }));
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
+                .order('timestamp', { ascending: false })
+                .limit(limit);
+            if (error || !data) {
+                return [];
             }
+            const ids = Array.from(new Set(data.map(r => r.student_id).filter(Boolean)));
+            let namesById = {};
+            if (ids.length > 0) {
+                const { data: students } = await window.supabaseClient
+                    .from('students')
+                    .select('id,full_name,class_id')
+                    .in('id', ids);
+                (students || []).forEach(s => {
+                    namesById[s.id] = s.full_name;
+                });
+            }
+            return data.map(row => ({
+                id: row.id,
+                ...row,
+                studentName: namesById[row.student_id] || 'Unknown Student'
+            }));
         } catch (error) {
             console.error('Error getting recent activity:', error);
             return [];
@@ -1775,31 +1685,23 @@ const EducareTrack = {
                 console.warn('No classId provided to getStudentsByClass');
                 return [];
             }
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,lrn,class_id,parent_id,strand,current_status,created_at,level,grade')
-                    .eq('class_id', classId);
-                if (error || !data) return [];
-                return data.map(s => ({
-                    id: s.id,
-                    name: [s.first_name, s.last_name].filter(Boolean).join(' '),
-                    lrn: s.lrn,
-                    class_id: s.class_id,
-                    parent_id: s.parent_id,
-                    strand: s.strand,
-                    current_status: s.current_status,
-                    created_at: s.created_at,
-                    level: s.level,
-                    grade: s.grade
-                }));
-            } else {
-                const snapshot = await this.db.collection('students')
-                    .where('class_id', '==', classId)
-                    .where('is_active', '==', true)
-                    .get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,lrn,class_id,parent_id,strand,current_status,created_at,level,grade')
+                .eq('class_id', classId);
+            if (error || !data) return [];
+            return data.map(s => ({
+                id: s.id,
+                name: s.full_name,
+                lrn: s.lrn,
+                class_id: s.class_id,
+                parent_id: s.parent_id,
+                strand: s.strand,
+                current_status: s.current_status,
+                created_at: s.created_at,
+                level: s.level,
+                grade: s.grade
+            }));
         } catch (error) {
             console.error('Error getting students by class:', error);
             return [];
@@ -1811,100 +1713,31 @@ const EducareTrack = {
     // Get students by parent ID
     async getStudentsByParent(parentId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // 1. Get by parent_id in students table
-                const { data: studentsByParent, error: err1 } = await window.supabaseClient
-                    .from('students')
-                    .select('*')
-                    .eq('parent_id', parentId)
-                    .eq('is_active', true);
-                
-                if (err1) throw err1;
+            // 1. Get from parent_students table (junction)
+            const { data: relations, error: relError } = await window.supabaseClient
+                .from('parent_students')
+                .select('student_id')
+                .eq('parent_id', parentId);
+            
+            if (relError) throw relError;
 
-                // 2. Get by children array in users table
-                const { data: parentUser, error: err2 } = await window.supabaseClient
-                    .from('users')
-                    .select('children')
-                    .eq('id', parentId)
-                    .single();
-                
-                let studentsFromChildren = [];
-                if (!err2 && parentUser && parentUser.children && parentUser.children.length > 0) {
-                     const { data: childrenData, error: err3 } = await window.supabaseClient
-                        .from('students')
-                        .select('*')
-                        .in('id', parentUser.children)
-                        .eq('is_active', true);
-                     if (!err3 && childrenData) {
-                         studentsFromChildren = childrenData;
-                     }
-                }
+            const studentIds = (relations || []).map(r => r.student_id);
+            if (studentIds.length === 0) return [];
 
-                // Merge unique
-                const unique = new Map();
-                (studentsByParent || []).forEach(s => unique.set(s.id, s));
-                (studentsFromChildren || []).forEach(s => unique.set(s.id, s));
-                
-                return Array.from(unique.values()).map(s => ({
-                     id: s.id,
-                     ...s,
-                     classId: s.class_id,
-                     parentId: s.parent_id
-                }));
-            }
+            // 2. Fetch student details
+            const { data: students, error: studError } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .in('id', studentIds);
 
-            const variants = new Set([parentId]);
-            const mParent = parentId.match(/^parent(\d{3})$/i);
-            if (mParent) variants.add(`PAR-${mParent[1]}`);
-            const mPar = parentId.match(/^PAR-(\d{3})$/i);
-            if (mPar) variants.add(`parent${mPar[1]}`);
+            if (studError) throw studError;
 
-            let byParent = [];
-            const candidateIds = Array.from(variants);
-            if (candidateIds.length > 1) {
-                const chunks = [];
-                for (let i = 0; i < candidateIds.length; i += 10) {
-                    chunks.push(candidateIds.slice(i, i + 10));
-                }
-                const results = await Promise.all(chunks.map(chunk =>
-                    db.collection('students')
-                        .where('parent_id', 'in', chunk)
-                        .get()
-                ));
-                byParent = results.flatMap(snap => snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            } else {
-                const byParentSnapshot = await db.collection('students')
-                    .where('parent_id', '==', parentId)
-                    .get();
-                byParent = byParentSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
-
-            let fromParentChildren = [];
-            const parentDocs = await Promise.all(candidateIds.map(id => db.collection('users').doc(id).get()));
-            const childrenIds = parentDocs
-                .filter(doc => doc.exists)
-                .flatMap(doc => {
-                    const arr = doc.data().children;
-                    return Array.isArray(arr) ? arr.filter(Boolean) : [];
-                });
-            if (childrenIds.length > 0) {
-                const chunks2 = [];
-                for (let i = 0; i < childrenIds.length; i += 10) {
-                    chunks2.push(childrenIds.slice(i, i + 10));
-                }
-                const results2 = await Promise.all(chunks2.map(chunk =>
-                    db.collection('students')
-                        .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
-                        .get()
-                ));
-                fromParentChildren = results2.flatMap(snap => snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            }
-
-            const unique = new Map();
-            byParent.forEach(s => { if (s.is_active !== false) unique.set(s.id, s); });
-            fromParentChildren.forEach(s => { if (s.is_active !== false) unique.set(s.id, s); });
-
-            return Array.from(unique.values());
+            return (students || []).map(s => ({
+                id: s.id,
+                ...s,
+                classId: s.class_id,
+                // parentId removed
+            }));
         } catch (error) {
             console.error('Error getting students by parent:', error);
             return [];
@@ -1914,61 +1747,6 @@ const EducareTrack = {
     // Get recent activity for parent (notifications and attendance for their children)
     async getRecentActivityForParent(parentId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Get parent's children first
-                const children = await this.getStudentsByParent(parentId);
-                if (children.length === 0) {
-                    return [];
-                }
-
-                const childIds = children.map(child => child.id);
-
-                const [notificationsRes, attendanceRes] = await Promise.all([
-                    window.supabaseClient
-                        .from('notifications')
-                        .select('*')
-                        .in('student_id', childIds)
-                        .order('created_at', { ascending: false })
-                        .limit(20),
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('*')
-                        .in('student_id', childIds)
-                        .order('timestamp', { ascending: false })
-                        .limit(20)
-                ]);
-
-                const notifications = (notificationsRes.data || []).map(n => ({
-                    type: 'notification',
-                    id: n.id,
-                    title: n.title,
-                    message: n.message,
-                    timestamp: new Date(n.created_at),
-                    studentId: n.student_id,
-                    isRead: n.is_read
-                }));
-
-                const attendance = (attendanceRes.data || []).map(a => ({
-                    type: 'attendance',
-                    id: a.id,
-                    status: a.status,
-                    timestamp: new Date(a.timestamp || a.created_at),
-                    studentId: a.student_id,
-                    entryType: a.entry_type
-                }));
-
-                // Combine and sort
-                const combined = [...notifications, ...attendance].sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
-                
-                // Add student names
-                const studentMap = new Map(children.map(c => [c.id, c.name || [c.first_name, c.last_name].filter(Boolean).join(' ')]));
-                
-                return combined.map(item => ({
-                    ...item,
-                    studentName: studentMap.get(item.studentId) || 'Unknown Student'
-                }));
-            }
-
             // Get parent's children first
             const children = await this.getStudentsByParent(parentId);
             if (children.length === 0) {
@@ -1977,66 +1755,50 @@ const EducareTrack = {
 
             const childIds = children.map(child => child.id);
 
-            const chunks = [];
-            for (let i = 0; i < childIds.length; i += 10) {
-                chunks.push(childIds.slice(i, i + 10));
-            }
-
-            const notificationsPromises = chunks.map(chunk =>
-                db.collection('notifications')
-                    .where('studentId', 'in', chunk)
-                    .get()
-            );
-
-            const attendancePromises = chunks.map(chunk =>
-                db.collection('attendance')
-                    .where('student_id', 'in', chunk)
-                    .get()
-            );
-
-            const [notificationsResults, attendanceResults] = await Promise.all([
-                Promise.all(notificationsPromises),
-                Promise.all(attendancePromises)
+            const [notificationsRes, attendanceRes] = await Promise.all([
+                window.supabaseClient
+                    .from('notifications')
+                    .select('*')
+                    .in('student_id', childIds)
+                    .order('created_at', { ascending: false })
+                    .limit(20),
+                window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .in('student_id', childIds)
+                    .order('timestamp', { ascending: false })
+                    .limit(20)
             ]);
 
-            const notificationsDocs = notificationsResults.flatMap(snapshot => snapshot.docs);
-            const attendanceDocs = attendanceResults.flatMap(snapshot => snapshot.docs);
+            const notifications = (notificationsRes.data || []).map(n => ({
+                type: 'notification',
+                id: n.id,
+                title: n.title,
+                message: n.message,
+                timestamp: new Date(n.created_at),
+                studentId: n.student_id,
+                isRead: n.is_read
+            }));
 
-            const activity = [];
+            const attendance = (attendanceRes.data || []).map(a => ({
+                type: 'attendance',
+                id: a.id,
+                status: a.status,
+                timestamp: new Date(a.timestamp || a.created_at),
+                studentId: a.student_id,
+                entryType: a.entry_type
+            }));
 
-            notificationsDocs.forEach(doc => {
-                const data = doc.data();
-                activity.push({
-                    type: 'notification',
-                    id: doc.id,
-                    title: data.title,
-                    message: data.message,
-                    timestamp: data.createdAt,
-                    isUrgent: data.isUrgent || false
-                });
-            });
-
-            attendanceDocs.forEach(doc => {
-                const data = doc.data();
-                const child = children.find(c => c.id === data.studentId);
-                activity.push({
-                    type: 'attendance',
-                    id: doc.id,
-                    title: `${child ? child.name : 'Student'} ${data.entry_type === 'entry' ? 'entered' : 'left'} school`,
-                    message: `Session: ${data.session}, Status: ${data.status}`,
-                    timestamp: data.timestamp,
-                    entry_type: data.entry_type,
-                    studentName: child ? child.name : 'Unknown'
-                });
-            });
-
-            return activity
-                .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
-                    return new Date(bt) - new Date(at);
-                })
-                .slice(0, 10);
+            // Combine and sort
+            const combined = [...notifications, ...attendance].sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
+            
+            // Add student names
+            const studentMap = new Map(children.map(c => [c.id, c.name || c.full_name]));
+            
+            return combined.map(item => ({
+                ...item,
+                studentName: studentMap.get(item.studentId) || 'Unknown Student'
+            }));
         } catch (error) {
             console.error('Error getting recent activity for parent:', error);
             return [];
@@ -2046,38 +1808,29 @@ const EducareTrack = {
     // Get attendance records for a specific student
     async getAttendanceByStudent(studentId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
-                    .eq('student_id', studentId)
-                    .order('timestamp', { ascending: false })
-                    .limit(50);
-                if (error || !data) return [];
-                const { data: s } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name')
-                    .eq('id', studentId)
-                    .single();
-                const name = s ? [s.first_name, s.last_name].filter(Boolean).join(' ') : '';
-                return data.map(r => ({
-                    id: r.id,
-                    ...r,
-                    studentId: r.student_id,
-                    classId: r.class_id,
-                    recordedBy: r.recorded_by,
-                    recordedByName: r.recorded_by_name,
-                    manualEntry: r.manual_entry,
-                    studentName: name
-                }));
-            } else {
-                const snapshot = await db.collection('attendance')
-                    .where('studentId', '==', studentId)
-                    .orderBy('timestamp', 'desc')
-                    .limit(50)
-                    .get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(50);
+            if (error || !data) return [];
+            const { data: s } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name')
+                .eq('id', studentId)
+                .single();
+            const name = s ? s.full_name : '';
+            return data.map(r => ({
+                id: r.id,
+                ...r,
+                studentId: r.student_id,
+                classId: r.class_id,
+                recordedBy: r.recorded_by,
+                recordedByName: r.recorded_by_name,
+                manualEntry: r.manual_entry,
+                studentName: name
+            }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);
             return [];
@@ -2087,30 +1840,21 @@ const EducareTrack = {
     // Get clinic visits for a specific student
     async getClinicVisitsByStudent(studentId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
-                    .eq('student_id', studentId)
-                    .order('timestamp', { ascending: false })
-                    .limit(50);
-                if (error || !data) return [];
-                return data.map(r => ({
-                    id: r.id,
-                    ...r,
-                    studentId: r.student_id,
-                    studentName: r.student_name,
-                    classId: r.class_id,
-                    treatedBy: r.treated_by
-                }));
-            } else {
-                const snapshot = await db.collection('clinicVisits')
-                    .where('studentId', '==', studentId)
-                    .orderBy('timestamp', 'desc')
-                    .limit(50)
-                    .get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(50);
+            if (error || !data) return [];
+            return data.map(r => ({
+                id: r.id,
+                ...r,
+                studentId: r.student_id,
+                studentName: r.student_name,
+                classId: r.class_id,
+                treatedBy: r.treated_by
+            }));
         } catch (error) {
             console.error('Error getting clinic visits by student:', error);
             return [];
@@ -2122,40 +1866,40 @@ const EducareTrack = {
     // Notification System - ENHANCED VERSION
     async createNotification(notificationData) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                if (!notificationData.target_users || notificationData.target_users.length === 0) {
-                    throw new Error('Notification must have target users');
-                }
-                const row = {
-                    target_users: notificationData.target_users,
-                    title: notificationData.title,
-                    message: notificationData.message,
-                    type: notificationData.type,
-                    is_active: true,
-                    createdAt: new Date(),
-                    readBy: []
-                };
-                const { data, error } = await window.supabaseClient.from('notifications').insert(row).select('id').single();
-                if (error) {
-                    throw error;
-                }
-                this.handleNewNotifications([{ id: data.id, ...row }]);
-                return data.id;
-            } else {
-                const notification = {
-                    ...notificationData,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
-                    readBy: [],
-                    isUrgent: notificationData.isUrgent || false,
-                    is_active: true
-                };
-                if (!notification.target_users || notification.target_users.length === 0) {
-                    throw new Error('Notification must have target users');
-                }
-                const notificationRef = await db.collection('notifications').add(notification);
-                this.handleNewNotifications([{ id: notificationRef.id, ...notification }]);
-                return notificationRef.id;
+            const targetUsers = notificationData.target_users || notificationData.targetUsers || [];
+            if (!targetUsers || targetUsers.length === 0) {
+                throw new Error('Notification must have target users');
             }
+            const createdAtValue = notificationData.created_at || notificationData.createdAt || new Date();
+            const normalizedCreatedAt = createdAtValue instanceof Date ? createdAtValue.toISOString() : createdAtValue;
+            const row = {
+                target_users: targetUsers,
+                title: notificationData.title,
+                message: notificationData.message,
+                type: notificationData.type,
+                is_active: true,
+                created_at: normalizedCreatedAt,
+                read_by: notificationData.read_by || notificationData.readBy || [],
+                student_id: notificationData.student_id || notificationData.studentId || null,
+                student_name: notificationData.student_name || notificationData.studentName || null,
+                related_record: notificationData.related_record || notificationData.relatedRecord || null,
+                is_urgent: notificationData.is_urgent ?? notificationData.isUrgent ?? false
+            };
+            const { data, error } = await window.supabaseClient.from('notifications').insert(row).select('id').single();
+            if (error) {
+                throw error;
+            }
+            this.handleNewNotifications([{
+                id: data.id,
+                ...row,
+                readBy: row.read_by,
+                createdAt: row.created_at,
+                studentId: row.student_id,
+                studentName: row.student_name,
+                relatedRecord: row.related_record,
+                isUrgent: row.is_urgent
+            }]);
+            return data.id;
         } catch (error) {
             console.error('Error creating notification:', error);
             throw error;
@@ -2165,18 +1909,12 @@ const EducareTrack = {
     async markNotificationAsRead(notificationId) {
         try {
             if (!this.currentUser) throw new Error('No user logged in');
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient.from('notifications').select('id,readBy').eq('id', notificationId).single();
-                if (error || !data) throw new Error('Notification not found');
-                const existing = Array.isArray(data.readBy) ? data.readBy : [];
-                const updated = Array.from(new Set([...existing, this.currentUser.id]));
-                const { error: upErr } = await window.supabaseClient.from('notifications').update({ readBy: updated }).eq('id', notificationId);
-                if (upErr) throw upErr;
-            } else {
-                await db.collection('notifications').doc(notificationId).update({
-                    readBy: firebase.firestore.FieldValue.arrayUnion(this.currentUser.id)
-                });
-            }
+            const { data, error } = await window.supabaseClient.from('notifications').select('id,read_by').eq('id', notificationId).single();
+            if (error || !data) throw new Error('Notification not found');
+            const existing = Array.isArray(data.read_by) ? data.read_by : [];
+            const updated = Array.from(new Set([...existing, this.currentUser.id]));
+            const { error: upErr } = await window.supabaseClient.from('notifications').update({ read_by: updated }).eq('id', notificationId);
+            if (upErr) throw upErr;
             this.updateNotificationBadge();
             return true;
         } catch (error) {
@@ -2190,19 +1928,8 @@ const EducareTrack = {
         try {
             if (!this.currentUser) throw new Error('No user logged in');
             if (!notificationIds || notificationIds.length === 0) return;
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                for (const id of notificationIds) {
-                    await this.markNotificationAsRead(id);
-                }
-            } else {
-                const batch = db.batch();
-                notificationIds.forEach(notificationId => {
-                    const notificationRef = db.collection('notifications').doc(notificationId);
-                    batch.update(notificationRef, {
-                        readBy: firebase.firestore.FieldValue.arrayUnion(this.currentUser.id)
-                    });
-                });
-                await batch.commit();
+            for (const id of notificationIds) {
+                await this.markNotificationAsRead(id);
             }
             this.updateNotificationBadge();
             return true;
@@ -2233,39 +1960,69 @@ const EducareTrack = {
     },
 
     // Get unread notification count - OPTIMIZED VERSION
+    formatTargetUsersFilter(userId) {
+        const raw = String(userId || '');
+        if (!raw) return '{}';
+        const safeId = raw.replace(/"/g, '\\"');
+        const needsQuotes = /[,\s{}]/.test(safeId);
+        return needsQuotes ? `{"${safeId}"}` : `{${safeId}}`;
+    },
+
+    async fetchNotificationsSnake(userId, type, limit) {
+        let query = window.supabaseClient
+            .from('notifications')
+            .select('id,read_by,target_users,is_active,created_at,title,message,type,is_urgent,student_id,student_name,related_record')
+            .filter('target_users', 'cs', this.formatTargetUsersFilter(userId))
+            .eq('is_active', true);
+        if (type) query = query.eq('type', type);
+        if (limit) query = query.limit(limit);
+        return query;
+    },
+
+    async fetchNotificationsCamel(userId, type, limit) {
+        let query = window.supabaseClient
+            .from('notifications')
+            .select('id,readBy,targetUsers,isActive,createdAt,title,message,type,isUrgent,studentId,studentName,relatedRecord')
+            .contains('targetUsers', [userId])
+            .eq('isActive', true);
+        if (type) query = query.eq('type', type);
+        if (limit) query = query.limit(limit);
+        return query;
+    },
+
     async getUnreadNotificationCount(userId) {
         try {
             if (dataCache.notifications && dataCache.notifications.userId === userId) {
                 const unreadCount = dataCache.notifications.data.filter(n => !n.read_by || !n.read_by.includes(userId)).length;
                 return unreadCount;
             }
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('notifications')
-                    .select('id,read_by,target_users,is_active,created_at,title,message,type')
-                    .contains('target_users', [userId])
-                    .eq('is_active', true);
-                if (error || !data) return 0;
-                
-                const mappedData = data.map(n => ({
-                    ...n,
-                    readBy: n.read_by,
-                    createdAt: n.created_at
-                }));
-                
-                dataCache.notifications = { userId, data: mappedData, lastUpdated: Date.now() };
-                const unreadCount = mappedData.filter(n => !n.readBy || !n.readBy.includes(userId)).length;
-                return unreadCount;
-            } else {
-                const snapshot = await db.collection('notifications')
-                    .where('target_users', 'array-contains', userId)
-                    .where('is_active', '==', true)
-                    .get();
-                const notifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                dataCache.notifications = { userId, data: notifications, lastUpdated: Date.now() };
-                const unreadCount = notifications.filter(notification => !notification.readBy || !notification.readBy.includes(userId)).length;
-                return unreadCount;
+            let { data, error } = await this.fetchNotificationsSnake(userId);
+            if (error || !data) {
+                const fallback = await this.fetchNotificationsCamel(userId);
+                data = fallback.data || [];
+                error = fallback.error;
             }
+            if (error || !data) return 0;
+
+            const mappedData = data.map(n => ({
+                ...n,
+                read_by: n.read_by || n.readBy,
+                readBy: n.read_by || n.readBy,
+                created_at: n.created_at || n.createdAt,
+                createdAt: n.created_at || n.createdAt,
+                is_urgent: n.is_urgent ?? n.isUrgent,
+                isUrgent: n.is_urgent ?? n.isUrgent,
+                student_id: n.student_id || n.studentId,
+                studentId: n.student_id || n.studentId,
+                student_name: n.student_name || n.studentName,
+                studentName: n.student_name || n.studentName,
+                related_record: n.related_record || n.relatedRecord,
+                relatedRecord: n.related_record || n.relatedRecord
+            }));
+            
+            dataCache.notifications = { userId, data: mappedData, lastUpdated: Date.now() };
+            const unreadCount = mappedData.filter(n => !n.readBy || !n.readBy.includes(userId)).length;
+            return unreadCount;
         } catch (error) {
             console.error('Error getting unread notification count:', error);
             return 0;
@@ -2275,46 +2032,31 @@ const EducareTrack = {
     // Get notifications for user - ENHANCED VERSION
     async getNotificationsForUser(userId, unreadOnly = false, limit = 20) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
-                    .contains('target_users', [userId])
-                    .eq('is_active', true)
-                    .order('created_at', { ascending: false })
-                    .limit(limit);
-                if (error || !data) throw error || new Error('Failed to load notifications');
-                let notifications = data.map(n => ({
-                    ...n,
-                    readBy: n.read_by,
-                    createdAt: n.created_at,
-                    formattedDate: this.formatDate(n.created_at),
-                    formattedTime: this.formatTime(n.created_at)
-                }));
-                if (unreadOnly) {
-                    notifications = notifications.filter(n => !n.readBy || !n.readBy.includes(userId));
-                }
-                return notifications;
-            } else {
-                let query = db.collection('notifications')
-                    .where('target_users', 'array-contains', userId)
-                    .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
-                    .limit(limit);
-                const snapshot = await query.get();
-                let notifications = snapshot.docs.map(doc => ({ 
-                    id: doc.id, 
-                    ...doc.data(),
-                    formattedDate: this.formatDate(doc.data().createdAt),
-                    formattedTime: this.formatTime(doc.data().createdAt)
-                }));
-                if (unreadOnly) {
-                    notifications = notifications.filter(notification => 
-                        !notification.readBy || !notification.readBy.includes(userId)
-                    );
-                }
-                return notifications;
+            let { data, error } = await this.fetchNotificationsSnake(userId, null, limit);
+            if (error || !data) {
+                const fallback = await this.fetchNotificationsCamel(userId, null, limit);
+                data = fallback.data || [];
+                error = fallback.error;
             }
+            if (error || !data) throw error || new Error('Failed to load notifications');
+            let notifications = data.map(n => {
+                const createdAt = n.created_at || n.createdAt;
+                return {
+                    ...n,
+                    readBy: n.read_by || n.readBy,
+                    createdAt: createdAt,
+                    isUrgent: n.is_urgent ?? n.isUrgent,
+                    studentId: n.student_id || n.studentId,
+                    studentName: n.student_name || n.studentName,
+                    relatedRecord: n.related_record || n.relatedRecord,
+                    formattedDate: this.formatDate(createdAt),
+                    formattedTime: this.formatTime(createdAt)
+                };
+            });
+            if (unreadOnly) {
+                notifications = notifications.filter(n => !n.readBy || !n.readBy.includes(userId));
+            }
+            return notifications;
         } catch (error) {
             console.error('Error getting notifications for user:', error);
             throw error;
@@ -2324,38 +2066,27 @@ const EducareTrack = {
     // Get notifications by type
     async getNotificationsByType(userId, type, limit = 20) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
-                    .contains('target_users', [userId])
-                    .eq('type', type)
-                    .eq('is_active', true)
-                    .order('created_at', { ascending: false })
-                    .limit(limit);
-                if (error || !data) return [];
-                return data.map(n => ({
-                    ...n,
-                    readBy: n.read_by,
-                    createdAt: n.created_at,
-                    formattedDate: this.formatDate(n.created_at),
-                    formattedTime: this.formatTime(n.created_at)
-                }));
-            } else {
-                const snapshot = await db.collection('notifications')
-                    .where('target_users', 'array-contains', userId)
-                    .where('type', '==', type)
-                    .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
-                    .limit(limit)
-                    .get();
-                return snapshot.docs.map(doc => ({ 
-                    id: doc.id, 
-                    ...doc.data(),
-                    formattedDate: this.formatDate(doc.data().createdAt),
-                    formattedTime: this.formatTime(doc.data().createdAt)
-                }));
+            let { data, error } = await this.fetchNotificationsSnake(userId, type, limit);
+            if (error || !data) {
+                const fallback = await this.fetchNotificationsCamel(userId, type, limit);
+                data = fallback.data || [];
+                error = fallback.error;
             }
+            if (error || !data) return [];
+            return data.map(n => {
+                const createdAt = n.created_at || n.createdAt;
+                return {
+                    ...n,
+                    readBy: n.read_by || n.readBy,
+                    createdAt: createdAt,
+                    isUrgent: n.is_urgent ?? n.isUrgent,
+                    studentId: n.student_id || n.studentId,
+                    studentName: n.student_name || n.studentName,
+                    relatedRecord: n.related_record || n.relatedRecord,
+                    formattedDate: this.formatDate(createdAt),
+                    formattedTime: this.formatTime(createdAt)
+                };
+            });
         } catch (error) {
             console.error('Error getting notifications by type:', error);
             return [];
@@ -2365,38 +2096,28 @@ const EducareTrack = {
     // Get urgent notifications
     async getUrgentNotifications(userId, limit = 10) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                // Supabase notifications table does not have isUrgent column; return latest notifications
-                const { data, error } = await window.supabaseClient
-                    .from('notifications')
-                    .select('id,target_users,title,message,type,is_active,created_at,read_by')
-                    .contains('target_users', [userId])
-                    .eq('is_active', true)
-                    .order('created_at', { ascending: false })
-                    .limit(limit);
-                if (error || !data) return [];
-                return data.map(n => ({
-                    ...n,
-                    readBy: n.read_by,
-                    createdAt: n.created_at,
-                    formattedDate: this.formatDate(n.created_at),
-                    formattedTime: this.formatTime(n.created_at)
-                }));
-            } else {
-                const snapshot = await db.collection('notifications')
-                    .where('target_users', 'array-contains', userId)
-                    .where('isUrgent', '==', true)
-                    .where('is_active', '==', true)
-                    .orderBy('createdAt', 'desc')
-                    .limit(limit)
-                    .get();
-                return snapshot.docs.map(doc => ({ 
-                    id: doc.id, 
-                    ...doc.data(),
-                    formattedDate: this.formatDate(doc.data().createdAt),
-                    formattedTime: this.formatTime(doc.data().createdAt)
-                }));
+            // Supabase notifications table does not have isUrgent column; return latest notifications
+            let { data, error } = await this.fetchNotificationsSnake(userId, null, limit);
+            if (error || !data) {
+                const fallback = await this.fetchNotificationsCamel(userId, null, limit);
+                data = fallback.data || [];
+                error = fallback.error;
             }
+            if (error || !data) return [];
+            return data.map(n => {
+                const createdAt = n.created_at || n.createdAt;
+                return {
+                    ...n,
+                    readBy: n.read_by || n.readBy,
+                    createdAt: createdAt,
+                    isUrgent: n.is_urgent ?? n.isUrgent,
+                    studentId: n.student_id || n.studentId,
+                    studentName: n.student_name || n.studentName,
+                    relatedRecord: n.related_record || n.relatedRecord,
+                    formattedDate: this.formatDate(createdAt),
+                    formattedTime: this.formatTime(createdAt)
+                };
+            });
         } catch (error) {
             console.error('Error getting urgent notifications:', error);
             return [];
@@ -2408,11 +2129,13 @@ const EducareTrack = {
         try {
             if (!this.currentUser) throw new Error('No user logged in');
 
-            await db.collection('notifications').doc(notificationId).update({
+            const { error } = await window.supabaseClient.from('notifications').update({
                 is_active: false,
-                deletedAt: SupabaseFieldValue.serverTimestamp(),
-                deletedBy: this.currentUser.id
-            });
+                // deletedAt: new Date().toISOString(), // Supabase doesn't usually use serverTimestamp in client calls
+                // deletedBy: this.currentUser.id
+            }).eq('id', notificationId);
+            
+            if (error) throw error;
 
             console.log('Notification deleted:', notificationId);
             return true;
@@ -2425,26 +2148,41 @@ const EducareTrack = {
     // Create bulk notifications for multiple users
     async createBulkNotifications(notificationDataArray) {
         try {
-            const batch = db.batch();
-            const notificationsCollection = db.collection('notifications');
-            const createdNotifications = [];
+            const notifications = notificationDataArray.map(notificationData => ({
+                target_users: notificationData.target_users || notificationData.targetUsers,
+                title: notificationData.title,
+                message: notificationData.message,
+                type: notificationData.type,
+                is_active: true,
+                created_at: (notificationData.created_at || notificationData.createdAt || new Date()).toISOString?.() || notificationData.created_at || notificationData.createdAt,
+                read_by: notificationData.read_by || notificationData.readBy || [],
+                student_id: notificationData.student_id || notificationData.studentId || null,
+                student_name: notificationData.student_name || notificationData.studentName || null,
+                related_record: notificationData.related_record || notificationData.relatedRecord || null,
+                is_urgent: notificationData.is_urgent ?? notificationData.isUrgent ?? false
+            }));
 
-            notificationDataArray.forEach(notificationData => {
-                const notificationRef = notificationsCollection.doc();
-                const notification = {
-                    ...notificationData,
-                    id: notificationRef.id,
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
-                    readBy: [],
-                    isUrgent: notificationData.isUrgent || false,
-                    is_active: true
+            const { data, error } = await window.supabaseClient
+                .from('notifications')
+                .insert(notifications)
+                .select('id');
+
+            if (error) throw error;
+            
+            const createdNotifications = data.map((d, i) => {
+                const row = notifications[i];
+                return {
+                    id: d.id,
+                    ...row,
+                    readBy: row.read_by,
+                    createdAt: row.created_at,
+                    studentId: row.student_id,
+                    studentName: row.student_name,
+                    relatedRecord: row.related_record,
+                    isUrgent: row.is_urgent
                 };
-
-                batch.set(notificationRef, notification);
-                createdNotifications.push(notification);
             });
 
-            await batch.commit();
             console.log(`Created ${createdNotifications.length} bulk notifications`);
             
             // Trigger real-time updates
@@ -2462,18 +2200,11 @@ const EducareTrack = {
     // Notification preferences management
     async updateNotificationPreferences(userId, preferences) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { error } = await window.supabaseClient
-                    .from('users')
-                    .update({ notification_preferences: preferences, updated_at: new Date().toISOString() })
-                    .eq('id', userId);
-                if (error) throw error;
-            } else {
-                await db.collection('users').doc(userId).update({
-                    notificationPreferences: preferences,
-                    updatedAt: SupabaseFieldValue.serverTimestamp()
-                });
-            }
+            const { error } = await window.supabaseClient
+                .from('profiles')
+                .update({ notification_preferences: preferences, updated_at: new Date().toISOString() })
+                .eq('id', userId);
+            if (error) throw error;
 
             console.log('Notification preferences updated for user:', userId);
             return true;
@@ -2486,38 +2217,21 @@ const EducareTrack = {
     // Get notification preferences
     async getNotificationPreferences(userId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('users')
-                    .select('notification_preferences')
-                    .eq('id', userId)
-                    .single();
-                if (error) throw error;
-                return data?.notification_preferences || {
-                    attendance: true,
-                    clinic: true,
-                    announcements: true,
-                    excuses: true,
-                    system: true,
-                    email: false,
-                    push: true
-                };
-            } else {
-                const userDoc = await db.collection('users').doc(userId).get();
-                if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    return userData.notificationPreferences || {
-                        attendance: true,
-                        clinic: true,
-                        announcements: true,
-                        excuses: true,
-                        system: true,
-                        email: false,
-                        push: true
-                    };
-                }
-            }
-            return null;
+            const { data, error } = await window.supabaseClient
+                .from('profiles')
+                .select('notification_preferences')
+                .eq('id', userId)
+                .single();
+            if (error) throw error;
+            return data?.notification_preferences || {
+                attendance: true,
+                clinic: true,
+                announcements: true,
+                excuses: true,
+                system: true,
+                email: false,
+                push: true
+            };
         } catch (error) {
             console.error('Error getting notification preferences:', error);
             return null;
@@ -2864,31 +2578,18 @@ const EducareTrack = {
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-            const snapshot = await db.collection('notifications')
-                .where('createdAt', '<', cutoffDate)
-                .where('isUrgent', '==', false)
-                .limit(100) // Process in batches
-                .get();
-
-            if (snapshot.empty) {
-                console.log('No old notifications to cleanup');
-                return 0;
-            }
-
-            const batch = db.batch();
-            let deletedCount = 0;
-
-            snapshot.docs.forEach(doc => {
-                batch.delete(doc.ref);
-                deletedCount++;
-            });
-
-            await batch.commit();
-            console.log(`Cleaned up ${deletedCount} old notifications`);
+            const { count, error } = await window.supabaseClient
+                .from('notifications')
+                .delete({ count: 'exact' })
+                .lt('created_at', cutoffDate.toISOString());
+            
+            if (error) throw error;
+            
+            console.log(`Cleaned up ${count} old notifications`);
             
             this.clearCache(); // Clear cache since data changed
             
-            return deletedCount;
+            return count;
         } catch (error) {
             console.error('Error cleaning up old notifications:', error);
             throw error;
@@ -2963,108 +2664,69 @@ const EducareTrack = {
                 timestamp = arg3 || new Date();
             }
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
-                const session = this.getCurrentSession();
-                
-                // If status not provided, calculate it
-                if (!status) {
-                    const isLate = entry_type === 'entry' && this.isLate(timeString);
-                    status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
-                }
-
-                const { data: student, error: studentErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id')
-                    .eq('id', studentId)
-                    .single();
-                
-                if (studentErr || !student) {
-                    throw new Error('Student not found');
-                }
-
-                const insertData = {
-                    studentId: studentId,
-                    class_id: student.class_id || '',
-                    entry_type: entry_type,
-                    timestamp: timestamp,
-                    time: timeString,
-                    session: session,
-                    status: status,
-                    remarks: notes || '',
-                    recordedBy: recordedBy || this.currentUser.id,
-                    recordedByName: recordedByName || this.currentUser.name,
-                    manualEntry: isObjectArg // Assume object arg implies manual/admin entry
-                };
-
-                const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(insertData).select('id').single();
-                
-                if (error) {
-                    throw error;
-                }
-
-                const newStatus = entry_type === 'entry' ? 'in_school' : 'out_school';
-                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
-
-                // Only notify if not manually suppressed (optional future enhancement)
-                // For now, keep existing notification logic
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                    title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
-                    message: `${(student.first_name || '')} ${(student.last_name || '')} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                    target_users: [student.parent_id].filter(Boolean)
-                });
-
-                await this.syncAttendanceToReports();
-                return inserted.id;
-            } else {
-                // Firebase fallback
-                const studentDoc = await db.collection('students').doc(studentId).get();
-                if (!studentDoc.exists) {
-                    throw new Error('Student not found');
-                }
-                const student = studentDoc.data();
-                const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
-                const session = this.getCurrentSession();
-                
-                if (!status) {
-                    const isLate = entry_type === 'entry' && this.isLate(timeString);
-                    status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
-                }
-
-                const attendanceData = {
-                    studentId: studentId,
-                    studentName: student.name,
-                    class_id: student.class_id,
-                    entry_type: entry_type,
-                    timestamp: timestamp, // Use date object for Firebase too (better than serverTimestamp for manual entry)
-                    time: timeString,
-                    session: session,
-                    status: status,
-                    remarks: notes || '',
-                    recordedBy: recordedBy || this.currentUser.id,
-                    recordedByName: recordedByName || this.currentUser.name
-                };
-
-                const attendanceRef = await db.collection('attendance').add(attendanceData);
-                await db.collection('students').doc(studentId).update({
-                    current_status: entry_type === 'entry' ? 'in_school' : 'out_school',
-                    lastAttendance: timestamp
-                });
-
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                    title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
-                    message: `${student.name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                    target_users: [student.parent_id],
-                    studentId: studentId,
-                    studentName: student.name,
-                    relatedRecord: attendanceRef.id
-                });
-
-                await this.syncAttendanceToReports();
-                return attendanceRef.id;
+            const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
+            const session = this.getCurrentSession();
+            
+            // If status not provided, calculate it
+            if (!status) {
+                const isLate = entry_type === 'entry' && this.isLate(timeString);
+                status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
             }
+
+            const { data: student, error: studentErr } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,class_id,parent_id')
+                .eq('id', studentId)
+                .single();
+            
+            if (studentErr || !student) {
+                throw new Error('Student not found');
+            }
+
+            const insertData = {
+                student_id: studentId,
+                class_id: student.class_id || '',
+                entry_type: entry_type,
+                timestamp: timestamp,
+                time: timeString,
+                session: session,
+                status: status,
+                remarks: notes || '',
+                recorded_by: recordedBy || this.currentUser.id,
+                recorded_by_name: recordedByName || this.currentUser.name,
+                manual_entry: isObjectArg // Assume object arg implies manual/admin entry
+            };
+
+            const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(insertData).select('id').single();
+            
+            if (error) {
+                throw error;
+            }
+
+            const newStatus = entry_type === 'entry' ? 'in_school' : 'out_school';
+            await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+
+            // Get parent IDs
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id);
+            const parentIds = (relations || []).map(r => r.parent_id);
+
+            // Only notify if not manually suppressed (optional future enhancement)
+            // For now, keep existing notification logic
+            await this.createNotification({
+                type: this.NOTIFICATION_TYPES.ATTENDANCE,
+                title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
+                message: `${student.full_name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
+                target_users: [...parentIds].filter(Boolean),
+                studentId: studentId,
+                studentName: student.full_name,
+                relatedRecord: inserted.id
+            });
+
+            await this.syncAttendanceToReports();
+            return inserted.id;
         } catch (error) {
             console.error('Error recording attendance:', error);
             throw error;
@@ -3083,33 +2745,42 @@ const EducareTrack = {
             const status = isLate ? this.ATTENDANCE_STATUS.LATE : this.ATTENDANCE_STATUS.PRESENT;
 
             const attendanceData = {
-                studentId: studentId,
-                studentName: student.name,
-                classId: student.class_id || '',
+                student_id: studentId,
+                class_id: student.class_id || '',
                 entry_type: entry_type,
-                timestamp: SupabaseFieldValue.serverTimestamp(),
+                timestamp: timestamp,
                 time: timeString,
                 session: session,
                 status: status,
-                recordedBy: this.currentUser.id,
-                recordedByName: this.currentUser.name,
-                manualEntry: false
+                recorded_by: this.currentUser.id,
+                recorded_by_name: this.currentUser.name,
+                manual_entry: false
             };
 
-            const attendanceRef = await this.db.collection('attendance').add(attendanceData);
+            const { data: attendanceRef, error } = await window.supabaseClient.from('attendance').insert(attendanceData).select('id').single();
+
+            if (error) {
+                throw error;
+            }
 
             // Update student status
-            await this.db.collection('students').doc(studentId).update({
-                current_status: entry_type === 'entry' ? 'in_school' : 'out_school',
-                lastAttendance: new Date().toISOString()
-            });
+            await window.supabaseClient.from('students').update({
+                current_status: entry_type === 'entry' ? 'in_school' : 'out_school'
+            }).eq('id', studentId);
+
+            // Get parent IDs
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', studentId);
+            const parentIds = (relations || []).map(r => r.parent_id);
 
             const teacherIds = await this.getRelevantTeachersForStudent(student);
             await this.createNotification({
                 type: this.NOTIFICATION_TYPES.ATTENDANCE,
                 title: `Student ${entry_type === 'entry' ? 'Arrival' : 'Departure'}`,
                 message: `${student.name} has ${entry_type === 'entry' ? 'entered' : 'left'} the school at ${timeString}`,
-                target_users: [student.parent_id, ...teacherIds].filter(Boolean),
+                target_users: [...parentIds, ...teacherIds].filter(Boolean),
                 studentId: studentId,
                 studentName: student.name,
                 relatedRecord: attendanceRef.id
@@ -3135,35 +2806,20 @@ const EducareTrack = {
             const startOfDay = new Date(date + 'T00:00:00');
             const endOfDay = new Date(date + 'T23:59:59');
             const stats = { present: 0, absent: 0, late: 0, clinic: 0, excused: 0 };
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('status,timestamp,entry_type')
-                    .gte('timestamp', startOfDay.toISOString())
-                    .lte('timestamp', endOfDay.toISOString());
-                if (error) {
-                    throw error;
-                }
-                (data || []).forEach(row => {
-                    if (row && row.status && Object.prototype.hasOwnProperty.call(stats, row.status)) {
-                        stats[row.status] += 1;
-                    }
-                });
-                return stats;
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('attendance')
-                    .where('timestamp', '>=', startOfDay)
-                    .where('timestamp', '<=', endOfDay)
-                    .get();
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    if (stats.hasOwnProperty(data.status)) {
-                        stats[data.status]++;
-                    }
-                });
-                return stats;
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('status,timestamp,entry_type')
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString());
+            if (error) {
+                throw error;
             }
+            (data || []).forEach(row => {
+                if (row && row.status && Object.prototype.hasOwnProperty.call(stats, row.status)) {
+                    stats[row.status] += 1;
+                }
+            });
+            return stats;
         } catch (error) {
             console.error('Error getting attendance stats:', error);
             throw error;
@@ -3173,45 +2829,23 @@ const EducareTrack = {
     // Get attendance records with filters
     async getAttendanceRecords(filters = {}) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let query = window.supabaseClient.from('attendance').select('*');
-                if (filters.startDate && filters.endDate) {
-                    const startDate = new Date(filters.startDate + 'T00:00:00');
-                    const endDate = new Date(filters.endDate + 'T23:59:59');
-                    query = query.gte('timestamp', startDate.toISOString()).lte('timestamp', endDate.toISOString());
-                }
-                if (filters.classId) {
-                    query = query.eq('class_id', filters.classId);
-                }
-                if (filters.status) {
-                    query = query.eq('status', filters.status);
-                }
-                const { data, error } = await query.order('timestamp', { ascending: false });
-                if (error) {
-                    throw error;
-                }
-                return Array.isArray(data) ? data.map(r => ({ id: r.id, ...r })) : [];
-            } else {
-                const db = firebase.firestore();
-                let query = db.collection('attendance');
-                if (filters.startDate && filters.endDate) {
-                    const startDate = new Date(filters.startDate + 'T00:00:00');
-                    const endDate = new Date(filters.endDate + 'T23:59:59');
-                    query = query.where('timestamp', '>=', startDate).where('timestamp', '<=', endDate);
-                }
-                if (filters.classId) {
-                    query = query.where('classId', '==', filters.classId);
-                }
-                if (filters.status) {
-                    query = query.where('status', '==', filters.status);
-                }
-                const snapshot = await query.orderBy('timestamp', 'desc').get();
-                const records = [];
-                snapshot.forEach(doc => {
-                    records.push({ id: doc.id, ...doc.data() });
-                });
-                return records;
+            let query = window.supabaseClient.from('attendance').select('*');
+            if (filters.startDate && filters.endDate) {
+                const startDate = new Date(filters.startDate + 'T00:00:00');
+                const endDate = new Date(filters.endDate + 'T23:59:59');
+                query = query.gte('timestamp', startDate.toISOString()).lte('timestamp', endDate.toISOString());
             }
+            if (filters.classId) {
+                query = query.eq('class_id', filters.classId);
+            }
+            if (filters.status) {
+                query = query.eq('status', filters.status);
+            }
+            const { data, error } = await query.order('timestamp', { ascending: false });
+            if (error) {
+                throw error;
+            }
+            return Array.isArray(data) ? data.map(r => ({ id: r.id, ...r })) : [];
         } catch (error) {
             console.error('Error getting attendance records:', error);
             throw error;
@@ -3221,75 +2855,57 @@ const EducareTrack = {
     // Record manual attendance (for teachers/admins)
     async recordManualAttendance(attendanceData) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const timestamp = new Date(attendanceData.date + 'T' + (attendanceData.time || '08:00:00'));
-                const timeString = (attendanceData.time || '08:00').substring(0, 5);
-                const session = this.getCurrentSession();
-                const { data: student, error: studentErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id')
-                    .eq('id', attendanceData.studentId)
-                    .single();
-                if (studentErr || !student) {
-                    throw new Error('Student not found');
-                }
-                const row = {
-                    student_id: attendanceData.studentId,
-                    class_id: student.class_id || '',
-                    entry_type: 'entry',
-                    timestamp: timestamp,
-                    time: timeString,
-                    session: session,
-                    status: attendanceData.status,
-                    recorded_by: attendanceData.recordedBy,
-                    recorded_by_name: this.currentUser?.name || '',
-                    remarks: attendanceData.notes || '',
-                    manual_entry: true
-                };
-                const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
-                if (error) {
-                    throw error;
-                }
-                const teacherIds = await this.getRelevantTeachersForStudent({ id: student.id, name: `${student.firstName || ''} ${student.lastName || ''}`.trim(), classId: student.classId });
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                    title: 'Manual Attendance Update',
-                    message: `${(student.firstName || '')} ${(student.lastName || '')} marked as ${attendanceData.status} (${attendanceData.notes || 'No notes'})`,
-                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
-                    studentId: student.id,
-                    studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
-                    relatedRecord: inserted.id
-                });
-                return true;
-            } else {
-                const db = firebase.firestore();
-                const timestamp = new Date(attendanceData.date + 'T' + (attendanceData.time || '08:00:00'));
-                const attendanceRecord = {
-                    studentId: attendanceData.studentId,
-                    status: attendanceData.status,
-                    timestamp: timestamp,
-                    recordedBy: attendanceData.recordedBy,
-                    notes: attendanceData.notes || '',
-                    createdAt: SupabaseFieldValue.serverTimestamp(),
-                    manualEntry: true
-                };
-                const added = await db.collection('attendance').add(attendanceRecord);
-                const studentDoc = await db.collection('students').doc(attendanceData.studentId).get();
-                if (studentDoc.exists) {
-                    const student = { id: studentDoc.id, ...studentDoc.data() };
-                    const teacherIds = await this.getRelevantTeachersForStudent(student);
-                    await this.createNotification({
-                        type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                        title: 'Manual Attendance Update',
-                        message: `${student.name} marked as ${attendanceData.status} (${attendanceData.notes || 'No notes'})`,
-                        target_users: [student.parent_id, ...teacherIds].filter(Boolean),
-                        studentId: student.id,
-                        studentName: student.name,
-                        relatedRecord: added.id
-                    });
-                }
-                return true;
+            const timestamp = new Date(attendanceData.date + 'T' + (attendanceData.time || '08:00:00'));
+            const timeString = (attendanceData.time || '08:00').substring(0, 5);
+            const session = this.getCurrentSession();
+            const { data: student, error: studentErr } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,class_id')
+                .eq('id', attendanceData.studentId)
+                .single();
+            if (studentErr || !student) {
+                throw new Error('Student not found');
             }
+            const row = {
+                student_id: attendanceData.studentId,
+                class_id: student.class_id || '',
+                entry_type: 'entry',
+                timestamp: timestamp,
+                time: timeString,
+                session: session,
+                status: attendanceData.status,
+                recorded_by: attendanceData.recordedBy,
+                recorded_by_name: this.currentUser?.name || '',
+                remarks: attendanceData.notes || '',
+                manual_entry: true
+            };
+            const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
+            if (error) {
+                throw error;
+            }
+
+            // Get parent IDs
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id);
+            const parentIds = (relations || []).map(r => r.parent_id);
+
+            const teacherIds = await this.getRelevantTeachersForStudent({ 
+                id: student.id, 
+                name: student.full_name, 
+                classId: student.class_id 
+            });
+            await this.createNotification({
+                type: this.NOTIFICATION_TYPES.ATTENDANCE,
+                title: 'Manual Attendance Update',
+                message: `${student.full_name} marked as ${attendanceData.status} (${attendanceData.notes || 'No notes'})`,
+                target_users: [...parentIds, ...teacherIds].filter(Boolean),
+                studentId: student.id,
+                studentName: student.full_name,
+                relatedRecord: inserted.id
+            });
+            return true;
         } catch (error) {
             console.error('Error recording attendance:', error);
             throw error;
@@ -3298,182 +2914,129 @@ const EducareTrack = {
 
     async overrideAttendanceStatus(studentId, status = 'present', notes = '') {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const { data: student, error: studentErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id')
-                    .eq('id', studentId)
-                    .single();
-                if (studentErr || !student) {
-                    throw new Error('Student not found');
-                }
-                const { data: existing, error: qErr } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id,timestamp')
-                    .eq('student_id', studentId)
-                    .eq('entry_type', 'entry')
-                    .gte('timestamp', today.toISOString())
-                    .order('timestamp', { ascending: true })
-                    .limit(1);
-                if (qErr) {
-                    throw qErr;
-                }
-                let recordId = null;
-                if (Array.isArray(existing) && existing.length > 0) {
-                    recordId = existing[0].id;
-                    const { error: upErr } = await window.supabaseClient
-                        .from('attendance')
-                        .update({ status: status, remarks: notes })
-                        .eq('id', recordId);
-                    if (upErr) {
-                        throw upErr;
-                    }
-                } else {
-                    const now = new Date();
-                    const timeString = now.toTimeString().split(' ')[0].substring(0, 5);
-                    const session = this.getCurrentSession();
-                    const row = {
-                        studentId: studentId,
-                        class_id: student.class_id || '',
-                        entry_type: 'entry',
-                        timestamp: now,
-                        time: timeString,
-                        session: session,
-                        status: status,
-                        recordedBy: this.currentUser?.id || 'system',
-                        recordedByName: this.currentUser?.name || 'System',
-                        manualEntry: true,
-                        remarks: notes || ''
-                    };
-                    const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
-                    if (error) {
-                        throw error;
-                    }
-                    recordId = inserted.id;
-                }
-                const newStatus = status === 'absent' ? 'out_school' : 'in_school';
-                const { error: stuErr } = await window.supabaseClient.from('students').update({ currentStatus: newStatus }).eq('id', studentId);
-                if (stuErr) {
-                    throw stuErr;
-                }
-                const teacherIds = await this.getRelevantTeachersForStudent({ id: student.id, name: `${student.firstName || ''} ${student.lastName || ''}`.trim(), classId: student.classId });
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                    title: 'Manual Attendance Update',
-                    message: `${(student.firstName || '')} ${(student.lastName || '')} marked as ${status}${notes ? ` (${notes})` : ''}`,
-                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
-                    studentId: student.id,
-                    studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
-                    relatedRecord: recordId
-                });
-                return true;
-            } else {
-                const db = firebase.firestore();
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const studentDoc = await db.collection('students').doc(studentId).get();
-                if (!studentDoc.exists) throw new Error('Student not found');
-                const student = { id: studentDoc.id, ...studentDoc.data() };
-                const snapshot = await db.collection('attendance')
-                    .where('studentId', '==', studentId)
-                    .where('timestamp', '>=', today)
-                    .where('entry_type', '==', 'entry')
-                    .orderBy('timestamp', 'asc')
-                    .limit(1)
-                    .get();
-                let recordId = null;
-                if (!snapshot.empty) {
-                    const doc = snapshot.docs[0];
-                    recordId = doc.id;
-                    await db.collection('attendance').doc(recordId).update({
-                        status: status,
-                        manualOverride: {
-                            by: this.currentUser?.id || 'system',
-                            byName: this.currentUser?.name || 'System',
-                            notes: notes,
-                            at: SupabaseFieldValue.serverTimestamp()
-                        }
-                    });
-                } else {
-                    const now = new Date();
-                    const timeString = now.toTimeString().split(' ')[0].substring(0, 5);
-                    const session = this.getCurrentSession();
-                    const attendanceData = {
-                        studentId: studentId,
-                        studentName: student.name,
-                        class_id: student.class_id,
-                        entry_type: 'entry',
-                        timestamp: SupabaseFieldValue.serverTimestamp(),
-                        time: timeString,
-                        session: session,
-                        status: status,
-                        recordedBy: this.currentUser?.id || 'system',
-                        recordedByName: this.currentUser?.name || 'System',
-                        manualEntry: true,
-                        manualOverride: {
-                            by: this.currentUser?.id || 'system',
-                            byName: this.currentUser?.name || 'System',
-                            notes: notes,
-                            at: SupabaseFieldValue.serverTimestamp()
-                        }
-                    };
-                    const ref = await db.collection('attendance').add(attendanceData);
-                    recordId = ref.id;
-                }
-                await db.collection('students').doc(studentId).update({
-                    current_status: status === 'absent' ? 'out_school' : 'in_school',
-                    lastAttendance: SupabaseFieldValue.serverTimestamp()
-                });
-                const teacherIds = await this.getRelevantTeachersForStudent(student);
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                    title: 'Manual Attendance Update',
-                    message: `${student.name} marked as ${status}${notes ? ` (${notes})` : ''}`,
-                    target_users: [student.parent_id, ...teacherIds].filter(Boolean),
-                    studentId: student.id,
-                    studentName: student.name,
-                    relatedRecord: recordId
-                });
-                try {
-                    const end = new Date();
-                    const start = new Date(end.getTime() - 14 * 24 * 60 * 60 * 1000);
-                    const risk = await this.computeAttendanceRisk(student.id, start, end);
-                    if (risk.severity === 'critical') {
-                        const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const dupCheck = await db.collection('notifications')
-                            .where('studentId', '==', student.id)
-                            .where('type', '==', this.NOTIFICATION_TYPES.ATTENDANCE)
-                            .where('createdAt', '>=', today)
-                            .get();
-                        const hasCriticalToday = dupCheck.docs.some(doc => (doc.data().title || '').includes('Critical Attendance Alert'));
-                        if (!hasCriticalToday) {
-                            const adminsSnap = await db.collection('users')
-                                .where('role', '==', this.USER_TYPES.ADMIN)
-                                .where('is_active', '==', true)
-                                .limit(10)
-                                .get();
-                            const adminIds = adminsSnap.docs.map(d => d.id);
-                            const reasonText = risk.reasons.length ? `Reasons: ${risk.reasons.join(', ')}` : '';
-                            await this.createNotification({
-                                type: this.NOTIFICATION_TYPES.ATTENDANCE,
-                                title: 'Critical Attendance Alert',
-                                message: `${student.name} flagged as at-risk. ${reasonText}`,
-                                isUrgent: true,
-                                target_users: [student.parentId, ...teacherIds, ...adminIds].filter(Boolean),
-                                studentId: student.id,
-                                studentName: student.name,
-                                relatedRecord: recordId
-                            });
-                        }
-                    }
-                } catch (e) {
-                    console.error('Risk evaluation failed:', e);
-                }
-                return true;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const { data: student, error: studentErr } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,class_id')
+                .eq('id', studentId)
+                .single();
+            if (studentErr || !student) {
+                throw new Error('Student not found');
             }
+            const { data: existing, error: qErr } = await window.supabaseClient
+                .from('attendance')
+                .select('id,timestamp')
+                .eq('student_id', studentId)
+                .eq('entry_type', 'entry')
+                .gte('timestamp', today.toISOString())
+                .order('timestamp', { ascending: true })
+                .limit(1);
+            if (qErr) {
+                throw qErr;
+            }
+            let recordId = null;
+            if (Array.isArray(existing) && existing.length > 0) {
+                recordId = existing[0].id;
+                const { error: upErr } = await window.supabaseClient
+                    .from('attendance')
+                    .update({ status: status, remarks: notes })
+                    .eq('id', recordId);
+                if (upErr) {
+                    throw upErr;
+                }
+            } else {
+                const now = new Date();
+                const timeString = now.toTimeString().split(' ')[0].substring(0, 5);
+                const session = this.getCurrentSession();
+                const row = {
+                    student_id: studentId,
+                    class_id: student.class_id || '',
+                    entry_type: 'entry',
+                    timestamp: now,
+                    time: timeString,
+                    session: session,
+                    status: status,
+                    recorded_by: this.currentUser?.id || 'system',
+                    recorded_by_name: this.currentUser?.name || 'System',
+                    manual_entry: true,
+                    remarks: notes || ''
+                };
+                const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
+                if (error) {
+                    throw error;
+                }
+                recordId = inserted.id;
+            }
+            const newStatus = status === 'absent' ? 'out_school' : 'in_school';
+            const { error: stuErr } = await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+            if (stuErr) {
+                throw stuErr;
+            }
+            // Get parent IDs
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id);
+            const parentIds = (relations || []).map(r => r.parent_id);
+
+            const teacherIds = await this.getRelevantTeachersForStudent({ id: student.id, name: student.full_name, classId: student.class_id });
+            await this.createNotification({
+                type: this.NOTIFICATION_TYPES.ATTENDANCE,
+                title: 'Manual Attendance Update',
+                message: `${student.full_name} marked as ${status}${notes ? ` (${notes})` : ''}`,
+                target_users: [...parentIds, ...teacherIds].filter(Boolean),
+                studentId: student.id,
+                studentName: student.full_name,
+                relatedRecord: recordId
+            });
+
+            try {
+                const end = new Date();
+                const start = new Date(end.getTime() - 14 * 24 * 60 * 60 * 1000);
+                // Ensure computeAttendanceRisk is implemented/updated to use Supabase if needed
+                const risk = await this.computeAttendanceRisk(student.id, start, end);
+                if (risk.severity === 'critical') {
+                    const todayStart = new Date();
+                    todayStart.setHours(0, 0, 0, 0);
+                    
+                    const { data: dupCheck, error: dupErr } = await window.supabaseClient
+                        .from('notifications')
+                        .select('title')
+                        .eq('student_id', student.id)
+                        .eq('type', this.NOTIFICATION_TYPES.ATTENDANCE)
+                        .gte('created_at', todayStart.toISOString());
+                        
+                    const hasCriticalToday = !dupErr && (dupCheck || []).some(n => (n.title || '').includes('Critical Attendance Alert'));
+                    
+                    if (!hasCriticalToday) {
+                        const { data: admins, error: adminErr } = await window.supabaseClient
+                            .from('profiles')
+                            .select('id')
+                            .eq('role', this.USER_TYPES.ADMIN)
+                            .eq('is_active', true)
+                            .limit(10);
+                            
+                        const adminIds = !adminErr && admins ? admins.map(d => d.id) : [];
+                        const reasonText = risk.reasons.length ? `Reasons: ${risk.reasons.join(', ')}` : '';
+                        
+                        await this.createNotification({
+                            type: this.NOTIFICATION_TYPES.ATTENDANCE,
+                            title: 'Critical Attendance Alert',
+                            message: `${student.full_name} flagged as at-risk. ${reasonText}`,
+                            isUrgent: true,
+                            target_users: [...parentIds, ...teacherIds, ...adminIds].filter(Boolean),
+                            studentId: student.id,
+                            studentName: student.full_name,
+                            relatedRecord: recordId
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error('Risk evaluation failed:', e);
+            }
+
+            return true;
         } catch (error) {
             console.error('Error overriding attendance status:', error);
             throw error;
@@ -3483,17 +3046,11 @@ const EducareTrack = {
     // Delete attendance record
     async deleteAttendanceRecord(recordId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { error } = await window.supabaseClient.from('attendance').delete().eq('id', recordId);
-                if (error) {
-                    throw error;
-                }
-                return true;
-            } else {
-                const db = firebase.firestore();
-                await db.collection('attendance').doc(recordId).delete();
-                return true;
+            const { error } = await window.supabaseClient.from('attendance').delete().eq('id', recordId);
+            if (error) {
+                throw error;
             }
+            return true;
         } catch (error) {
             console.error('Error deleting attendance record:', error);
             throw error;
@@ -3503,29 +3060,12 @@ const EducareTrack = {
     // Get class students (alias for getStudentsByClass for backward compatibility)
     async getClassStudents(classId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('students')
-                    .select('*')
-                    .eq('class_id', classId);
-                if (error) throw error;
-                return (data || []).map(s => ({ ...s }));
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('students')
-                    .where('classId', '==', classId)
-                    .get();
-                    
-                const students = [];
-                snapshot.forEach(doc => {
-                    students.push({
-                        id: doc.id,
-                        ...doc.data()
-                    });
-                });
-                
-                return students;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .eq('class_id', classId);
+            if (error) throw error;
+            return (data || []).map(s => ({ ...s }));
         } catch (error) {
             console.error('Error getting class students:', error);
             throw error;
@@ -3537,99 +3077,65 @@ const EducareTrack = {
     // Clinic Check-in/Check-out
     async recordClinicVisit(studentId, reason = '', notes = '', check_in = true) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data: student, error: studentErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,first_name,last_name,class_id,parent_id')
-                    .eq('id', studentId)
-                    .single();
-                if (studentErr || !student) {
-                    throw new Error('Student not found');
-                }
-                const timeString = new Date().toTimeString().split(' ')[0].substring(0, 5);
-                const row = {
-                    studentId: studentId,
-                    class_id: student.class_id || '',
-                    check_in: !!check_in,
-                    timestamp: new Date(),
-                    reason: reason || '',
-                    notes: notes || '',
-                    staffId: this.currentUser.id,
-                    staffName: this.currentUser.name,
-                    time: timeString
-                };
-                const { data: inserted, error } = await window.supabaseClient.from('clinicVisits').insert(row).select('id').single();
-                if (error) {
-                    throw error;
-                }
-                const newStatus = check_in ? 'in_clinic' : 'in_school';
-                const { error: upErr } = await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
-                if (upErr) {
-                    throw upErr;
-                }
-                let teacherId = null;
-                const { data: homeroom, error: hrErr } = await window.supabaseClient
-                    .from('users')
-                    .select('id')
-                    .eq('role', this.USER_TYPES.TEACHER)
-                    .eq('classId', student.classId || '')
-                    .eq('isHomeroom', true)
-                    .limit(1);
-                if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
-                    teacherId = homeroom[0].id;
-                }
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.CLINIC,
-                    title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
-                    message: `${(student.firstName || '')} ${(student.lastName || '')} has ${check_in ? 'checked into' : 'checked out from'} the clinic.${reason ? ' Reason: ' + reason : ''}`,
-                    target_users: [student.parentId, teacherId].filter(Boolean),
-                    studentId: student.id,
-                    studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
-                    relatedRecord: inserted.id
-                });
-                return inserted.id;
-            } else {
-                const studentDoc = await db.collection('students').doc(studentId).get();
-                if (!studentDoc.exists) {
-                    throw new Error('Student not found');
-                }
-                const student = studentDoc.data();
-                const clinicData = {
-                    studentId: studentId,
-                    studentName: student.name,
-                    class_id: student.class_id,
-                    check_in: check_in,
-                    timestamp: SupabaseFieldValue.serverTimestamp(),
-                    reason: reason,
-                    notes: notes,
-                    staffId: this.currentUser.id,
-                    staffName: this.currentUser.name
-                };
-                const clinicRef = await db.collection('clinicVisits').add(clinicData);
-                await db.collection('students').doc(studentId).update({
-                    currentStatus: check_in ? 'in_clinic' : 'in_school',
-                    lastClinicVisit: SupabaseFieldValue.serverTimestamp()
-                });
-                const teacherQuery = await db.collection('users')
-                    .where('role', '==', this.USER_TYPES.TEACHER)
-                    .where('class_id', '==', student.class_id)
-                    .where('isHomeroom', '==', true)
-                    .get();
-                let teacherId = null;
-                if (!teacherQuery.empty) {
-                    teacherId = teacherQuery.docs[0].id;
-                }
-                await this.createNotification({
-                    type: this.NOTIFICATION_TYPES.CLINIC,
-                    title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
-                    message: `${student.name} has ${check_in ? 'checked into' : 'checked out from'} the clinic. ${reason ? `Reason: ${reason}` : ''}`,
-                    target_users: [student.parentId, teacherId].filter(id => id),
-                    studentId: studentId,
-                    studentName: student.name,
-                    relatedRecord: clinicRef.id
-                });
-                return clinicRef.id;
+            const { data: student, error: studentErr } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,class_id')
+                .eq('id', studentId)
+                .single();
+            if (studentErr || !student) {
+                throw new Error('Student not found');
             }
+            const timeString = new Date().toTimeString().split(' ')[0].substring(0, 5);
+            const row = {
+                student_id: studentId,
+                class_id: student.class_id || '',
+                check_in: !!check_in,
+                timestamp: new Date(),
+                reason: reason || '',
+                notes: notes || '',
+                staff_id: this.currentUser.id,
+                staff_name: this.currentUser.name,
+                time: timeString
+            };
+            const { data: inserted, error } = await window.supabaseClient.from('clinic_visits').insert(row).select('id').single();
+            if (error) {
+                throw error;
+            }
+            const newStatus = check_in ? 'in_clinic' : 'in_school';
+            const { error: upErr } = await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+            if (upErr) {
+                throw upErr;
+            }
+
+            // Get parent IDs
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id);
+            const parentIds = (relations || []).map(r => r.parent_id);
+
+            let teacherId = null;
+            if (student.class_id) {
+                const { data: classData, error: hrErr } = await window.supabaseClient
+                    .from('classes')
+                    .select('adviser_id')
+                    .eq('id', student.class_id)
+                    .single();
+                
+                if (!hrErr && classData && classData.adviser_id) {
+                    teacherId = classData.adviser_id;
+                }
+            }
+            await this.createNotification({
+                type: this.NOTIFICATION_TYPES.CLINIC,
+                title: `Clinic ${check_in ? 'Visit' : 'Check-out'}`,
+                message: `${student.full_name} has ${check_in ? 'checked into' : 'checked out from'} the clinic.${reason ? ' Reason: ' + reason : ''}`,
+                target_users: [...parentIds, teacherId].filter(Boolean),
+                studentId: student.id,
+                studentName: student.full_name,
+                relatedRecord: inserted.id
+            });
+            return inserted.id;
         } catch (error) {
             console.error('Error recording clinic visit:', error);
             throw error;
@@ -3645,27 +3151,35 @@ const EducareTrack = {
                 throw new Error('Only admins and teachers can create announcements');
             }
 
-            const announcement = {
-                ...announcementData,
-                createdBy: this.currentUser.id,
-                createdByName: this.currentUser.name,
-                createdAt: SupabaseFieldValue.serverTimestamp(),
-                is_active: true
+            const row = {
+                title: announcementData.title,
+                message: announcementData.message,
+                audience: announcementData.audience,
+                priority: announcementData.priority,
+                class_id: announcementData.class_id || announcementData.classId || null,
+                class_name: announcementData.class_name || announcementData.className || null,
+                created_by: this.currentUser.id,
+                created_by_name: this.currentUser.name,
+                created_at: new Date().toISOString(),
+                is_active: true,
+                is_urgent: announcementData.is_urgent ?? announcementData.isUrgent ?? false,
+                expiry_date: announcementData.expiry_date || announcementData.expiryDate || null
             };
 
-            const announcementRef = await db.collection('announcements').add(announcement);
+            const { data: inserted, error } = await window.supabaseClient.from('announcements').insert(row).select('id').single();
+            if (error) throw error;
 
             // Get target users based on audience
             let target_users = [];
             if (announcementData.audience === 'all') {
-                const usersSnapshot = await db.collection('users').where('is_active', '==', true).get();
-                target_users = usersSnapshot.docs.map(doc => doc.id);
+                const { data } = await window.supabaseClient.from('profiles').select('id').eq('is_active', true);
+                target_users = (data || []).map(u => u.id);
             } else if (announcementData.audience === 'parents') {
-                const parentsSnapshot = await db.collection('users').where('role', '==', 'parent').where('is_active', '==', true).get();
-                target_users = parentsSnapshot.docs.map(doc => doc.id);
+                const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'parent').eq('is_active', true);
+                target_users = (data || []).map(u => u.id);
             } else if (announcementData.audience === 'teachers') {
-                const teachersSnapshot = await db.collection('users').where('role', '==', 'teacher').where('is_active', '==', true).get();
-                target_users = teachersSnapshot.docs.map(doc => doc.id);
+                const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'teacher').eq('is_active', true);
+                target_users = (data || []).map(u => u.id);
             }
 
             // Create notifications for target users
@@ -3675,13 +3189,13 @@ const EducareTrack = {
                     title: announcementData.title,
                     message: announcementData.message,
                     target_users: target_users,
-                    relatedRecord: announcementRef.id,
+                    relatedRecord: inserted.id,
                     isUrgent: announcementData.isUrgent || false
                 });
             }
 
-            console.log('Announcement created:', announcementRef.id);
-            return announcementRef.id;
+            console.log('Announcement created:', inserted.id);
+            return inserted.id;
         } catch (error) {
             console.error('Error creating announcement:', error);
             throw error;
@@ -3691,15 +3205,41 @@ const EducareTrack = {
     // Get announcements
     async getAnnouncements(limit = 20) {
         try {
-            const snapshot = await db.collection('announcements')
-                .where('is_active', '==', true)
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('announcements')
+                .select('*')
+                .eq('is_active', true)
+                .order('created_at', { ascending: false })
+                .limit(limit);
 
-            // Sort in memory
-            const announcements = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            return announcements.sort((a, b) => 
-                new Date(b.createdAt?.toDate()) - new Date(a.createdAt?.toDate())
-            ).slice(0, limit);
+            if (error) {
+                const userId = this.currentUser?.id;
+                if (!userId) throw error;
+                const notifications = await this.getNotificationsByType(userId, this.NOTIFICATION_TYPES.ANNOUNCEMENT, limit);
+                return notifications.map(n => ({
+                    id: n.relatedRecord || n.id,
+                    title: n.title,
+                    message: n.message,
+                    audience: 'all',
+                    priority: n.isUrgent ? 'high' : 'normal',
+                    created_by: null,
+                    created_by_name: null,
+                    created_at: n.createdAt,
+                    is_active: true,
+                    is_urgent: n.isUrgent,
+                    expiry_date: null,
+                    createdAt: new Date(n.createdAt),
+                    isUrgent: n.isUrgent,
+                    expiryDate: null
+                }));
+            }
+            return (data || []).map(a => ({
+                id: a.id,
+                ...a,
+                createdAt: new Date(a.created_at),
+                isUrgent: a.is_urgent,
+                expiryDate: a.expiry_date
+            }));
         } catch (error) {
             console.error('Error getting announcements:', error);
             throw error;
@@ -3713,7 +3253,8 @@ const EducareTrack = {
                 throw new Error('Only admins and teachers can delete announcements');
             }
 
-            await db.collection('announcements').doc(announcementId).delete();
+            const { error } = await window.supabaseClient.from('announcements').delete().eq('id', announcementId);
+            if (error) throw error;
             return true;
         } catch (error) {
             console.error('Error deleting announcement:', error);
@@ -3726,14 +3267,16 @@ const EducareTrack = {
     // Get attendance report with date range
     async getAttendanceReport(startDate, endDate, limit = 100) {
         try {
-            let query = this.db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                .order('timestamp', { ascending: false })
                 .limit(limit);
 
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+            return (data || []).map(doc => ({ id: doc.id, ...doc }));
         } catch (error) {
             console.error('Error getting attendance report:', error);
             return [];
@@ -3742,14 +3285,16 @@ const EducareTrack = {
 
     async getClinicReport(startDate, endDate, limit = 100) {
         try {
-            let query = this.db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                .order('timestamp', { ascending: false })
                 .limit(limit);
 
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+            return (data || []).map(doc => ({ id: doc.id, ...doc }));
         } catch (error) {
             console.error('Error getting clinic report:', error);
             return [];
@@ -3759,38 +3304,40 @@ const EducareTrack = {
     async getStudentActivityReport(startDate, endDate, limit = 100) {
         try {
             // Combine attendance and clinic visits for comprehensive activity report
-            const [attendanceSnapshot, clinicSnapshot] = await Promise.all([
-                this.db.collection('attendance')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .orderBy('timestamp', 'desc')
+            const [{ data: attendanceData }, { data: clinicData }] = await Promise.all([
+                window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .order('timestamp', { ascending: false })
+                    .limit(limit / 2),
+                window.supabaseClient
+                    .from('clinic_visits')
+                    .select('*')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .order('timestamp', { ascending: false })
                     .limit(limit / 2)
-                    .get(),
-                this.db.collection('clinicVisits')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .orderBy('timestamp', 'desc')
-                    .limit(limit / 2)
-                    .get()
             ]);
 
             const activities = [
-                ...attendanceSnapshot.docs.map(doc => ({ 
+                ...(attendanceData || []).map(doc => ({ 
                     id: doc.id, 
-                    ...doc.data(),
-                    type: 'attendance'
+                    ...doc,
+                    type: 'attendance',
+                    timestamp: new Date(doc.timestamp)
                 })),
-                ...clinicSnapshot.docs.map(doc => ({ 
+                ...(clinicData || []).map(doc => ({ 
                     id: doc.id, 
-                    ...doc.data(),
-                    type: 'clinic'
+                    ...doc,
+                    type: 'clinic',
+                    timestamp: new Date(doc.timestamp)
                 }))
             ];
 
             // Sort by timestamp (newest first)
-            return activities.sort((a, b) => 
-                new Date(b.timestamp?.toDate()) - new Date(a.timestamp?.toDate())
-            ).slice(0, limit);
+            return activities.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
         } catch (error) {
             console.error('Error getting student activity report:', error);
             throw error;
@@ -3799,15 +3346,17 @@ const EducareTrack = {
 
     async getLateArrivalsReport(startDate, endDate, limit = 100) {
         try {
-            let query = this.db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .where('status', '==', 'late')
-                .orderBy('timestamp', 'desc')
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                .eq('status', 'late')
+                .order('timestamp', { ascending: false })
                 .limit(limit);
 
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+            return (data || []).map(doc => ({ id: doc.id, ...doc }));
         } catch (error) {
             console.error('Error getting late arrivals report:', error);
             throw error;
@@ -3876,16 +3425,17 @@ const EducareTrack = {
     // Get clinic statistics
     async getClinicStats(startDate, endDate) {
         try {
-            const snapshot = await this.db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .get();
+            const { data: visits, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString());
 
-            const visits = snapshot.docs.map(doc => doc.data());
+            if (error) throw error;
             
             // Calculate common reasons
             const reasons = {};
-            visits.forEach(visit => {
+            (visits || []).forEach(visit => {
                 const reason = visit.reason || 'Unknown';
                 reasons[reason] = (reasons[reason] || 0) + 1;
             });
@@ -3897,10 +3447,10 @@ const EducareTrack = {
                 .map(([reason, count]) => ({ reason, count }));
 
             return {
-                totalVisits: visits.length,
-                uniqueStudents: new Set(visits.map(v => v.studentId)).size,
+                totalVisits: (visits || []).length,
+                uniqueStudents: new Set((visits || []).map(v => v.student_id)).size,
                 topReasons,
-                averageVisitDuration: this.calculateAverageVisitDuration(visits)
+                averageVisitDuration: this.calculateAverageVisitDuration(visits || [])
             };
         } catch (error) {
             console.error('Error getting clinic stats:', error);
@@ -3923,12 +3473,12 @@ const EducareTrack = {
 
         check_ins.forEach(check_in => {
             const correspondingCheckOut = checkOuts.find(checkOut => 
-                checkOut.studentId === check_in.studentId && 
-                this.isSameDay(check_in.timestamp, checkOut.timestamp)
+                checkOut.student_id === check_in.student_id && 
+                this.isSameDay(new Date(check_in.timestamp), new Date(checkOut.timestamp))
             );
 
             if (correspondingCheckOut && check_in.timestamp && correspondingCheckOut.timestamp) {
-                const duration = correspondingCheckOut.timestamp.toDate() - check_in.timestamp.toDate();
+                const duration = new Date(correspondingCheckOut.timestamp) - new Date(check_in.timestamp);
                 totalDuration += duration;
                 pairCount++;
             }
@@ -3941,26 +3491,28 @@ const EducareTrack = {
     isSameDay(timestamp1, timestamp2) {
         if (!timestamp1 || !timestamp2) return false;
         
-        const date1 = timestamp1.toDate().toDateString();
-        const date2 = timestamp2.toDate().toDateString();
+        const date1 = timestamp1 instanceof Date ? timestamp1.toDateString() : new Date(timestamp1).toDateString();
+        const date2 = timestamp2 instanceof Date ? timestamp2.toDateString() : new Date(timestamp2).toDateString();
         return date1 === date2;
     },
 
     // Get late arrival statistics
     async getLateArrivalsStats(startDate, endDate) {
         try {
-            const snapshot = await this.db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .where('status', '==', 'late')
-                .get();
+            const { data: lateArrivals, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                .eq('status', 'late');
 
-            const lateArrivals = snapshot.docs.map(doc => doc.data());
+            if (error) throw error;
             
             // Group by student
             const studentLateCounts = {};
-            lateArrivals.forEach(arrival => {
-                studentLateCounts[arrival.studentId] = (studentLateCounts[arrival.studentId] || 0) + 1;
+            (lateArrivals || []).forEach(arrival => {
+                const studentId = arrival.student_id;
+                studentLateCounts[studentId] = (studentLateCounts[studentId] || 0) + 1;
             });
 
             // Get frequent late comers
@@ -3973,18 +3525,18 @@ const EducareTrack = {
                 'Monday': 0, 'Tuesday': 0, 'Wednesday': 0, 'Thursday': 0, 'Friday': 0, 'Saturday': 0, 'Sunday': 0
             };
 
-            lateArrivals.forEach(arrival => {
+            (lateArrivals || []).forEach(arrival => {
                 if (arrival.timestamp) {
-                    const day = arrival.timestamp.toDate().toLocaleDateString('en-US', { weekday: 'long' });
+                    const day = new Date(arrival.timestamp).toLocaleDateString('en-US', { weekday: 'long' });
                     dayPattern[day]++;
                 }
             });
 
             return {
-                totalLateArrivals: lateArrivals.length,
+                totalLateArrivals: (lateArrivals || []).length,
                 frequentLateComers,
                 dayPattern,
-                averageLatePerStudent: lateArrivals.length / Object.keys(studentLateCounts).length || 0
+                averageLatePerStudent: (lateArrivals || []).length / Object.keys(studentLateCounts).length || 0
             };
         } catch (error) {
             console.error('Error getting late arrivals stats:', error);
@@ -4143,88 +3695,43 @@ const EducareTrack = {
     // Enhanced status distribution with real data
     async getStatusDistribution(startDate, endDate) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const [{ data: attendanceData }, { data: clinicData }, studentCountRes] = await Promise.all([
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('studentId,status,timestamp,entry_type')
-                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
-                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString()),
-                    window.supabaseClient
-                        .from('clinicVisits')
-                        .select('studentId,timestamp,check_in')
-                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
-                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
-                        .eq('check_in', true),
-                    window.supabaseClient
-                        .from('students')
-                        .select('id', { count: 'exact', head: true })
-                ]);
-                const totalStudents = studentCountRes.count || 0;
-                const presentStudents = new Set();
-                const lateStudents = new Set();
-                const clinicStudents = new Set();
-                (attendanceData || []).forEach(record => {
-                    if (record.status === 'present') {
-                        presentStudents.add(record.studentId);
-                    } else if (record.status === 'late') {
-                        lateStudents.add(record.studentId);
-                        presentStudents.add(record.studentId);
-                    }
-                });
-                (clinicData || []).forEach(visit => {
-                    clinicStudents.add(visit.studentId);
-                });
-                const presentCount = presentStudents.size;
-                const lateCount = lateStudents.size;
-                const clinicCount = clinicStudents.size;
-                const absentCount = Math.max(0, totalStudents - presentCount - clinicCount);
-                return {
-                    'Present': presentCount,
-                    'Late': lateCount,
-                    'Absent': absentCount,
-                    'In Clinic': clinicCount
-                };
-            }
-            const [attendanceSnapshot, clinicSnapshot, studentSnapshot] = await Promise.all([
-                this.db.collection('attendance')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .get(),
-                this.db.collection('clinicVisits')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('check_in', '==', true)
-                    .get(),
-                this.db.collection('students').get()
+            const [{ data: attendanceData }, { data: clinicData }, studentCountRes] = await Promise.all([
+                window.supabaseClient
+                    .from('attendance')
+                    .select('student_id,status,timestamp,entry_type')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString()),
+                window.supabaseClient
+                    .from('clinic_visits')
+                    .select('student_id,timestamp,check_in')
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .eq('check_in', true),
+                window.supabaseClient
+                    .from('students')
+                    .select('id', { count: 'exact', head: true })
             ]);
-
-            const totalStudents = studentSnapshot.size;
-            const attendanceData = attendanceSnapshot.docs.map(doc => doc.data());
-            const clinicVisits = clinicSnapshot.docs.map(doc => doc.data());
-
-            // Calculate unique students for each status
+            const totalStudents = studentCountRes.count || 0;
             const presentStudents = new Set();
             const lateStudents = new Set();
             const clinicStudents = new Set();
-
-            attendanceData.forEach(record => {
+            (attendanceData || []).forEach(record => {
+                const studentId = record.student_id || record.studentId;
                 if (record.status === 'present') {
-                    presentStudents.add(record.studentId);
+                    presentStudents.add(studentId);
                 } else if (record.status === 'late') {
-                    lateStudents.add(record.studentId);
+                    lateStudents.add(studentId);
+                    presentStudents.add(studentId);
                 }
             });
-
-            clinicVisits.forEach(visit => {
-                clinicStudents.add(visit.studentId);
+            (clinicData || []).forEach(visit => {
+                const studentId = visit.student_id || visit.studentId;
+                clinicStudents.add(studentId);
             });
-
             const presentCount = presentStudents.size;
             const lateCount = lateStudents.size;
             const clinicCount = clinicStudents.size;
-            const absentCount = Math.max(0, totalStudents - presentCount - lateCount - clinicCount);
-
+            const absentCount = Math.max(0, totalStudents - presentCount - clinicCount);
             return {
                 'Present': presentCount,
                 'Late': lateCount,
@@ -4240,128 +3747,38 @@ const EducareTrack = {
     // Class-specific attendance trend (present, absent, late, clinic) per day
     async getClassAttendanceTrend(classId, startDate, endDate) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
-                const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
-                const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('student_id,status,entry_type,timestamp')
-                        .eq('class_id', classId)
-                        .gte('timestamp', startIso)
-                        .lte('timestamp', endIso),
-                    window.supabaseClient
-                        .from('clinicVisits')
-                        .select('student_id,timestamp,check_in')
-                        .eq('class_id', classId)
-                        .eq('check_in', true)
-                        .gte('timestamp', startIso)
-                        .lte('timestamp', endIso),
-                    window.supabaseClient
-                        .from('students')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('class_id', classId)
-                        .eq('is_active', true)
-                ]);
-                if (attendanceRes.error) throw attendanceRes.error;
-                if (clinicRes.error) throw clinicRes.error;
-                if (studentCountRes.error) throw studentCountRes.error;
-
-                const totalStudents = studentCountRes.count || 0;
-                const dateGroups = {};
-                (attendanceRes.data || []).forEach(row => {
-                    if (!row.timestamp) return;
-                    const ts = row.timestamp && row.timestamp.toDate ? row.timestamp.toDate() : row.timestamp;
-                    const dateKey = new Date(ts).toDateString();
-                    if (!dateGroups[dateKey]) {
-                        dateGroups[dateKey] = {
-                            present: new Set(),
-                            late: new Set(),
-                            clinic: new Set()
-                        };
-                    }
-                    const studentId = row.student_id || row.studentId;
-                    if (!studentId) return;
-                    if (row.entry_type === 'entry') {
-                        if (row.status === 'late') {
-                            dateGroups[dateKey].late.add(studentId);
-                        } else if (row.status === 'present') {
-                            dateGroups[dateKey].present.add(studentId);
-                        }
-                    }
-                });
-                (clinicRes.data || []).forEach(row => {
-                    if (!row.timestamp) return;
-                    const ts = row.timestamp && row.timestamp.toDate ? row.timestamp.toDate() : row.timestamp;
-                    const dateKey = new Date(ts).toDateString();
-                    if (!dateGroups[dateKey]) {
-                        dateGroups[dateKey] = {
-                            present: new Set(),
-                            late: new Set(),
-                            clinic: new Set()
-                        };
-                    }
-                    const studentId = row.student_id || row.studentId;
-                    if (!studentId) return;
-                    dateGroups[dateKey].clinic.add(studentId);
-                });
-
-                const labels = [];
-                const presentData = [];
-                const absentData = [];
-                const lateData = [];
-                const clinicData = [];
-
-                const current = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
-                const end = endDate instanceof Date ? new Date(endDate) : new Date(endDate);
-                while (current <= end) {
-                    const key = current.toDateString();
-                    const group = dateGroups[key] || { present: new Set(), late: new Set(), clinic: new Set() };
-                    const isSchoolDay = this.isSchoolDay(current);
-                    const presentCount = isSchoolDay ? (group.present.size + group.late.size) : 0;
-                    const absentCount = isSchoolDay ? Math.max(0, totalStudents - presentCount - group.clinic.size) : 0;
-                    const labelBase = current.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                    labels.push(isSchoolDay ? labelBase : `${labelBase} (No School)`);
-                    presentData.push(presentCount);
-                    absentData.push(absentCount);
-                    lateData.push(isSchoolDay ? group.late.size : 0);
-                    clinicData.push(isSchoolDay ? group.clinic.size : 0);
-                    current.setDate(current.getDate() + 1);
-                }
-
-                return {
-                    labels,
-                    datasets: { present: presentData, absent: absentData, late: lateData, clinic: clinicData },
-                    totalStudents
-                };
-            }
-            const db = firebase.firestore();
-
-            const [attendanceSnapshot, clinicSnapshot, studentsSnapshot] = await Promise.all([
-                db.collection('attendance')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .get(),
-                db.collection('clinicVisits')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('check_in', '==', true)
-                    .get(),
-                db.collection('students')
-                    .where('classId', '==', classId)
-                    .where('is_active', '==', true)
-                    .get()
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
+                window.supabaseClient
+                    .from('attendance')
+                    .select('student_id,status,entry_type,timestamp')
+                    .eq('class_id', classId)
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso),
+                window.supabaseClient
+                    .from('clinic_visits')
+                    .select('student_id,timestamp,check_in')
+                    .eq('class_id', classId)
+                    .eq('check_in', true)
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso),
+                window.supabaseClient
+                    .from('students')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('class_id', classId)
+                    .eq('is_active', true)
             ]);
+            if (attendanceRes.error) throw attendanceRes.error;
+            if (clinicRes.error) throw clinicRes.error;
+            if (studentCountRes.error) throw studentCountRes.error;
 
-            const totalStudents = studentsSnapshot.size;
-
+            const totalStudents = studentCountRes.count || 0;
             const dateGroups = {};
-            attendanceSnapshot.forEach(doc => {
-                const data = doc.data();
-                if (!data.timestamp) return;
-                const dateKey = data.timestamp.toDate().toDateString();
+            (attendanceRes.data || []).forEach(row => {
+                if (!row.timestamp) return;
+                const ts = row.timestamp && row.timestamp.toDate ? row.timestamp.toDate() : row.timestamp;
+                const dateKey = new Date(ts).toDateString();
                 if (!dateGroups[dateKey]) {
                     dateGroups[dateKey] = {
                         present: new Set(),
@@ -4369,19 +3786,20 @@ const EducareTrack = {
                         clinic: new Set()
                     };
                 }
-                if (data.entry_type === 'entry') {
-                    if (data.status === 'late') {
-                        dateGroups[dateKey].late.add(data.studentId);
-                    } else if (data.status === 'present') {
-                        dateGroups[dateKey].present.add(data.studentId);
+                const studentId = row.student_id || row.studentId;
+                if (!studentId) return;
+                if (row.entry_type === 'entry') {
+                    if (row.status === 'late') {
+                        dateGroups[dateKey].late.add(studentId);
+                    } else if (row.status === 'present') {
+                        dateGroups[dateKey].present.add(studentId);
                     }
                 }
             });
-
-            clinicSnapshot.forEach(doc => {
-                const data = doc.data();
-                if (!data.timestamp) return;
-                const dateKey = data.timestamp.toDate().toDateString();
+            (clinicRes.data || []).forEach(row => {
+                if (!row.timestamp) return;
+                const ts = row.timestamp && row.timestamp.toDate ? row.timestamp.toDate() : row.timestamp;
+                const dateKey = new Date(ts).toDateString();
                 if (!dateGroups[dateKey]) {
                     dateGroups[dateKey] = {
                         present: new Set(),
@@ -4389,7 +3807,9 @@ const EducareTrack = {
                         clinic: new Set()
                     };
                 }
-                dateGroups[dateKey].clinic.add(data.studentId);
+                const studentId = row.student_id || row.studentId;
+                if (!studentId) return;
+                dateGroups[dateKey].clinic.add(studentId);
             });
 
             const labels = [];
@@ -4398,8 +3818,8 @@ const EducareTrack = {
             const lateData = [];
             const clinicData = [];
 
-            const current = new Date(startDate);
-            const end = new Date(endDate);
+            const current = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
+            const end = endDate instanceof Date ? new Date(endDate) : new Date(endDate);
             while (current <= end) {
                 const key = current.toDateString();
                 const group = dateGroups[key] || { present: new Set(), late: new Set(), clinic: new Set() };
@@ -4429,76 +3849,48 @@ const EducareTrack = {
     // Top late students in class over a period
     async getClassLateLeaders(classId, startDate, endDate, limit = 5) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
-                const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
-                const { data: attendance, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('student_id,status,entry_type,timestamp')
-                    .eq('class_id', classId)
-                    .gte('timestamp', startIso)
-                    .lte('timestamp', endIso)
-                    .eq('entry_type', 'entry');
-                if (error) {
-                    throw error;
-                }
-
-                const counts = new Map();
-                (attendance || []).forEach(r => {
-                    const studentId = r.student_id || r.studentId;
-                    if (!studentId) return;
-                    if (r.status === 'late') {
-                        counts.set(studentId, (counts.get(studentId) || 0) + 1);
-                    }
-                });
-
-                const ids = Array.from(counts.keys());
-                let namesById = {};
-                if (ids.length > 0) {
-                    const { data: students, error: studentErr } = await window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,name')
-                        .in('id', ids);
-                    if (studentErr) {
-                        throw studentErr;
-                    }
-                    (students || []).forEach(s => {
-                        const name = [s.first_name, s.last_name].filter(Boolean).join(' ') || s.name || s.id;
-                        namesById[s.id] = name;
-                    });
-                }
-
-                const result = [];
-                for (const [studentId, lateCount] of counts.entries()) {
-                    result.push({ studentId, studentName: namesById[studentId] || studentId, lateCount });
-                }
-                result.sort((a, b) => b.lateCount - a.lateCount);
-                return result.slice(0, limit);
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            const { data: attendance, error } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id,status,entry_type,timestamp')
+                .eq('class_id', classId)
+                .gte('timestamp', startIso)
+                .lte('timestamp', endIso)
+                .eq('entry_type', 'entry');
+            if (error) {
+                throw error;
             }
-            const db = firebase.firestore();
-            const snapshot = await db.collection('attendance')
-                .where('classId', '==', classId)
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .where('entry_type', '==', 'entry')
-                .get();
 
             const counts = new Map();
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                if (data.status === 'late') {
-                    counts.set(data.studentId, (counts.get(data.studentId) || 0) + 1);
+            (attendance || []).forEach(r => {
+                const studentId = r.student_id;
+                if (!studentId) return;
+                if (r.status === 'late') {
+                    counts.set(studentId, (counts.get(studentId) || 0) + 1);
                 }
             });
 
-            // Attach names
-            const result = [];
-            for (const [studentId, lateCount] of counts.entries()) {
-                const studentDoc = await db.collection('students').doc(studentId).get();
-                const name = studentDoc.exists ? studentDoc.data().name : studentId;
-                result.push({ studentId, studentName: name, lateCount });
+            const ids = Array.from(counts.keys());
+            let namesById = {};
+            if (ids.length > 0) {
+                const { data: students, error: studentErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id,full_name,name')
+                    .in('id', ids);
+                if (studentErr) {
+                    throw studentErr;
+                }
+                (students || []).forEach(s => {
+                    const name = s.full_name || s.name || s.id;
+                    namesById[s.id] = name;
+                });
             }
 
+            const result = [];
+            for (const [studentId, lateCount] of counts.entries()) {
+                result.push({ studentId, studentName: namesById[studentId] || studentId, lateCount });
+            }
             result.sort((a, b) => b.lateCount - a.lateCount);
             return result.slice(0, limit);
         } catch (error) {
@@ -4509,96 +3901,48 @@ const EducareTrack = {
 
     async getClassStatusDistribution(classId, startDate, endDate) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
-                const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
-                const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('student_id,status,entry_type,timestamp')
-                        .eq('class_id', classId)
-                        .gte('timestamp', startIso)
-                        .lte('timestamp', endIso),
-                    window.supabaseClient
-                        .from('clinicVisits')
-                        .select('student_id,timestamp,check_in')
-                        .eq('class_id', classId)
-                        .eq('check_in', true)
-                        .gte('timestamp', startIso)
-                        .lte('timestamp', endIso),
-                    window.supabaseClient
-                        .from('students')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('class_id', classId)
-                        .eq('is_active', true)
-                ]);
-                if (attendanceRes.error) throw attendanceRes.error;
-                if (clinicRes.error) throw clinicRes.error;
-                if (studentCountRes.error) throw studentCountRes.error;
-
-                const totalStudents = studentCountRes.count || 0;
-                const presentSet = new Set();
-                const lateSet = new Set();
-                const clinicSet = new Set();
-
-                (attendanceRes.data || []).forEach(r => {
-                    if (r.entry_type === 'entry') {
-                        const studentId = r.student_id || r.studentId;
-                        if (!studentId) return;
-                        if (r.status === 'late') lateSet.add(studentId);
-                        if (r.status === 'present') presentSet.add(studentId);
-                    }
-                });
-                (clinicRes.data || []).forEach(v => {
-                    const studentId = v.student_id || v.studentId;
-                    if (studentId) clinicSet.add(studentId);
-                });
-
-                const presentCount = presentSet.size + lateSet.size;
-                const absentCount = Math.max(0, totalStudents - presentCount - clinicSet.size);
-
-                return {
-                    present: presentCount,
-                    late: lateSet.size,
-                    absent: absentCount,
-                    clinic: clinicSet.size,
-                    totalStudents
-                };
-            }
-            const db = firebase.firestore();
-            const [attendanceSnapshot, clinicSnapshot, studentsSnapshot] = await Promise.all([
-                db.collection('attendance')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .get(),
-                db.collection('clinicVisits')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('check_in', '==', true)
-                    .get(),
-                db.collection('students')
-                    .where('classId', '==', classId)
-                    .where('is_active', '==', true)
-                    .get()
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
+                window.supabaseClient
+                    .from('attendance')
+                    .select('student_id,status,entry_type,timestamp')
+                    .eq('class_id', classId)
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso),
+                window.supabaseClient
+                    .from('clinic_visits')
+                    .select('student_id,timestamp,check_in')
+                    .eq('class_id', classId)
+                    .eq('check_in', true)
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso),
+                window.supabaseClient
+                    .from('students')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('class_id', classId)
+                    .eq('is_active', true)
             ]);
+            if (attendanceRes.error) throw attendanceRes.error;
+            if (clinicRes.error) throw clinicRes.error;
+            if (studentCountRes.error) throw studentCountRes.error;
 
-            const totalStudents = studentsSnapshot.size;
+            const totalStudents = studentCountRes.count || 0;
             const presentSet = new Set();
             const lateSet = new Set();
             const clinicSet = new Set();
 
-            attendanceSnapshot.forEach(doc => {
-                const r = doc.data();
+            (attendanceRes.data || []).forEach(r => {
                 if (r.entry_type === 'entry') {
-                    if (r.status === 'late') lateSet.add(r.student_id);
-                    if (r.status === 'present') presentSet.add(r.student_id);
+                    const studentId = r.student_id;
+                    if (!studentId) return;
+                    if (r.status === 'late') lateSet.add(studentId);
+                    if (r.status === 'present') presentSet.add(studentId);
                 }
             });
-            clinicSnapshot.forEach(doc => {
-                const v = doc.data();
-                clinicSet.add(v.student_id);
+            (clinicRes.data || []).forEach(v => {
+                const studentId = v.student_id;
+                if (studentId) clinicSet.add(studentId);
             });
 
             const presentCount = presentSet.size + lateSet.size;
@@ -4619,93 +3963,47 @@ const EducareTrack = {
 
     async getClassWeeklyHeatmap(classId, startDate) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const start = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
-                const endDate = new Date(start);
-                endDate.setDate(endDate.getDate() + 6);
-                const startIso = start.toISOString();
-                const endIso = endDate.toISOString();
-
-                const [studentsRes, attendanceRes] = await Promise.all([
-                    window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,name')
-                        .eq('class_id', classId)
-                        .eq('is_active', true),
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('student_id,status,entry_type,timestamp')
-                        .eq('class_id', classId)
-                        .gte('timestamp', startIso)
-                        .lte('timestamp', endIso)
-                ]);
-                if (studentsRes.error) throw studentsRes.error;
-                if (attendanceRes.error) throw attendanceRes.error;
-
-                const students = (studentsRes.data || []).map(s => ({
-                    id: s.id,
-                    name: [s.first_name, s.last_name].filter(Boolean).join(' ') || s.name || s.id
-                }));
-
-                const grid = new Map();
-                (attendanceRes.data || []).forEach(r => {
-                    if (!r.timestamp || r.entry_type !== 'entry') return;
-                    const ts = r.timestamp && r.timestamp.toDate ? r.timestamp.toDate() : r.timestamp;
-                    const dayKey = new Date(ts).toDateString();
-                    const studentId = r.student_id || r.studentId;
-                    if (!studentId) return;
-                    const cur = grid.get(studentId) || {};
-                    cur[dayKey] = r.status;
-                    grid.set(studentId, cur);
-                });
-
-                const days = [];
-                const cursor = new Date(start);
-                while (days.length < 7) {
-                    days.push({ key: cursor.toDateString(), label: cursor.toLocaleDateString('en-US', { weekday: 'short' }) });
-                    cursor.setDate(cursor.getDate() + 1);
-                }
-
-                const rows = students.map(s => {
-                    const row = { studentId: s.id, studentName: s.name, cells: [] };
-                    days.forEach(d => {
-                        const status = grid.get(s.id)?.[d.key] || (this.isSchoolDay(new Date(d.key)) ? 'absent' : 'none');
-                        row.cells.push(status);
-                    });
-                    return row;
-                });
-
-                return { days, rows };
-            }
-            const db = firebase.firestore();
-            const endDate = new Date(startDate);
+            const start = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
+            const endDate = new Date(start);
             endDate.setDate(endDate.getDate() + 6);
+            const startIso = start.toISOString();
+            const endIso = endDate.toISOString();
 
-            const [studentsSnapshot, attendanceSnapshot] = await Promise.all([
-                db.collection('students')
-                    .where('classId', '==', classId)
-                    .where('is_active', '==', true)
-                    .get(),
-                db.collection('attendance')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .get()
+            const [studentsRes, attendanceRes] = await Promise.all([
+                window.supabaseClient
+                    .from('students')
+                    .select('id,full_name')
+                    .eq('class_id', classId)
+                    .eq('is_active', true),
+                window.supabaseClient
+                    .from('attendance')
+                    .select('student_id,status,entry_type,timestamp')
+                    .eq('class_id', classId)
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso)
             ]);
+            if (studentsRes.error) throw studentsRes.error;
+            if (attendanceRes.error) throw attendanceRes.error;
 
-            const students = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const grid = new Map(); // studentId -> dayKey -> status
-            attendanceSnapshot.forEach(doc => {
-                const r = doc.data();
+            const students = (studentsRes.data || []).map(s => ({
+                id: s.id,
+                name: s.full_name || s.name || s.id
+            }));
+
+            const grid = new Map();
+            (attendanceRes.data || []).forEach(r => {
                 if (!r.timestamp || r.entry_type !== 'entry') return;
-                const dayKey = r.timestamp.toDate().toDateString();
-                const cur = grid.get(r.student_id) || {};
+                const ts = new Date(r.timestamp);
+                const dayKey = ts.toDateString();
+                const studentId = r.student_id;
+                if (!studentId) return;
+                const cur = grid.get(studentId) || {};
                 cur[dayKey] = r.status;
-                grid.set(r.student_id, cur);
+                grid.set(studentId, cur);
             });
 
             const days = [];
-            const cursor = new Date(startDate);
+            const cursor = new Date(start);
             while (days.length < 7) {
                 days.push({ key: cursor.toDateString(), label: cursor.toLocaleDateString('en-US', { weekday: 'short' }) });
                 cursor.setDate(cursor.getDate() + 1);
@@ -4729,18 +4027,23 @@ const EducareTrack = {
 
     async computeAttendanceRisk(studentId, startDate, endDate) {
         try {
-            const db = firebase.firestore();
-            const snapshot = await db.collection('attendance')
-                .where('studentId', '==', studentId)
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .get();
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            
+            const { data: attendance, error } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id,status,entry_type,timestamp')
+                .eq('student_id', studentId)
+                .gte('timestamp', startIso)
+                .lte('timestamp', endIso);
+
+            if (error) throw error;
 
             const days = new Map(); // dateKey -> {present:boolean, late:boolean, clinic:boolean}
-            snapshot.forEach(doc => {
-                const r = doc.data();
+            (attendance || []).forEach(r => {
                 if (!r.timestamp || r.entry_type !== 'entry') return;
-                const key = r.timestamp.toDate().toDateString();
+                const ts = new Date(r.timestamp);
+                const key = ts.toDateString();
                 const d = days.get(key) || { present: false, late: false, clinic: false };
                 if (r.status === 'late') d.late = true;
                 if (r.status === 'present' || r.status === 'late') d.present = true;
@@ -4780,105 +4083,67 @@ const EducareTrack = {
 
     async getAtRiskStudentsReport({ classId = null, startDate, endDate, limit = 10 } = {}) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const [{ data: students }, { data: attendance }] = await Promise.all([
-                    window.supabaseClient
-                        .from('students')
-                        .select('id,first_name,last_name,class_id'),
-                    window.supabaseClient
-                        .from('attendance')
-                        .select('student_id,class_id,status,entry_type,timestamp')
-                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
-                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
-                ]);
-                const filteredStudents = (students || []).filter(s => !classId || s.class_id === classId);
-                const perStudentDays = new Map();
-                (attendance || []).forEach(r => {
-                    if (!r.timestamp || r.entry_type !== 'entry') return;
-                    const ts = r.timestamp && r.timestamp.toDate ? r.timestamp.toDate() : r.timestamp;
-                    const key = new Date(ts).toDateString();
-                    const map = perStudentDays.get(r.student_id) || new Map();
-                    const info = map.get(key) || { present: false, late: false };
-                    if (r.status === 'late') info.late = true;
-                    if (r.status === 'present' || r.status === 'late') info.present = true;
-                    map.set(key, info);
-                    perStudentDays.set(r.student_id, map);
-                });
-                const start = startDate instanceof Date ? startDate : new Date(startDate);
-                const end = endDate instanceof Date ? endDate : new Date(endDate);
-                const risks = [];
-                for (const s of filteredStudents) {
-                    let lateDays = 0, presentDays = 0, absentDays = 0;
-                    const map = perStudentDays.get(s.id) || new Map();
-                    const cursor = new Date(start);
-                    while (cursor <= end) {
-                        if (this.isSchoolDay(cursor)) {
-                            const info = map.get(cursor.toDateString());
-                            if (!info || !info.present) absentDays++; else { presentDays++; if (info.late) lateDays++; }
-                        }
-                        cursor.setDate(cursor.getDate() + 1);
-                    }
-                    const riskScore = absentDays * 2 + lateDays;
-                    const severity = riskScore >= 4 || absentDays >= 2 ? 'critical' : (riskScore >= 2 ? 'warning' : 'normal');
-                    const reasons = [];
-                    if (absentDays >= 2) reasons.push(`${absentDays} absences`);
-                    if (lateDays >= 3) reasons.push(`${lateDays} lates`);
-                    if (severity !== 'normal') {
-                        const name = [s.first_name, s.last_name].filter(Boolean).join(' ');
-                        risks.push({ studentId: s.id, studentName: name, class_id: s.class_id, absentDays, lateDays, riskScore, severity, reasons });
-                    }
-                }
-                risks.sort((a, b) => b.riskScore - a.riskScore);
-                return risks.slice(0, limit);
-            }
-            const db = firebase.firestore();
-            let studentsQuery = db.collection('students');
-            if (classId) studentsQuery = studentsQuery.where('classId', '==', classId);
-            const studentsSnapshot = await studentsQuery.get();
-            const students = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            
+            const [{ data: students }, { data: attendance }] = await Promise.all([
+                window.supabaseClient
+                    .from('students')
+                    .select('id,full_name,class_id,name'),
+                window.supabaseClient
+                    .from('attendance')
+                    .select('student_id,class_id,status,entry_type,timestamp')
+                    .gte('timestamp', startIso)
+                    .lte('timestamp', endIso)
+            ]);
 
-            let attendanceQuery = db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate);
-            if (classId) attendanceQuery = attendanceQuery.where('classId', '==', classId);
-            const attendanceSnapshot = await attendanceQuery.get();
-
+            const filteredStudents = (students || []).filter(s => !classId || s.class_id === classId);
             const perStudentDays = new Map();
-            attendanceSnapshot.forEach(doc => {
-                const r = doc.data();
+
+            (attendance || []).forEach(r => {
                 if (!r.timestamp || r.entry_type !== 'entry') return;
-                const timestamp = r.timestamp instanceof Date ? r.timestamp : r.timestamp.toDate();
-                const key = timestamp.toDateString();
-                const map = perStudentDays.get(r.student_id) || new Map();
+                const ts = new Date(r.timestamp);
+                const key = ts.toDateString();
+                const studentId = r.student_id;
+                
+                const map = perStudentDays.get(studentId) || new Map();
                 const info = map.get(key) || { present: false, late: false };
                 if (r.status === 'late') info.late = true;
                 if (r.status === 'present' || r.status === 'late') info.present = true;
                 map.set(key, info);
-                perStudentDays.set(r.student_id, map);
+                perStudentDays.set(studentId, map);
             });
 
-            const start = new Date(startDate);
-            const end = new Date(endDate);
+            const start = startDate instanceof Date ? startDate : new Date(startDate);
+            const end = endDate instanceof Date ? endDate : new Date(endDate);
             const risks = [];
-            for (const s of students) {
+
+            for (const s of filteredStudents) {
                 let lateDays = 0, presentDays = 0, absentDays = 0;
                 const map = perStudentDays.get(s.id) || new Map();
                 const cursor = new Date(start);
                 while (cursor <= end) {
                     if (this.isSchoolDay(cursor)) {
                         const info = map.get(cursor.toDateString());
-                        if (!info || !info.present) absentDays++; else { presentDays++; if (info.late) lateDays++; }
+                        if (!info || !info.present) {
+                            absentDays++;
+                        } else {
+                            presentDays++;
+                            if (info.late) lateDays++;
+                        }
                     }
                     cursor.setDate(cursor.getDate() + 1);
                 }
+
                 const riskScore = absentDays * 2 + lateDays;
                 const severity = riskScore >= 4 || absentDays >= 2 ? 'critical' : (riskScore >= 2 ? 'warning' : 'normal');
                 const reasons = [];
                 if (absentDays >= 2) reasons.push(`${absentDays} absences`);
                 if (lateDays >= 3) reasons.push(`${lateDays} lates`);
+
                 if (severity !== 'normal') {
-                    const name = s.name || [s.first_name, s.last_name].filter(Boolean).join(' ');
-                    risks.push({ studentId: s.id, studentName: name, class_id: s.classId || s.class_id, absentDays, lateDays, riskScore, severity, reasons });
+                    const name = s.full_name || s.name || s.id;
+                    risks.push({ studentId: s.id, studentName: name, class_id: s.class_id, absentDays, lateDays, riskScore, severity, reasons });
                 }
             }
             risks.sort((a, b) => b.riskScore - a.riskScore);
@@ -4897,83 +4162,50 @@ const EducareTrack = {
                 validatedBy: teacher.id || 'teacher',
                 validatedByName: teacher.name || 'Teacher',
                 validationNotes: teacherNotes || '',
-                validatedAt: SupabaseFieldValue.serverTimestamp()
+                validatedAt: new Date().toISOString()
             };
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data: visit, error: vErr } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('studentId, studentName')
-                    .eq('id', visitId)
+            const { data: visit, error: vErr } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('studentId, studentName')
+                .eq('id', visitId)
+                .single();
+            
+            if (vErr || !visit) throw new Error('Visit not found');
+
+            const { error: upErr } = await window.supabaseClient
+                .from('clinic_visits')
+                .update(updateData)
+                .eq('id', visitId);
+            
+            if (upErr) throw upErr;
+
+            const target_users = [];
+            if (visit.studentId) {
+                const { data: student } = await window.supabaseClient
+                    .from('students')
+                    .select('parent_id')
+                    .eq('id', visit.studentId)
                     .single();
                 
-                if (vErr || !visit) throw new Error('Visit not found');
-
-                const { error: upErr } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .update(updateData)
-                    .eq('id', visitId);
-                
-                if (upErr) throw upErr;
-
-                const target_users = [];
-                if (visit.studentId) {
-                    const { data: student } = await window.supabaseClient
-                        .from('students')
-                        .select('parent_id')
-                        .eq('id', visit.studentId)
-                        .single();
-                    
-                    if (student && student.parent_id) target_users.push(student.parent_id);
-                }
-
-                const title = status === 'approved' ? 'Clinic Visit Validated' : 'Clinic Visit Validation Rejected';
-                const message = status === 'approved'
-                    ? `${visit.studentName} clinic visit validated by teacher.`
-                    : `${visit.studentName} clinic visit rejected by teacher.${teacherNotes ? ' Notes: ' + teacherNotes : ''}`;
-
-                await this.createNotification({
-                    type: 'clinic',
-                    title,
-                    message,
-                    target_users,
-                    studentId: visit.studentId,
-                    studentName: visit.studentName,
-                    relatedRecord: visitId
-                });
-                return true;
-            } else {
-                const db = firebase.firestore();
-                const visitRef = db.collection('clinicVisits').doc(visitId);
-                const visitDoc = await visitRef.get();
-                if (!visitDoc.exists) throw new Error('Visit not found');
-                const visit = visitDoc.data();
-                
-                await visitRef.update(updateData);
-
-                const target_users = [];
-                if (visit.studentId) {
-                    const studentDoc = await db.collection('students').doc(visit.studentId).get();
-                    if (studentDoc.exists) {
-                        const student = studentDoc.data();
-                        if (student.parentId) target_users.push(student.parentId);
-                    }
-                }
-                const title = status === 'approved' ? 'Clinic Visit Validated' : 'Clinic Visit Validation Rejected';
-                const message = status === 'approved'
-                    ? `${visit.studentName} clinic visit validated by teacher.`
-                    : `${visit.studentName} clinic visit rejected by teacher.${teacherNotes ? ' Notes: ' + teacherNotes : ''}`;
-                await this.createNotification({
-                    type: 'clinic',
-                    title,
-                    message,
-                    target_users,
-                    studentId: visit.studentId,
-                    studentName: visit.studentName,
-                    relatedRecord: visitId
-                });
-                return true;
+                if (student && student.parent_id) target_users.push(student.parent_id);
             }
+
+            const title = status === 'approved' ? 'Clinic Visit Validated' : 'Clinic Visit Validation Rejected';
+            const message = status === 'approved'
+                ? `${visit.studentName} clinic visit validated by teacher.`
+                : `${visit.studentName} clinic visit rejected by teacher.${teacherNotes ? ' Notes: ' + teacherNotes : ''}`;
+
+            await this.createNotification({
+                type: 'clinic',
+                title,
+                message,
+                target_users,
+                studentId: visit.studentId,
+                studentName: visit.studentName,
+                relatedRecord: visitId
+            });
+            return true;
         } catch (error) {
             console.error('Error validating clinic visit:', error);
             throw error;
@@ -5010,36 +4242,20 @@ const EducareTrack = {
             
             const counts = new Map();
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('reason')
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .eq('check_in', true);
-                
-                if (error) throw error;
-                
-                (data || []).forEach(r => {
-                    const label = normalize(r.reason);
-                    if (!label) return;
-                    counts.set(label, (counts.get(label) || 0) + 1);
-                });
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('clinicVisits')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('check_in', '==', true)
-                    .get();
-                
-                snapshot.forEach(doc => {
-                    const r = doc.data();
-                    const label = normalize(r.reason);
-                    if (!label) return;
-                    counts.set(label, (counts.get(label) || 0) + 1);
-                });
-            }
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('reason')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .eq('check_in', true);
+            
+            if (error) throw error;
+            
+            (data || []).forEach(r => {
+                const label = normalize(r.reason);
+                if (!label) return;
+                counts.set(label, (counts.get(label) || 0) + 1);
+            });
 
             const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
             arr.sort((a, b) => b.count - a.count);
@@ -5081,38 +4297,21 @@ const EducareTrack = {
 
             const counts = new Map();
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('reason')
-                    .eq('class_id', classId) // Supabase usually uses class_id
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .eq('check_in', true);
-                
-                if (error) throw error;
-                
-                (data || []).forEach(r => {
-                    const label = normalize(r.reason);
-                    if (!label) return;
-                    counts.set(label, (counts.get(label) || 0) + 1);
-                });
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('clinicVisits')
-                    .where('classId', '==', classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('check_in', '==', true)
-                    .get();
-                
-                snapshot.forEach(doc => {
-                    const r = doc.data();
-                    const label = normalize(r.reason);
-                    if (!label) return;
-                    counts.set(label, (counts.get(label) || 0) + 1);
-                });
-            }
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('reason')
+                .eq('class_id', classId)
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .eq('check_in', true);
+            
+            if (error) throw error;
+            
+            (data || []).forEach(r => {
+                const label = normalize(r.reason);
+                if (!label) return;
+                counts.set(label, (counts.get(label) || 0) + 1);
+            });
 
             const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
             arr.sort((a, b) => b.count - a.count);
@@ -5128,31 +4327,18 @@ const EducareTrack = {
         try {
             const counts = new Map();
             
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('excuseLetters')
-                    .select('reason')
-                    .gte('submitted_at', startDate.toISOString())
-                    .lte('submitted_at', endDate.toISOString())
-                    .eq('type', 'absence');
-                
-                if (error) throw error;
-                
-                (data || []).forEach(r => {
-                    if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
-                });
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('excuseLetters')
-                    .where('submitted_at', '>=', startDate)
-                    .where('submitted_at', '<=', endDate)
-                    .where('type', '==', 'absence')
-                    .get();
-                snapshot.forEach(doc => {
-                    const r = doc.data();
-                    if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
-                });
-            }
+            const { data, error } = await window.supabaseClient
+                .from('excuse_letters')
+                .select('reason')
+                .gte('submitted_at', startDate.toISOString())
+                .lte('submitted_at', endDate.toISOString())
+                .eq('type', 'absence');
+            
+            if (error) throw error;
+            
+            (data || []).forEach(r => {
+                if (r.reason) counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
+            });
 
             const arr = Array.from(counts.entries()).map(([label, count]) => ({ label, count }));
             arr.sort((a, b) => b.count - a.count);
@@ -5168,36 +4354,21 @@ const EducareTrack = {
         try {
             let approved = 0, rejected = 0, pending = 0;
 
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('excuseLetters')
-                    .select('status')
-                    .gte('submitted_at', startDate.toISOString())
-                    .lte('submitted_at', endDate.toISOString())
-                    .eq('type', 'absence');
-                
-                if (error) throw error;
-                
-                (data || []).forEach(r => {
-                    const s = r.status;
-                    if (s === 'approved') approved++;
-                    else if (s === 'rejected') rejected++;
-                    else pending++;
-                });
-            } else {
-                const db = firebase.firestore();
-                const snapshot = await db.collection('excuseLetters')
-                    .where('submitted_at', '>=', startDate)
-                    .where('submitted_at', '<=', endDate)
-                    .where('type', '==', 'absence')
-                    .get();
-                snapshot.forEach(doc => {
-                    const s = doc.data().status;
-                    if (s === 'approved') approved++;
-                    else if (s === 'rejected') rejected++;
-                    else pending++;
-                });
-            }
+            const { data, error } = await window.supabaseClient
+                .from('excuse_letters')
+                .select('status')
+                .gte('submitted_at', startDate.toISOString())
+                .lte('submitted_at', endDate.toISOString())
+                .eq('type', 'absence');
+            
+            if (error) throw error;
+            
+            (data || []).forEach(r => {
+                const s = r.status;
+                if (s === 'approved') approved++;
+                else if (s === 'rejected') rejected++;
+                else pending++;
+            });
             return { approved, rejected, pending };
         } catch (error) {
             console.error('Error getting excused vs unexcused:', error);
@@ -5207,84 +4378,54 @@ const EducareTrack = {
 
     async getClinicReasonDetails({ startDate, endDate, reason, classId = null, limit = 100 }) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let query = window.supabaseClient
-                    .from('clinicVisits')
-                    .select('*')
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .eq('reason', reason);
+            let query = window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .eq('reason', reason);
+            
+            if (classId) {
+                query = query.eq('class_id', classId);
+            }
+            
+            const { data: visits, error } = await query
+                .order('timestamp', { ascending: false })
+                .limit(limit);
                 
-                if (classId) {
-                    query = query.eq('class_id', classId);
-                }
-                
-                const { data: visits, error } = await query
-                    .order('timestamp', { ascending: false })
-                    .limit(limit);
+            if (error) throw error;
+            
+            const studentIds = Array.from(new Set(visits.map(v => v.student_id || v.studentId).filter(Boolean)));
+            const students = {};
+            
+            if (studentIds.length > 0) {
+                const { data: studentData, error: sErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id, class_id, grade')
+                    .in('id', studentIds);
                     
-                if (error) throw error;
-                
-                const studentIds = Array.from(new Set(visits.map(v => v.studentId).filter(Boolean)));
-                const students = {};
-                
-                if (studentIds.length > 0) {
-                    const { data: studentData, error: sErr } = await window.supabaseClient
-                        .from('students')
-                        .select('id, class_id, grade')
-                        .in('id', studentIds);
-                        
-                    if (!sErr && studentData) {
-                        studentData.forEach(s => {
-                            students[s.id] = s;
-                        });
-                    }
+                if (!sErr && studentData) {
+                    studentData.forEach(s => {
+                        students[s.id] = s;
+                    });
                 }
-                
-                return visits.map(v => ({
+            }
+            
+            return visits.map(v => {
+                const sId = v.student_id || v.studentId;
+                return {
                     id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.class_id || (students[v.studentId]?.class_id || null),
-                    grade: students[v.studentId]?.grade || null,
+                    studentId: sId,
+                    studentName: v.student_name || v.studentName,
+                    classId: v.class_id || (students[sId]?.class_id || null),
+                    grade: students[sId]?.grade || null,
                     reason: v.reason || '',
                     notes: v.notes || '',
                     teacherValidationStatus: v.teacherValidationStatus || 'pending',
                     validatedByName: v.validatedByName || '',
                     timestamp: v.timestamp ? new Date(v.timestamp) : null
-                }));
-            } else {
-                const db = firebase.firestore();
-                let query = db.collection('clinicVisits')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .where('reason', '==', reason);
-                if (classId) {
-                    query = query.where('classId', '==', classId);
-                }
-                const snapshot = await query.orderBy('timestamp', 'desc').limit(limit).get();
-                const visits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                const studentIds = Array.from(new Set(visits.map(v => v.studentId).filter(Boolean)));
-                const students = {};
-                await Promise.all(studentIds.map(async sid => {
-                    const sdoc = await db.collection('students').doc(sid).get();
-                    if (sdoc.exists) {
-                        students[sid] = { id: sdoc.id, ...sdoc.data() };
-                    }
-                }));
-                return visits.map(v => ({
-                    id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.classId || (students[v.studentId]?.classId || null),
-                    grade: students[v.studentId]?.grade || null,
-                    reason: v.reason || '',
-                    notes: v.notes || '',
-                    teacherValidationStatus: v.teacherValidationStatus || 'pending',
-                    validatedByName: v.validatedByName || '',
-                    timestamp: v.timestamp || null
-                }));
-            }
+                };
+            });
         } catch (error) {
             console.error('Error getting clinic reason details:', error);
             return [];
@@ -5293,82 +4434,50 @@ const EducareTrack = {
 
     async getAbsenceReasonDetails({ startDate, endDate, reason, status = null, limit = 100 }) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let query = window.supabaseClient
-                    .from('excuseLetters')
-                    .select('*')
-                    .gte('submitted_at', startDate.toISOString())
-                    .lte('submitted_at', endDate.toISOString())
-                    .eq('type', 'absence')
-                    .eq('reason', reason);
-                
-                if (status) {
-                    query = query.eq('status', status);
-                }
-                
-                const { data: letters, error } = await query
-                    .order('submitted_at', { ascending: false })
-                    .limit(limit);
-                    
-                if (error) throw error;
-                
-                const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
-                const students = {};
-                
-                if (studentIds.length > 0) {
-                    const { data: studentData, error: sErr } = await window.supabaseClient
-                        .from('students')
-                        .select('id, class_id, grade')
-                        .in('id', studentIds);
-                        
-                    if (!sErr && studentData) {
-                        studentData.forEach(s => {
-                            students[s.id] = s;
-                        });
-                    }
-                }
-                
-                return letters.map(l => ({
-                    id: l.id,
-                    studentId: l.studentId,
-                    studentName: l.studentName,
-                    classId: students[l.studentId]?.class_id || null,
-                    grade: students[l.studentId]?.grade || null,
-                    reason: l.reason || '',
-                    status: l.status || 'pending',
-                    submitted_at: l.submitted_at ? new Date(l.submitted_at) : null
-                }));
-            } else {
-                const db = firebase.firestore();
-                let query = db.collection('excuseLetters')
-                    .where('submitted_at', '>=', startDate)
-                    .where('submitted_at', '<=', endDate)
-                    .where('type', '==', 'absence')
-                    .where('reason', '==', reason);
-                if (status) {
-                    query = query.where('status', '==', status);
-                }
-                const snapshot = await query.orderBy('submitted_at', 'desc').limit(limit).get();
-                const letters = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
-                const students = {};
-                await Promise.all(studentIds.map(async sid => {
-                    const sdoc = await db.collection('students').doc(sid).get();
-                    if (sdoc.exists) {
-                        students[sid] = { id: sdoc.id, ...sdoc.data() };
-                    }
-                }));
-                return letters.map(l => ({
-                    id: l.id,
-                    studentId: l.studentId,
-                    studentName: l.studentName,
-                    classId: students[l.studentId]?.classId || null,
-                    grade: students[l.studentId]?.grade || null,
-                    reason: l.reason || '',
-                    status: l.status || 'pending',
-                    submitted_at: l.submitted_at || null
-                }));
+            let query = window.supabaseClient
+                .from('excuse_letters')
+                .select('*')
+                .gte('submitted_at', startDate.toISOString())
+                .lte('submitted_at', endDate.toISOString())
+                .eq('type', 'absence')
+                .eq('reason', reason);
+            
+            if (status) {
+                query = query.eq('status', status);
             }
+            
+            const { data: letters, error } = await query
+                .order('submitted_at', { ascending: false })
+                .limit(limit);
+                
+            if (error) throw error;
+            
+            const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
+            const students = {};
+            
+            if (studentIds.length > 0) {
+                const { data: studentData, error: sErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id, class_id, grade')
+                    .in('id', studentIds);
+                    
+                if (!sErr && studentData) {
+                    studentData.forEach(s => {
+                        students[s.id] = s;
+                    });
+                }
+            }
+            
+            return letters.map(l => ({
+                id: l.id,
+                studentId: l.studentId,
+                studentName: l.studentName,
+                classId: students[l.studentId]?.class_id || null,
+                grade: students[l.studentId]?.grade || null,
+                reason: l.reason || '',
+                status: l.status || 'pending',
+                submitted_at: l.submitted_at ? new Date(l.submitted_at) : null
+            }));
         } catch (error) {
             console.error('Error getting absence reason details:', error);
             return [];
@@ -5381,56 +4490,20 @@ const EducareTrack = {
             const studentClassId = student.classId || student.class_id;
 
             if (studentClassId) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    // Get homeroom teachers
-                    const { data: homeroom, error: hrError } = await window.supabaseClient
-                        .from('users')
-                        .select('id')
-                        .eq('role', this.USER_TYPES.TEACHER)
-                        .eq('class_id', studentClassId)
-                        .eq('isHomeroom', true);
+                // Get class data (adviser and subjects)
+                const { data: classData, error: classError } = await window.supabaseClient
+                    .from('classes')
+                    .select('adviser_id, subjects')
+                    .eq('id', studentClassId)
+                    .single();
+                
+                if (!classError && classData) {
+                    if (classData.adviser_id) {
+                        ids.push(classData.adviser_id);
+                    }
                     
-                    if (!hrError && homeroom) {
-                        homeroom.forEach(t => ids.push(t.id));
-                    }
-
-                    // Get subject teachers
-                    const { data: classData } = await window.supabaseClient
-                        .from('classes')
-                        .select('subjects')
-                        .eq('id', studentClassId)
-                        .single();
-                        
-                    const subjects = classData?.subjects || [];
-                    if (subjects.length > 0) {
-                        const { data: subjectTeachers, error: stError } = await window.supabaseClient
-                            .from('users')
-                            .select('id')
-                            .eq('role', this.USER_TYPES.TEACHER)
-                            .contains('assigned_classes', [studentClassId]);
-                            
-                        if (!stError && subjectTeachers) {
-                            subjectTeachers.forEach(t => ids.push(t.id));
-                        }
-                    }
-
-                } else {
-                    const homeroomSnap = await db.collection('users')
-                        .where('role', '==', this.USER_TYPES.TEACHER)
-                        .where('class_id', '==', studentClassId)
-                        .where('isHomeroom', '==', true)
-                        .get();
-                    homeroomSnap.forEach(doc => ids.push(doc.id));
-
-                    const classDoc = await db.collection('classes').doc(studentClassId).get();
-                    const subjects = classDoc.exists ? (classDoc.data().subjects || []) : [];
-                    if (subjects.length > 0) {
-                        const subjectsSnap = await db.collection('users')
-                            .where('role', '==', this.USER_TYPES.TEACHER)
-                            .where('assignedClasses', 'array-contains', studentClassId)
-                            .get();
-                        subjectsSnap.forEach(doc => ids.push(doc.id));
-                    }
+                    const subjects = classData.subjects || [];
+                    // Subject teachers lookup temporarily disabled pending schema update
                 }
             }
             return Array.from(new Set(ids));
@@ -5592,7 +4665,7 @@ const EducareTrack = {
                     ['timestamp', '<=', endDate],
                     ['status', '==', 'late']
                 ]),
-                this.getCollectionCount('clinicVisits', [
+                this.getCollectionCount('clinic_visits', [
                     ['timestamp', '>=', startDate],
                     ['timestamp', '<=', endDate],
                     ['check_in', '==', true]
@@ -5890,18 +4963,63 @@ const EducareTrack = {
     // User management helpers
     async getUserById(userId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('users')
-                    .select('*')
-                    .eq('id', userId)
-                    .single();
-                if (error || !data) return null;
-                return { id: data.id, ...data };
-            } else {
-                const userDoc = await db.collection('users').doc(userId).get();
-                return userDoc.exists ? { id: userDoc.id, ...userDoc.data() } : null;
+            const { data, error } = await window.supabaseClient
+                .from('profiles')
+                .select(`
+                    id, full_name, role, phone, is_active, photo_url, username, password,
+                    teachers ( employee_no, is_homeroom, assigned_subjects, classes ( id, grade, section, strand ) ),
+                    parents ( address, occupation ),
+                    guards ( shift, assigned_gate ),
+                    clinic_staff ( license_no, position ),
+                    admin_staff ( position, permissions )
+                `)
+                .eq('id', userId)
+                .single();
+            
+            if (error || !data) return null;
+
+            // Helper to extract single object from join result
+            const getRoleData = (data) => Array.isArray(data) ? data[0] : data;
+            
+            let roleData = {};
+            let children = [];
+
+            if (data.role === 'teacher') roleData = getRoleData(data.teachers) || {};
+            else if (data.role === 'parent') {
+                roleData = getRoleData(data.parents) || {};
+                // Fetch children for parents
+                const { data: childrenData } = await window.supabaseClient
+                    .from('parent_students')
+                    .select('student_id')
+                    .eq('parent_id', userId);
+                
+                if (childrenData) {
+                    children = childrenData.map(c => c.student_id);
+                }
             }
+            else if (data.role === 'guard') roleData = getRoleData(data.guards) || {};
+            else if (data.role === 'clinic') roleData = getRoleData(data.clinic_staff) || {};
+            else if (data.role === 'admin') roleData = getRoleData(data.admin_staff) || {};
+
+            return {
+                ...data,
+                ...roleData,
+                name: data.full_name,
+                fullName: data.full_name,
+                children: children, // Add children array
+                // Flatten role specific fields for compatibility
+                assignedSubjects: roleData.assigned_subjects || [],
+                assignedClasses: roleData.classes || [],
+                isHomeroom: roleData.is_homeroom,
+                employeeId: roleData.employee_no,
+                permissions: roleData.permissions,
+                occupation: roleData.occupation,
+                address: roleData.address,
+                shift: roleData.shift,
+                assignedGate: roleData.assigned_gate,
+                licenseNo: roleData.license_no,
+                position: roleData.position
+            };
         } catch (error) {
             console.error('Error getting user:', error);
             return null;
@@ -5910,18 +5028,13 @@ const EducareTrack = {
 
     async getClassById(classId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('classes')
-                    .select('*')
-                    .eq('id', classId)
-                    .single();
-                if (error || !data) return null;
-                return { id: data.id, ...data };
-            } else {
-                const classDoc = await db.collection('classes').doc(classId).get();
-                return classDoc.exists ? { id: classDoc.id, ...classDoc.data() } : null;
-            }
+            const { data, error } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('id', classId)
+                .single();
+            if (error || !data) return null;
+            return { id: data.id, ...data };
         } catch (error) {
             console.error('Error getting class:', error);
             return null;
@@ -5931,18 +5044,44 @@ const EducareTrack = {
     // Get student by ID
     async getStudentById(studentId) {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('students')
-                    .select('*')
-                    .eq('id', studentId)
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select(`
+                    *,
+                    parent_students ( parent_id )
+                `)
+                .eq('id', studentId)
+                .single();
+            if (error || !data) return null;
+
+            // Extract parent_id from the junction table
+            const parentId = data.parent_students && data.parent_students.length > 0 
+                ? data.parent_students[0].parent_id 
+                : null;
+
+            // Fetch class details if class_id exists
+            let classInfo = null;
+            if (data.class_id) {
+                const { data: classData } = await window.supabaseClient
+                    .from('classes')
+                    .select('grade, strand')
+                    .eq('id', data.class_id)
                     .single();
-                if (error || !data) return null;
-                return { id: data.id, ...data };
-            } else {
-                const studentDoc = await this.db.collection('students').doc(studentId).get();
-                return studentDoc.exists ? { id: studentDoc.id, ...studentDoc.data() } : null;
+                classInfo = classData;
             }
+
+            return { 
+                ...data,
+                id: data.id, 
+                name: data.full_name, // Backward compatibility
+                fullName: data.full_name,
+                parent_id: parentId,
+                parentId: parentId,
+                grade: classInfo ? classInfo.grade : (data.level || ''),
+                section: classInfo ? classInfo.section : '',
+                strand: data.strand || (classInfo ? classInfo.strand : ''),
+                level: classInfo ? classInfo.level : (data.level || '')
+            };
         } catch (error) {
             console.error('Error getting student:', error);
             return null;
@@ -5981,6 +5120,14 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// Make EducareTrack available globally
+window.EducareTrack = EducareTrack;
+
+// Export for module systems
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = EducareTrack;
+}
 
 // Make EducareTrack available globally
 window.EducareTrack = EducareTrack;

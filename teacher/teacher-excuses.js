@@ -104,12 +104,15 @@ async loadNotificationCount() {
 
     async loadExcuseLetters() {
         try {
-            const snapshot = await EducareTrack.db.collection('excuseLetters')
-                .where('classId', '==', this.currentUser.classId)
-                .orderBy('submittedAt', 'desc')
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('excuse_letters')
+                .select('*')
+                .eq('class_id', this.currentUser.classId)
+                .order('submitted_at', { ascending: false });
 
-            this.excuseLetters = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+
+            this.excuseLetters = data || [];
             this.filteredExcuses = [...this.excuseLetters];
             this.updateStats();
             this.renderExcuseLetters();
@@ -456,12 +459,17 @@ async loadNotificationCount() {
                 throw new Error('Excuse letter not found');
             }
 
-            await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
-                status: 'approved',
-                reviewedAt: new Date().toISOString(),
-                reviewedBy: this.currentUser.id,
-                reviewedByName: this.currentUser.name
-            });
+            const { error } = await window.supabaseClient
+                .from('excuse_letters')
+                .update({
+                    status: 'approved',
+                    reviewed_at: new Date().toISOString(),
+                    reviewed_by: this.currentUser.id,
+                    reviewed_by_name: this.currentUser.name
+                })
+                .eq('id', excuseId);
+
+            if (error) throw error;
 
             // Create notification for parent
             await EducareTrack.createNotification({
@@ -549,13 +557,18 @@ async loadNotificationCount() {
                 }
                 try {
                     this.showLoading();
-                    await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
-                        status: 'rejected',
-                        reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        reviewedBy: this.currentUser.id,
-                        reviewedByName: this.currentUser.name,
-                        reviewerNotes: reviewerNotes
-                    });
+                    const { error } = await window.supabaseClient
+                        .from('excuse_letters')
+                        .update({
+                            status: 'rejected',
+                            reviewed_at: new Date().toISOString(),
+                            reviewed_by: this.currentUser.id,
+                            reviewed_by_name: this.currentUser.name,
+                            reviewer_notes: reviewerNotes
+                        })
+                        .eq('id', excuseId);
+
+                    if (error) throw error;
                     await EducareTrack.createNotification({
                         type: 'excuse',
                         title: 'Excuse Letter Rejected',
@@ -729,68 +742,6 @@ async loadNotificationCount() {
             window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : 'Info', message, type });
         }
     }
-    // Add these test methods to teacher-excuses.js
-async testAddSampleExcuse() {
-    try {
-        if (!this.classStudents || this.classStudents.length === 0) {
-            this.showNotification('No students found in your class. Please make sure you have students assigned.', 'warning');
-            return;
-        }
-
-        const sampleStudent = this.classStudents[0];
-        
-        const sampleExcuse = {
-            studentId: sampleStudent.id,
-            parentId: 'test-parent-id',
-            parentName: 'Test Parent',
-            classId: this.currentUser.classId, // Use teacher's classId
-            type: 'absence',
-            reason: 'Test excuse for debugging purposes',
-            notes: 'This is a test excuse letter',
-            absenceDate: firebase.firestore.Timestamp.fromDate(new Date()),
-            dates: [new Date().toISOString().split('T')[0]],
-            attachments: [],
-            status: 'pending',
-            submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            studentName: sampleStudent.name,
-            className: this.currentUser.className || `Grade ${sampleStudent.grade} - ${sampleStudent.level}`,
-            grade: sampleStudent.grade,
-            level: sampleStudent.level
-        };
-
-        const result = await EducareTrack.db.collection('excuseLetters').add(sampleExcuse);
-        console.log('Test excuse added with ID:', result.id);
-        this.showNotification('Test excuse added successfully!', 'success');
-        
-        // Reload to see if it appears
-        await this.loadExcuseLetters();
-    } catch (error) {
-        console.error('Error adding test excuse:', error);
-        this.showNotification('Error adding test excuse: ' + error.message, 'error');
-    }
-}
-
-async checkFirestoreData() {
-    try {
-        console.log('=== FIRESTORE DATA CHECK ===');
-        
-        // Check all excuse letters
-        const allExcusesSnapshot = await EducareTrack.db.collection('excuseLetters').get();
-        const allExcuses = allExcusesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        console.log('All excuse letters in Firestore:', allExcuses);
-        
-        // Filter by this teacher's class
-        const myClassExcuses = allExcuses.filter(excuse => excuse.classId === this.currentUser.classId);
-        console.log(`Excuse letters for class ${this.currentUser.classId}:`, myClassExcuses);
-        
-        this.showNotification(`Found ${myClassExcuses.length} excuse letters for your class in Firestore. Check console for details.`, 'info');
-        
-    } catch (error) {
-        console.error('Error checking Firestore data:', error);
-        this.showNotification('Error checking Firestore data. See console.', 'error');
-    }
-}
 }
 
 // Initialize when page loads

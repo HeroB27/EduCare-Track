@@ -122,18 +122,27 @@ class TeacherAttendance {
             if (!this.currentUser.classId) return;
             const today = new Date();
             today.setHours(0, 0, 0, 0);
+            const todayStr = today.toISOString();
             
-            const snapshot = await EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', today)
-                .where('classId', '==', this.currentUser.classId)
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .gte('timestamp', todayStr)
+                .eq('class_id', this.currentUser.classId);
 
-            this.todayAttendance = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-                .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
-                    return new Date(bt) - new Date(at);
-                });
+            if (error) throw error;
+
+            this.todayAttendance = (data || []).map(record => ({
+                id: record.id,
+                ...record,
+                studentId: record.student_id, // Map snake_case to camelCase
+                entryType: record.entry_type,
+                classId: record.class_id,
+                timestamp: new Date(record.timestamp)
+            })).sort((a, b) => {
+                return b.timestamp - a.timestamp;
+            });
+            
             this.renderAttendanceTable();
             this.updateAttendanceStats();
         } catch (error) {
@@ -463,7 +472,7 @@ class TeacherAttendance {
         const groupedByDate = {};
         this.attendanceHistory.forEach(record => {
             if (record.timestamp) {
-                const date = record.timestamp.toDate().toDateString();
+                const date = record.timestamp.toDateString();
                 if (!groupedByDate[date]) {
                     groupedByDate[date] = [];
                 }

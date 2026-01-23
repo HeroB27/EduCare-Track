@@ -7,6 +7,7 @@ class IDManagement {
         this.selectedStudentId = null;
         this.allStudents = [];
         this.allParents = [];
+        this.allClasses = [];
         this.init();
     }
 
@@ -51,12 +52,19 @@ class IDManagement {
             this.showLoading();
             
             // Load all students and parents
-            const [students, users] = await Promise.all([
+            const [students, users, classes] = await Promise.all([
                 EducareTrack.getStudents(true),
-                EducareTrack.getUsers(true)
+                EducareTrack.getUsers(true),
+                EducareTrack.getClasses(true)
             ]);
             
-            this.allStudents = students || [];
+            this.allClasses = classes || [];
+            this.allStudents = (students || []).map(student => ({
+                ...student,
+                name: this.getStudentName(student),
+                studentId: this.getStudentIdentifier(student),
+                grade: this.getStudentGrade(student)
+            }));
             this.allParents = users.filter(user => user.role === 'parent') || [];
             
             console.log('Loaded data:', {
@@ -96,6 +104,33 @@ class IDManagement {
             hour: '2-digit',
             minute: '2-digit'
         });
+    }
+
+    getStudentName(student) {
+        if (!student) return 'Unknown';
+        if (student.full_name) return student.full_name;
+        if (student.name) return student.name;
+        return 'Unknown';
+    }
+
+    getStudentIdentifier(student) {
+        if (!student) return '';
+        return student.studentId || student.id || '';
+    }
+
+    getClassById(classId) {
+        if (!classId) return null;
+        return this.allClasses.find(cls => cls.id === classId) || null;
+    }
+
+    getStudentGrade(student) {
+        if (!student) return '';
+        const clsId = student.class_id || student.classId;
+        const cls = this.getClassById(clsId);
+        if (cls?.grade) return cls.grade;
+        if (student.grade) return student.grade;
+        if (student.level) return student.level;
+        return '';
     }
 
     initEventListeners() {
@@ -233,9 +268,9 @@ class IDManagement {
             if (searchInput) {
                 const searchLower = searchInput.toLowerCase();
                 students = students.filter(student => {
-                    const nameMatch = student.name && student.name.toLowerCase().includes(searchLower);
+                    const nameMatch = this.getStudentName(student).toLowerCase().includes(searchLower);
                     const lrnMatch = student.lrn && student.lrn.includes(searchInput);
-                    const studentIdMatch = student.studentId && student.studentId.toLowerCase().includes(searchLower);
+                    const studentIdMatch = this.getStudentIdentifier(student).toLowerCase().includes(searchLower);
                     
                     return nameMatch || lrnMatch || studentIdMatch;
                 });
@@ -243,7 +278,7 @@ class IDManagement {
 
             // Apply grade filter
             if (gradeFilter) {
-                students = students.filter(student => student.grade === gradeFilter);
+                students = students.filter(student => this.getStudentGrade(student) === gradeFilter);
             }
 
             // Apply strand filter
@@ -287,14 +322,14 @@ class IDManagement {
                     <div class="flex items-center space-x-4">
                         <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
                             ${photo ? 
-                                `<img src="${photo}" alt="${student.name}" class="w-full h-full rounded-full object-cover">` :
+                                `<img src="${photo}" alt="${this.getStudentName(student)}" class="w-full h-full rounded-full object-cover">` :
                                 `<i class="fas fa-user text-blue-600"></i>`
                             }
                         </div>
                         <div>
-                            <h4 class="font-semibold text-gray-800">${student.name}</h4>
-                            <p class="text-sm text-gray-600">${student.grade} ${student.strand ? `• ${student.strand}` : ''}</p>
-                            <p class="text-xs text-gray-500">LRN: ${student.lrn || 'N/A'} • ID: ${student.studentId || 'N/A'}</p>
+                            <h4 class="font-semibold text-gray-800">${this.getStudentName(student)}</h4>
+                            <p class="text-sm text-gray-600">${this.getStudentGrade(student)} ${student.strand ? `• ${student.strand}` : ''}</p>
+                            <p class="text-xs text-gray-500">LRN: ${student.lrn || 'N/A'} • ID: ${this.getStudentIdentifier(student) || 'N/A'}</p>
                             <p class="text-xs text-gray-400">Parent: ${parentName}</p>
                         </div>
                     </div>
@@ -370,9 +405,9 @@ class IDManagement {
 
     populateForm() {
         // Student details
-        document.getElementById('studentName').value = this.currentStudent.name || '';
+        document.getElementById('studentName').value = this.getStudentName(this.currentStudent);
         document.getElementById('studentLRN').value = this.currentStudent.lrn || '';
-        document.getElementById('studentGrade').value = this.currentStudent.grade || '';
+        document.getElementById('studentGrade').value = this.getStudentGrade(this.currentStudent);
         
         // Toggle strand field based on grade
         this.toggleStrandField();
@@ -502,7 +537,7 @@ class IDManagement {
                 const photoDataUrl = e.target.result;
                 
                 try {
-                    // Update in Firestore/Supabase
+                    // Update in Supabase
                     await EducareTrack.db.collection('students').doc(this.currentStudent.id).update({
                         photo_url: photoDataUrl,
                         updated_at: new Date()
@@ -643,11 +678,12 @@ class IDManagement {
         const grade = document.getElementById('studentGrade').value;
         const strand = (grade === 'Grade 11' || grade === 'Grade 12') ? 
             document.getElementById('studentStrand').value : null;
+        const fullName = document.getElementById('studentName').value.trim();
 
         return {
-            name: document.getElementById('studentName').value.trim(),
+            full_name: fullName,
+            name: fullName, // Backward compatibility
             lrn: document.getElementById('studentLRN').value.trim(),
-            grade: grade,
             strand: strand,
             class_id: document.getElementById('studentClass').value,
             updated_at: new Date(),
@@ -680,8 +716,40 @@ class IDManagement {
 
     async updateParentInDatabase(parentData) {
         try {
-            await EducareTrack.db.collection('users').doc(this.currentParent.id).update(parentData);
-            console.log('Parent updated:', this.currentParent.id);
+            const parentId = this.currentParent.id;
+            
+            // 1. Update Profile (name, email, phone)
+            const profileData = {};
+            if (parentData.name) profileData.full_name = parentData.name;
+            if (parentData.email !== undefined) profileData.email = parentData.email;
+            if (parentData.phone) profileData.phone = parentData.phone;
+            
+            if (Object.keys(profileData).length > 0) {
+                 await EducareTrack.db.collection('profiles').doc(parentId).update(profileData);
+            }
+
+            // 2. Update Parent Details (address)
+            const parentDetails = {};
+            if (parentData.address) parentDetails.address = parentData.address;
+            
+            if (Object.keys(parentDetails).length > 0) {
+                 await EducareTrack.db.collection('parents').doc(parentId).set(parentDetails); // Use set to upsert
+            }
+            
+            // 3. Update Relationship (parent_students)
+            if (parentData.relationship && this.currentStudent) {
+                const { error } = await window.supabaseClient
+                    .from('parent_students')
+                    .upsert({ 
+                        parent_id: parentId, 
+                        student_id: this.currentStudent.id,
+                        relationship: parentData.relationship
+                    }, { onConflict: 'parent_id, student_id' });
+                    
+                if (error) throw error;
+            }
+
+            console.log('Parent updated:', parentId);
         } catch (error) {
             console.error('Error updating parent:', error);
             throw error;
@@ -705,7 +773,7 @@ class IDManagement {
                 studentId: newStudentId,
                 qrCode: newStudentId,
                 idReissued: true,
-                previousId: this.currentStudent.studentId,
+                previousId: this.getStudentIdentifier(this.currentStudent),
                 reissuedAt: new Date(),
                 reissuedBy: this.currentUser.id
             });
@@ -763,7 +831,7 @@ class IDManagement {
         if (idLrnEl) { idLrnEl.textContent = document.getElementById('studentLRN').value; }
 
         // Update ID Preview elements (BACK)
-        document.getElementById('idStudentId').textContent = this.currentStudent.studentId;
+        document.getElementById('idStudentId').textContent = this.getStudentIdentifier(this.currentStudent);
         document.getElementById('idParentName').innerHTML = `<strong>Parent:</strong> ${document.getElementById('parentName').value}`;
         document.getElementById('idParentPhone').innerHTML = `<strong>Contact:</strong> ${document.getElementById('parentPhone').value}`;
 
@@ -778,13 +846,13 @@ class IDManagement {
         }
 
         // Generate QR Code
-        this.generateQRCode('qrCode', this.currentStudent.studentId);
+        this.generateQRCode('qrCode', this.getStudentIdentifier(this.currentStudent));
 
         // Update print version
         document.getElementById('printStudentName').textContent = document.getElementById('studentName').value;
         document.getElementById('printGradeLevel').textContent = `${document.getElementById('studentGrade').value}${document.getElementById('studentStrand').value ? ` - ${document.getElementById('studentStrand').value}` : ''}`;
         document.getElementById('printLRN').textContent = document.getElementById('studentLRN').value;
-        document.getElementById('printStudentId').textContent = this.currentStudent.studentId;
+        document.getElementById('printStudentId').textContent = this.getStudentIdentifier(this.currentStudent);
         document.getElementById('printParentName').innerHTML = `<strong>Parent:</strong> ${document.getElementById('parentName').value}`;
         document.getElementById('printParentPhone').innerHTML = `<strong>Contact:</strong> ${document.getElementById('parentPhone').value}`;
         
@@ -797,7 +865,7 @@ class IDManagement {
             document.getElementById('printPlaceholder').classList.remove('hidden');
         }
         
-        this.generateQRCode('printQrCode', this.currentStudent.studentId);
+        this.generateQRCode('printQrCode', this.getStudentIdentifier(this.currentStudent));
 
         // Show preview section
         document.getElementById('idPreviewSection').classList.remove('hidden');

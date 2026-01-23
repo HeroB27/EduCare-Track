@@ -80,13 +80,28 @@ class TeacherAnnouncements {
 
     async loadAnnouncements() {
         try {
-            const snapshot = await EducareTrack.db.collection('announcements')
-                .where('classId', '==', this.currentUser.classId)
-                .orderBy('createdAt', 'desc')
-                .limit(20)
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('announcements')
+                .select('id,title,message,audience,priority,class_id,class_name,created_by,created_by_name,created_at,is_active,is_urgent,expiry_date')
+                .eq('class_id', this.currentUser.classId)
+                .eq('is_active', true)
+                .order('created_at', { ascending: false })
+                .limit(20);
 
-            this.announcements = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+
+            this.announcements = (data || []).map(a => ({
+                id: a.id,
+                ...a,
+                classId: a.class_id,
+                className: a.class_name,
+                createdBy: a.created_by,
+                createdByName: a.created_by_name,
+                createdAt: a.created_at,
+                isActive: a.is_active,
+                isUrgent: a.is_urgent,
+                expiryDate: a.expiry_date
+            }));
             this.renderAnnouncements();
         } catch (error) {
             console.error('Error loading announcements:', error);
@@ -162,7 +177,7 @@ class TeacherAnnouncements {
 
     formatDateTime(date) {
         if (!date) return 'N/A';
-        return new Date(date.toDate ? date.toDate() : date).toLocaleString('en-US', {
+        return new Date(date).toLocaleString('en-US', {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -302,24 +317,29 @@ class TeacherAnnouncements {
                 throw new Error('Please fill in all required fields');
             }
 
-            const announcementData = {
+            const announcementRow = {
                 title,
                 message,
                 audience,
                 priority,
-                classId: this.currentUser.classId,
-                className: this.currentUser.className,
-                createdBy: this.currentUser.id,
-                createdByName: this.currentUser.name,
-                createdAt: new Date().toISOString(),
-                isActive: true
+                class_id: this.currentUser.classId || null,
+                class_name: this.currentUser.className || null,
+                created_by: this.currentUser.id,
+                created_by_name: this.currentUser.name,
+                created_at: new Date().toISOString(),
+                is_active: true,
+                is_urgent: priority === 'urgent'
             };
 
-            // Create announcement
-            const announcementRef = await EducareTrack.db.collection('announcements').add(announcementData);
+            const { data, error } = await window.supabaseClient
+                .from('announcements')
+                .insert(announcementRow)
+                .select('id')
+                .single();
+            if (error) throw error;
 
             if (sendNotification) {
-                await this.sendAnnouncementNotifications(announcementData, announcementRef.id);
+                await this.sendAnnouncementNotifications(announcementRow, data.id);
             }
 
             await this.loadAnnouncements();
@@ -354,13 +374,16 @@ class TeacherAnnouncements {
             targetUsers = [...new Set(targetUsers)];
 
             if (targetUsers.length > 0) {
-                await EducareTrack.createNotification({
+                await window.supabaseClient.from('notifications').insert({
                     type: 'announcement',
                     title: `New Announcement: ${announcementData.title}`,
                     message: announcementData.message.substring(0, 100) + (announcementData.message.length > 100 ? '...' : ''),
-                    targetUsers: targetUsers,
-                    relatedRecord: announcementId,
-                    isUrgent: announcementData.priority === 'urgent'
+                    target_users: targetUsers,
+                    related_record: announcementId,
+                    is_urgent: announcementData.priority === 'urgent',
+                    is_active: true,
+                    created_at: new Date().toISOString(),
+                    read_by: []
                 });
             }
         } catch (error) {

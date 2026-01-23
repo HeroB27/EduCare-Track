@@ -5,6 +5,8 @@ class ClassManagement {
         this.allClasses = []; // Store all classes for filtering
         this.teachers = [];
         this.selectedClassId = null;
+        this.realtimeChannel = null;
+        this.realtimeRefreshTimer = null;
         this.init();
     }
 
@@ -32,11 +34,85 @@ class ClassManagement {
             await this.loadClasses();
             this.setupEventListeners();
             this.populateGradeFilter();
+            this.populateStrandSelects();
+            this.setupClassFormLogic();
+            this.setupRealtimeUpdates();
             this.hideLoading();
         } catch (error) {
             console.error('Class management init failed:', error);
             this.hideLoading();
         }
+    }
+
+    setupClassFormLogic() {
+        const levelSelect = document.getElementById('classLevel');
+        const gradeSelect = document.getElementById('classGrade');
+        const strandSelect = document.getElementById('classStrand');
+        if (levelSelect) {
+            levelSelect.addEventListener('change', () => {
+                this.populateGradeOptions(gradeSelect, levelSelect.value);
+                this.toggleStrandSelect(strandSelect, levelSelect.value);
+                this.updateClassNamePreview();
+            });
+        }
+        if (gradeSelect) {
+            gradeSelect.addEventListener('change', () => this.updateClassNamePreview());
+        }
+        if (strandSelect) {
+            strandSelect.addEventListener('change', () => this.updateClassNamePreview());
+        }
+        this.populateGradeOptions(gradeSelect, levelSelect ? levelSelect.value : '');
+        this.toggleStrandSelect(strandSelect, levelSelect ? levelSelect.value : '');
+        this.updateClassNamePreview();
+    }
+
+    populateStrandSelects() {
+        const strands = window.EducareTrack && typeof window.EducareTrack.getSeniorHighStrands === 'function'
+            ? window.EducareTrack.getSeniorHighStrands()
+            : ['STEM', 'HUMSS', 'ABM', 'ICT', 'TVL'];
+        const selectIds = ['classStrand', 'editClassStrand'];
+        selectIds.forEach(id => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = '<option value="">Select Strand (for Senior High)</option>' +
+                strands.map(s => `<option value="${s}">${s}</option>`).join('');
+        });
+    }
+
+    populateGradeOptions(select, level) {
+        if (!select) return;
+        const grades = this.getGradesForLevel(level);
+        select.innerHTML = '<option value="">Select Grade</option>' +
+            grades.map(g => `<option value="${g}">${g}</option>`).join('');
+    }
+
+    getGradesForLevel(level) {
+        if (level === 'Kindergarten') return ['Kinder'];
+        if (level === 'Elementary') return ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+        if (level === 'Highschool') return ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'];
+        if (level === 'Senior High') return ['Grade 11', 'Grade 12'];
+        return [];
+    }
+
+    toggleStrandSelect(select, level) {
+        if (!select) return;
+        if (level === 'Senior High') {
+            select.disabled = false;
+            select.classList.remove('bg-gray-50', 'text-gray-600');
+        } else {
+            select.value = '';
+            select.disabled = true;
+            select.classList.add('bg-gray-50', 'text-gray-600');
+        }
+    }
+
+    updateClassNamePreview() {
+        const level = document.getElementById('classLevel')?.value || '';
+        const grade = document.getElementById('classGrade')?.value || '';
+        const strand = document.getElementById('classStrand')?.value || '';
+        const name = this.composeClassName(grade, strand, level);
+        const nameInput = document.getElementById('className');
+        if (nameInput) nameInput.value = name;
     }
 
     populateGradeFilter() {
@@ -69,11 +145,25 @@ class ClassManagement {
 
     async loadTeachers() {
         try {
-            const snapshot = await EducareTrack.db.collection('users')
-                .where('role', '==', 'teacher')
-                .where('is_active', '==', true)
-                .get();
-            this.teachers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Use Supabase client to fetch teachers with profile data
+            const { data, error } = await window.supabaseClient
+                .from('teachers')
+                .select(`
+                    *,
+                    profiles:id (
+                        full_name,
+                        email: id
+                    )
+                `)
+                .eq('profiles.is_active', true);
+
+            if (error) throw error;
+
+            this.teachers = data.map(t => ({
+                id: t.id,
+                name: t.profiles?.full_name || 'Unknown',
+                ...t
+            }));
             
             const teacherSelects = ['classTeacher', 'editClassTeacher', 'scheduleHomeroomTeacher'];
             const options = '<option value="">Select Teacher</option>' +
@@ -92,9 +182,23 @@ class ClassManagement {
 
     async loadClasses() {
         try {
-            // Use created_at for Supabase compatibility
-            const snapshot = await EducareTrack.db.collection('classes').orderBy('created_at','desc').get();
-            this.allClasses = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Use Supabase client
+            const { data, error } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .order('created_at', { ascending: false });
+                
+            if (error) throw error;
+
+            this.allClasses = data.map(d => {
+                // Map adviser_id to teacher_id for internal consistency if needed
+                const row = { 
+                    ...d, 
+                    teacher_id: d.adviser_id,
+                    teacherId: d.adviser_id
+                };
+                return this.normalizeClassRow(row);
+            });
             document.getElementById('totalClasses').textContent = this.allClasses.length;
             await this.updateStudentsCount();
             this.filterClasses(); // Apply filters initially
@@ -105,12 +209,16 @@ class ClassManagement {
 
     async updateStudentsCount() {
         try {
-            const ids = this.allClasses.map(c => c.id);
             const counts = {};
-            for (const id of ids) {
-                // Use class_id for Supabase compatibility
-                const snap = await EducareTrack.db.collection('students').where('class_id','==',id).get();
-                counts[id] = snap.size;
+            if (window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('students')
+                    .select('class_id');
+                if (error) throw error;
+                (data || []).forEach(row => {
+                    if (!row.class_id) return;
+                    counts[row.class_id] = (counts[row.class_id] || 0) + 1;
+                });
             }
             // Update both lists
             this.allClasses = this.allClasses.map(c => ({...c, studentsCount: counts[c.id] || 0}));
@@ -123,9 +231,73 @@ class ClassManagement {
         }
     }
 
+    setupRealtimeUpdates() {
+        if (!window.supabaseClient) return;
+        if (this.realtimeChannel) {
+            this.realtimeChannel.unsubscribe();
+        }
+        this.realtimeChannel = window.supabaseClient
+            .channel('class_management_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'classes' }, () => {
+                this.scheduleRealtimeRefresh();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => {
+                this.scheduleRealtimeRefresh();
+            })
+            .subscribe();
+    }
+
+    scheduleRealtimeRefresh() {
+        if (this.realtimeRefreshTimer) {
+            clearTimeout(this.realtimeRefreshTimer);
+        }
+        this.realtimeRefreshTimer = setTimeout(() => {
+            this.loadClasses();
+        }, 500);
+    }
+
     getTeacherName(id) {
         const t = this.teachers.find(x => x.id === id);
         return t ? t.name : '—';
+    }
+
+    normalizeClassRow(row) {
+        const name = row.name || '';
+        const level = row.level || '';
+        const derivedGrade = row.grade || this.deriveGradeFromName(name, level);
+        const derivedStrand = row.strand || this.deriveStrandFromName(name);
+        const derivedName = row.name || this.composeClassName(derivedGrade, derivedStrand, level);
+        return {
+            ...row,
+            name: derivedName,
+            grade: derivedGrade,
+            strand: derivedStrand
+        };
+    }
+
+    deriveGradeFromName(name, level) {
+        const label = (name || '').toLowerCase();
+        if (label.includes('kinder')) return 'Kinder';
+        const match = label.match(/grade\s*(\d{1,2})/i);
+        if (match && match[1]) return `Grade ${parseInt(match[1], 10)}`;
+        if (level === 'Kindergarten') return 'Kinder';
+        return '';
+    }
+
+    deriveStrandFromName(name) {
+        const label = (name || '').toUpperCase();
+        if (label.includes('STEM')) return 'STEM';
+        if (label.includes('HUMSS')) return 'HUMSS';
+        if (label.includes('ABM')) return 'ABM';
+        if (label.includes('ICT')) return 'ICT';
+        if (label.includes('TVL')) return 'TVL';
+        return '';
+    }
+
+    composeClassName(grade, strand, level) {
+        if (!grade) return '';
+        if (level === 'Senior High' && strand) return `${grade} - ${strand}`;
+        return grade;
     }
 
     filterClasses() {
@@ -229,19 +401,31 @@ class ClassManagement {
 
     async createNewClass() {
         try {
-            const name = document.getElementById('className').value.trim();
             const level = document.getElementById('classLevel').value;
             const grade = document.getElementById('classGrade').value;
             const strand = document.getElementById('classStrand').value;
             const teacher_id = document.getElementById('classTeacher').value || null;
-            const capacity = parseInt(document.getElementById('classCapacity').value || '30', 10);
-            if (!name || !level || !grade) return;
-            const doc = {
-                name, level, grade, strand: strand || null, teacher_id, capacity,
-                is_active: true, created_at: new Date(),
-                schedule: []
-            };
-            await EducareTrack.db.collection('classes').add(doc);
+            // capacity is not in schema, ignoring
+            
+            if (!level || !grade) return;
+            if (level === 'Senior High' && !strand) return;
+            
+            const newId = crypto.randomUUID();
+            
+            const { error } = await window.supabaseClient
+                .from('classes')
+                .insert({
+                    id: newId,
+                    level: level,
+                    grade: grade,
+                    strand: strand || null,
+                    adviser_id: teacher_id,
+                    is_active: true,
+                    created_at: new Date().toISOString()
+                });
+
+            if (error) throw error;
+            
             this.closeCreateClassModal();
             await this.loadClasses();
         } catch (error) { console.error('Create class failed:', error); }
@@ -251,10 +435,26 @@ class ClassManagement {
         this.selectedClassId = classId;
         const cls = this.classes.find(c => c.id === classId);
         if (!cls) return;
-        document.getElementById('editClassName').value = cls.name || '';
-        document.getElementById('editClassGrade').value = cls.grade || '';
+        document.getElementById('editClassLevel').value = cls.level || '';
+        const gradeSelect = document.getElementById('editClassGrade');
+        this.populateGradeOptions(gradeSelect, cls.level || '');
+        gradeSelect.value = cls.grade || '';
+        const strandSelect = document.getElementById('editClassStrand');
+        this.toggleStrandSelect(strandSelect, cls.level || '');
+        strandSelect.value = cls.strand || this.deriveStrandFromName(cls.name || '');
+        document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
         const teacherSel = document.getElementById('editClassTeacher');
         if (teacherSel) teacherSel.value = cls.teacher_id || cls.teacherId || '';
+        if (gradeSelect) {
+            gradeSelect.onchange = () => {
+                document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
+            };
+        }
+        if (strandSelect) {
+            strandSelect.onchange = () => {
+                document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
+            };
+        }
         const modal = document.getElementById('editClassModal');
         if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
     }
@@ -266,14 +466,27 @@ class ClassManagement {
     async saveClassEdits() {
         if (!this.selectedClassId) return;
         try {
-            const name = document.getElementById('editClassName').value.trim();
+            const level = document.getElementById('editClassLevel').value.trim();
             const grade = document.getElementById('editClassGrade').value.trim();
+            const strand = document.getElementById('editClassStrand').value || null;
             const teacher_id = document.getElementById('editClassTeacher').value || null;
-            const updates = {};
-            if (name) updates.name = name;
-            if (grade) updates.grade = grade;
-            updates.teacher_id = teacher_id;
-            await EducareTrack.db.collection('classes').doc(this.selectedClassId).update(updates);
+            if (!grade) return;
+            if (level === 'Senior High' && !strand) return;
+            
+            const updates = {
+                grade: grade,
+                level: level,
+                strand: strand,
+                adviser_id: teacher_id
+            };
+            
+            const { error } = await window.supabaseClient
+                .from('classes')
+                .update(updates)
+                .eq('id', this.selectedClassId);
+
+            if (error) throw error;
+            
             this.closeEditModal();
             await this.loadClasses();
         } catch (error) { console.error('Save edits failed:', error); }
@@ -545,7 +758,7 @@ class ClassManagement {
             
             rows.forEach(row => {
                 const subjectSelect = row.querySelector('.subject-select');
-                const subjectInput = row.querySelector('.subject-input'); // Fallback if mixed (shouldn't be)
+                const subjectInput = row.querySelector('.subject-input'); // Fallback
                 const subject = subjectSelect ? subjectSelect.value : (subjectInput ? subjectInput.value.trim() : '');
                 
                 const teacher_id = row.querySelector('.teacher-select').value;
@@ -556,36 +769,24 @@ class ClassManagement {
                 }
             });
 
+            // Note: Schema doesn't support schedule storage in classes table yet.
+            // We only update the adviser_id.
             const updates = {
-                teacher_id: hrTeacherId || null,
-                schedule: schedule
+                adviser_id: hrTeacherId || null
             };
 
-            await EducareTrack.db.collection('classes').doc(this.selectedClassId).update(updates);
+            const { error } = await window.supabaseClient
+                .from('classes')
+                .update(updates)
+                .eq('id', this.selectedClassId);
+
+            if (error) throw error;
             
-            // Sync logic: Update Teacher assignments?
-            // This is complex because we need to remove old assignments and add new ones.
-            // For now, we will rely on Classes as the source of truth for scheduling.
-            // But user asked for sync. Let's try a simple append to teachers.
-            // We won't remove old ones to avoid data loss, but we will ensure these are added.
-            
-            /* 
-            // Note: This would require looping through all teachers in schedule and updating them.
-            // Doing this client-side for many teachers might be slow, but ok for small numbers.
-            for (const item of schedule) {
-                const tRef = EducareTrack.db.collection('users').doc(item.teacher_id);
-                // We can't easily append to array without reading first in generic Firestore/Supabase shim
-                // unless we use arrayUnion if supported.
-                // Leaving this as a future enhancement or if requested specifically.
-                // The current requirement is "shown in class management", which is achieved by saving to class.
-            }
-            */
+            // Warn user about schedule not persisting
+            alert('Homeroom teacher updated. Note: Class schedule details are not yet persisted to database due to schema limitations.');
 
             this.closeScheduleModal();
             await this.loadClasses(); // Reload to show updates
-            
-            // Show success
-            alert('Schedule saved successfully!');
             
         } catch (error) {
             console.error('Save schedule failed:', error);
@@ -600,23 +801,19 @@ class ClassManagement {
         if (!cls) return;
 
         // Calculate stats
-        // In a real app, query 'attendance' collection for this class_id
         try {
-            // Mocking the calculation or fetching real data if attendance collection exists
-            // Let's try to fetch attendance records for this class
-            const attendanceSnap = await EducareTrack.db.collection('attendance')
-                .where('class_id', '==', classId)
-                .get();
+            const { data: attendanceDocs, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('class_id', classId);
+            
+            if (error) throw error;
             
             let totalPresent = 0;
             let totalRecords = 0;
             const reasons = {};
             
-            attendanceSnap.docs.forEach(doc => {
-                const data = doc.data();
-                // Assuming data structure: { status: 'present' | 'absent', remarks: '...' }
-                // or if it's a daily record with list of students
-                // Let's assume individual records for now or simplified stats
+            (attendanceDocs || []).forEach(data => {
                 if (data.status === 'present') totalPresent++;
                 if (data.status === 'absent') {
                     const reason = data.remarks || 'Unspecified';
@@ -682,8 +879,13 @@ class ClassManagement {
 
     async loadStudentsForClass(classId) {
         try {
-            const snap = await EducareTrack.db.collection('students').where('class_id','==',classId).get();
-            const students = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const { data: students, error } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .eq('class_id', classId);
+
+            if (error) throw error;
+            
             const list = document.getElementById('studentsList');
             if (!list) return;
             if (students.length === 0) {
@@ -691,7 +893,7 @@ class ClassManagement {
                 return;
             }
             list.innerHTML = students.map(s => {
-                const displayName = s.name || (s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : 'Unnamed Student');
+                const displayName = s.full_name || s.name || 'Unnamed Student';
                 return `
                 <div class="py-2 cursor-pointer hover:bg-gray-50" onclick="classManagement.showStudentInfo('${s.id}','${classId}')">
                     <div class="font-medium">${displayName}</div>
@@ -703,45 +905,60 @@ class ClassManagement {
 
     async showStudentInfo(studentId, classId) {
         try {
-            const doc = await EducareTrack.db.collection('students').doc(studentId).get();
-            if (!doc.exists) return;
-            const s = { id: doc.id, ...doc.data() };
+            const { data: student, error } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .eq('id', studentId)
+                .single();
             
-            let parentName = s.parentName || '—';
-            let parentPhone = s.parentPhone || '—';
+            if (error || !student) return;
+            
+            let parentName = '—';
+            let parentPhone = '—';
 
-            if (s.parent_id && (!s.parentName || !s.parentPhone)) {
-                try {
-                    const parentDoc = await EducareTrack.db.collection('users').doc(s.parent_id).get();
-                    if (parentDoc.exists) {
-                        const parentData = parentDoc.data();
-                        parentName = parentData.name || '—';
-                        parentPhone = parentData.phone || '—';
-                    }
-                } catch (e) {
-                    console.error('Error fetching parent info:', e);
+            // Fetch parent via parent_students -> parents -> profiles
+            try {
+                const { data: links } = await window.supabaseClient
+                    .from('parent_students')
+                    .select(`
+                        parent:parent_id (
+                            profiles:id (
+                                full_name,
+                                phone
+                            )
+                        )
+                    `)
+                    .eq('student_id', studentId)
+                    .limit(1);
+                
+                if (links && links.length > 0 && links[0].parent) {
+                    parentName = links[0].parent.profiles?.full_name || '—';
+                    parentPhone = links[0].parent.profiles?.phone || '—';
                 }
+            } catch (e) {
+                console.error('Error fetching parent info:', e);
             }
 
-            const displayName = s.name || (s.first_name && s.last_name ? `${s.first_name} ${s.last_name}` : 'Unnamed Student');
+            const displayName = student.full_name || student.name || 'Unnamed Student';
             const info = document.getElementById('studentPersonalInfo');
-            if (!info) return;
-            info.innerHTML = `
+            if (info) {
+                info.innerHTML = `
                 <div class="space-y-2">
                     <div class="text-lg font-semibold text-gray-800">${displayName}</div>
                     <div class="grid grid-cols-2 gap-2 text-sm">
-                        <div><span class="text-gray-500">LRN:</span> ${s.lrn || '—'}</div>
-                        <div><span class="text-gray-500">Grade:</span> ${s.grade || '—'}</div>
-                        <div><span class="text-gray-500">Level:</span> ${s.level || '—'}</div>
-                        <div><span class="text-gray-500">Strand:</span> ${s.strand || '—'}</div>
-                        <div><span class="text-gray-500">Status:</span> ${s.current_status || s.status || '—'}</div>
+                        <div><span class="text-gray-500">LRN:</span> ${student.lrn || '—'}</div>
+                        <div><span class="text-gray-500">Grade:</span> ${student.grade || '—'}</div>
+                        <div><span class="text-gray-500">Level:</span> ${student.level || '—'}</div>
+                        <div><span class="text-gray-500">Strand:</span> ${student.strand || '—'}</div>
+                        <div><span class="text-gray-500">Status:</span> ${student.current_status || student.status || '—'}</div>
                         <div><span class="text-gray-500">Parent:</span> ${parentName}</div>
                         <div><span class="text-gray-500">Phone:</span> ${parentPhone}</div>
-                        <div><span class="text-gray-500">Address:</span> ${s.address || '—'}</div>
+                        <div><span class="text-gray-500">Address:</span> ${student.address || '—'}</div>
                     </div>
                 </div>
-            `;
-        } catch (error) { console.error('Show student info failed:', error); }
+                `;
+            }
+        } catch (e) { console.error('Error showing student info:', e); }
     }
 
     showLoading() { const s = document.getElementById('loadingSpinner'); if (s) s.classList.remove('hidden'); }

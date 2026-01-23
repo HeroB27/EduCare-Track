@@ -269,6 +269,13 @@
             async adminLoadStudents() {
                 const students = await this.getAllStudents();
                 
+                // Pre-fetch class and parent names
+                const studentsWithDetails = await Promise.all(students.map(async (student) => {
+                    const className = await this.getClassName(student.classId);
+                    const parentName = await this.getParentName(student.parentId);
+                    return { ...student, className, parentName };
+                }));
+                
                 return `
                     <div class="bg-white rounded-lg shadow-md">
                         <div class="p-6 border-b border-gray-200">
@@ -292,13 +299,13 @@
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-200">
-                                        ${students.map(student => `
+                                        ${studentsWithDetails.map(student => `
                                             <tr>
                                                 <td class="px-4 py-4">
                                                     <div class="flex items-center">
                                                         <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
                                                             <span class="text-blue-600 font-semibold text-sm">
-                                                                ${student.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                                                                ${(student.name || '').split(' ').map(n => n[0]).join('').substring(0, 2)}
                                                             </span>
                                                         </div>
                                                         <div>
@@ -307,8 +314,8 @@
                                                         </div>
                                                     </div>
                                                 </td>
-                                                <td class="px-4 py-4 text-gray-900">${await this.getClassName(student.classId)}</td>
-                                                <td class="px-4 py-4 text-gray-900">${await this.getParentName(student.parentId)}</td>
+                                                <td class="px-4 py-4 text-gray-900">${student.className}</td>
+                                                <td class="px-4 py-4 text-gray-900">${student.parentName}</td>
                                                 <td class="px-4 py-4">
                                                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(student.currentStatus || 'out_school')}">
                                                         ${student.currentStatus === 'in_school' ? 'Present' : 

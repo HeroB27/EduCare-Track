@@ -8,6 +8,10 @@ class AdminRecords {
         this.pageSize = 20;
         this.allAttendanceData = [];
         this.filteredAttendanceData = [];
+        this.realtimeChannel = null;
+        this.realtimeRefreshTimer = null;
+        this.isLoadingData = false;
+        this.pendingRealtimeRefresh = false;
         this.init();
     }
 
@@ -37,6 +41,7 @@ class AdminRecords {
             await this.loadAnalyticsData();
             this.initEventListeners();
             this.initCharts();
+            this.setupRealtimeUpdates();
             
             this.hideLoading();
         } catch (error) {
@@ -93,12 +98,50 @@ class AdminRecords {
         return date.toISOString().split('T')[0];
     }
 
+    getStudentName(student) {
+        if (!student) return 'Unknown';
+        if (student.full_name) return student.full_name;
+        if (student.name) return student.name;
+        return 'Unknown';
+    }
+
+    getStudentIdentifier(student) {
+        if (!student) return '';
+        return student.studentId || student.id || '';
+    }
+
+    normalizeAttendanceRecord(record) {
+        return {
+            ...record,
+            studentId: record.studentId || record.student_id,
+            classId: record.classId || record.class_id,
+            entryType: record.entryType || record.entry_type,
+            recordedBy: record.recordedBy || record.recorded_by,
+            recordedByName: record.recordedByName || record.recorded_by_name,
+            manualEntry: record.manualEntry ?? record.manual_entry,
+            timestamp: record.timestamp ? new Date(record.timestamp) : null
+        };
+    }
+
+    normalizeClinicVisit(record) {
+        return {
+            ...record,
+            studentId: record.studentId || record.student_id,
+            classId: record.classId || record.class_id,
+            studentName: record.studentName || record.student_name,
+            checkIn: record.checkIn ?? record.check_in,
+            timestamp: record.timestamp ? new Date(record.timestamp) : null
+        };
+    }
+
     async loadAnalyticsData() {
         try {
             if (!window.EducareTrack) {
                 console.error('EducareTrack not available');
                 return;
             }
+
+            this.isLoadingData = true;
 
             // Load all required data in parallel
             const [students, classes, attendance, clinicVisits] = await Promise.all([
@@ -121,6 +164,12 @@ class AdminRecords {
 
         } catch (error) {
             console.error('Error loading analytics data:', error);
+        } finally {
+            this.isLoadingData = false;
+            if (this.pendingRealtimeRefresh) {
+                this.pendingRealtimeRefresh = false;
+                this.refreshData();
+            }
         }
     }
 
@@ -131,13 +180,16 @@ class AdminRecords {
             const endDate = new Date(this.currentDateRange.endDate);
             endDate.setHours(23, 59, 59, 999); // Include entire end date
 
-            const snapshot = await EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .get();
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false });
+            if (error) throw error;
 
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            return (data || []).map(row => this.normalizeAttendanceRecord(row));
         } catch (error) {
             console.error('Error getting attendance data:', error);
             return [];
@@ -150,13 +202,16 @@ class AdminRecords {
             const endDate = new Date(this.currentDateRange.endDate);
             endDate.setHours(23, 59, 59, 999);
 
-            const snapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .get();
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false });
+            if (error) throw error;
 
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            return (data || []).map(row => this.normalizeClinicVisit(row));
         } catch (error) {
             console.error('Error getting clinic visits data:', error);
             return [];
@@ -374,8 +429,16 @@ class AdminRecords {
     }
 
     async refreshData() {
+        if (this.isLoadingData) return;
         this.showLoading();
         await this.loadAnalyticsData();
+        const detailedTab = document.getElementById('detailed-tab');
+        if (detailedTab && detailedTab.classList.contains('active')) {
+            this.filterDetailedRecords();
+            this.updateLateArrivalsTable();
+            this.updateClinicVisitsTable();
+        }
+        await this.loadClinicAndAbsenceTrends();
         this.hideLoading();
     }
 
@@ -434,8 +497,10 @@ class AdminRecords {
             if (!student) return false;
 
             // Search filter
-            if (searchTerm && !student.name.toLowerCase().includes(searchTerm) && 
-                !student.studentId.toLowerCase().includes(searchTerm)) {
+            const studentName = this.getStudentName(student).toLowerCase();
+            const studentId = this.getStudentIdentifier(student).toLowerCase();
+            if (searchTerm && !studentName.includes(searchTerm) && 
+                !studentId.includes(searchTerm)) {
                 return false;
             }
 
@@ -490,8 +555,8 @@ class AdminRecords {
                         ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
-                        <div class="text-sm text-gray-500">${student ? student.studentId : ''}</div>
+                        <div class="text-sm font-medium text-gray-900">${student ? this.getStudentName(student) : 'Unknown'}</div>
+                        <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${classObj ? classObj.name : 'N/A'}
@@ -559,8 +624,8 @@ class AdminRecords {
             return `
                 <tr>
                     <td class="px-4 py-3 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
-                        <div class="text-sm text-gray-500">${student ? student.studentId : ''}</div>
+                        <div class="text-sm font-medium text-gray-900">${student ? this.getStudentName(student) : 'Unknown'}</div>
+                        <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${classObj ? classObj.name : 'N/A'}
@@ -600,8 +665,8 @@ class AdminRecords {
             return `
                 <tr>
                     <td class="px-4 py-3 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
-                        <div class="text-sm text-gray-500">${student ? student.studentId : ''}</div>
+                        <div class="text-sm font-medium text-gray-900">${student ? this.getStudentName(student) : 'Unknown'}</div>
+                        <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${classObj ? classObj.name : 'N/A'}
@@ -629,8 +694,8 @@ class AdminRecords {
         this.createDailyPatternChart();
         this.createGradeLevelChart();
         this.createClassAttendanceChart();
-        this.createLevelAttendanceChart();
         this.createLevelComparisonChart();
+        this.createLevelAttendanceChart();
         this.loadClinicAndAbsenceTrends();
     }
 
@@ -1354,6 +1419,7 @@ class AdminRecords {
     }
 
     updateLevelComparisonChart(levelStats) {
+        if (!this.charts.levelComparison || !levelStats) return;
         const labels = Object.keys(levelStats).filter(level => levelStats[level].total > 0);
         const attendanceRates = labels.map(level => {
             const stat = levelStats[level];
@@ -1421,6 +1487,36 @@ class AdminRecords {
         this.updateRecentActivityTable();
     }
 
+    setupRealtimeUpdates() {
+        if (!window.supabaseClient) return;
+        if (this.realtimeChannel) {
+            this.realtimeChannel.unsubscribe();
+        }
+
+        this.realtimeChannel = window.supabaseClient
+            .channel('admin_records_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
+                this.scheduleRealtimeRefresh();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'clinic_visits' }, () => {
+                this.scheduleRealtimeRefresh();
+            })
+            .subscribe();
+    }
+
+    scheduleRealtimeRefresh() {
+        if (this.isLoadingData) {
+            this.pendingRealtimeRefresh = true;
+            return;
+        }
+        if (this.realtimeRefreshTimer) {
+            clearTimeout(this.realtimeRefreshTimer);
+        }
+        this.realtimeRefreshTimer = setTimeout(() => {
+            this.refreshData();
+        }, 500);
+    }
+
     updateRecentActivityTable() {
         const tableBody = document.getElementById('recentActivityTable');
         const recentActivity = this.attendanceData.slice(0, 10); // Show last 10 records
@@ -1443,8 +1539,8 @@ class AdminRecords {
             return `
                 <tr>
                     <td class="px-4 py-3 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900">${student ? student.name : 'Unknown'}</div>
-                        <div class="text-sm text-gray-500">${student ? student.studentId : ''}</div>
+                        <div class="text-sm font-medium text-gray-900">${student ? this.getStudentName(student) : 'Unknown'}</div>
+                        <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${classObj ? classObj.name : 'N/A'}
@@ -1486,8 +1582,8 @@ class AdminRecords {
                     return {
                         date: record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A',
                         time: record.time || 'N/A',
-                        studentName: student ? student.name : 'Unknown',
-                        studentId: student ? student.studentId : 'N/A',
+                        studentName: student ? this.getStudentName(student) : 'Unknown',
+                        studentId: student ? this.getStudentIdentifier(student) : 'N/A',
                         className: classObj ? classObj.name : 'N/A',
                         level: student ? student.level : 'N/A',
                         status: record.status,
@@ -1501,8 +1597,8 @@ class AdminRecords {
                     return {
                         date: visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A',
                         time: visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A',
-                        studentName: student ? student.name : 'Unknown',
-                        studentId: student ? student.studentId : 'N/A',
+                        studentName: student ? this.getStudentName(student) : 'Unknown',
+                        studentId: student ? this.getStudentIdentifier(student) : 'N/A',
                         className: classObj ? classObj.name : 'N/A',
                         reason: visit.reason || 'Not specified',
                         notes: visit.notes || 'No notes'
@@ -1536,7 +1632,7 @@ class AdminRecords {
         if (!record) return;
 
         const student = this.students.find(s => s.id === record.studentId);
-        document.getElementById('editStudentName').value = student ? student.name : 'Unknown';
+        document.getElementById('editStudentName').value = student ? this.getStudentName(student) : 'Unknown';
         document.getElementById('editRecordId').value = recordId;
         
         // Format date for input
@@ -1567,12 +1663,17 @@ class AdminRecords {
             // Combine date and time
             const timestamp = new Date(dateStr + 'T' + timeStr);
 
-            await EducareTrack.db.collection('attendance').doc(recordId).update({
-                timestamp: timestamp,
-                time: timeStr,
-                status: status,
-                entryType: entryType
-            });
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { error } = await window.supabaseClient
+                .from('attendance')
+                .update({
+                    timestamp: timestamp.toISOString(),
+                    time: timeStr,
+                    status: status,
+                    entry_type: entryType
+                })
+                .eq('id', recordId);
+            if (error) throw error;
 
             this.closeEditModal();
             this.showNotification('Record updated successfully', 'success');
@@ -1595,7 +1696,12 @@ class AdminRecords {
         if (confirmed) {
             try {
                 this.showLoading();
-                await EducareTrack.db.collection('attendance').doc(recordId).delete();
+                if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+                const { error } = await window.supabaseClient
+                    .from('attendance')
+                    .delete()
+                    .eq('id', recordId);
+                if (error) throw error;
                 this.showNotification('Record deleted successfully', 'success');
                 await this.loadAnalyticsData(); // Reload
             } catch (error) {

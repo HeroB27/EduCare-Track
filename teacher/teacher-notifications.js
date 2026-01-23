@@ -10,7 +10,7 @@ class TeacherNotifications {
         try {
             this.showLoading();
 
-            if (!window.EducareTrack || !window.firebase) {
+            if (!window.EducareTrack) {
                 setTimeout(() => this.init(), 100);
                 return;
             }

@@ -237,10 +237,10 @@
                         throw new Error('Supabase client not initialized');
                     }
                     
-                    // Query the users table
+                    // Query the profiles table
                     const { data, error } = await window.supabaseClient
-                        .from('users')
-                        .select('id, username, password, name, role, is_active')
+                        .from('profiles')
+                        .select('id, username, password, full_name, role, is_active')
                         .eq('username', username)
                         .eq('is_active', true)
                         .single();
@@ -255,15 +255,21 @@
                         throw new Error('Invalid username or password');
                     }
                     
-                    // Update last login
+                    // Update last login (if profiles has last_login column, otherwise skip or add it)
+                    // The schema provided earlier DOES NOT have last_login. 
+                    // So we should probably skip this or add the column. 
+                    // Given the user instruction "align the login page", and schema didn't mention last_login, 
+                    // I will comment this out for now to avoid errors if the column doesn't exist.
+                    /* 
                     await window.supabaseClient
-                        .from('users')
+                        .from('profiles')
                         .update({ last_login: new Date().toISOString() })
                         .eq('id', data.id);
+                    */
                     
                     return {
                         id: data.id,
-                        name: data.name,
+                        name: data.full_name,
                         role: data.role,
                         username: data.username
                     };

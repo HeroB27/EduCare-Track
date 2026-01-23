@@ -508,7 +508,7 @@
                     });
 
                     // Get current clinic visits
-                    const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+                    const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
                         .where('checkIn', '==', true)
                         .where('classId', '==', this.currentUser.classId)
                         .get();

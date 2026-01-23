@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EducareTrack Database Initializer</title>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    <script src="data-initializer.js?v=11"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .status-success { background-color: #d4edda; color: #155724; }
@@ -67,22 +68,8 @@
     </div>
 
     <script>
-        // Firebase Configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyDdinBZ5X7CbjVHYlE63qWPasSdCOxdBrc",
-            authDomain: "final-educare-track.firebaseapp.com",
-            projectId: "final-educare-track",
-            storageBucket: "final-educare-track.firebasestorage.app",
-            messagingSenderId: "845023655182",
-            appId: "1:845023655182:web:d3a30337295ba200d1935f"
-        };
-
-        // Initialize Firebase
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        
-        const db = firebase.firestore();
+        // Database connection is handled by core.js via Supabase adapter
+        // db is available globally from core.js
         
         document.getElementById('initBtn').addEventListener('click', initializeCompleteDatabase);
         document.getElementById('clearBtn').addEventListener('click', clearDatabase);
@@ -126,32 +113,13 @@
             
             try {
                 logProgress('🚀 Starting complete database setup...', 'info');
-                
-                // 1. Create Users
-                logProgress('👥 Creating users...', 'info');
-                await createUsers();
-                
-                // 2. Create Classes
-                logProgress('🏫 Creating classes...', 'info');
-                await createClasses();
-                
-                // 3. Create Students
-                logProgress('🎓 Creating students...', 'info');
-                const students = await createStudents();
-                
-                // 4. Create Sample Records
-                logProgress('📊 Creating sample records...', 'info');
-                await createSampleRecords(students);
-                
-                // 5. Create Announcements
-                logProgress('📢 Creating announcements...', 'info');
-                await createAnnouncements();
-                
-                // 6. Create Excuse Letters
-                logProgress('📝 Creating excuse letters...', 'info');
-                await createExcuseLetters(students);
-                
+                if (!window.DataInitializer || typeof window.DataInitializer.initializeDummyData !== 'function') {
+                    throw new Error('Data initializer not available');
+                }
+                const ok = await window.DataInitializer.initializeDummyData();
+                if (!ok) throw new Error('Initialization failed');
                 logProgress('✅ Complete database setup finished!', 'success');
+                updateSummary('Seed Status', 'Completed');
                 summaryDiv.classList.remove('hidden');
                 
             } catch (error) {
@@ -163,303 +131,15 @@
             }
         }
 
-        async function createUsers() {
-            const users = [
-                // Admin
-                {
-                    id: 'admin001',
-                    email: 'admin@educaretrack.com',
-                    phone: '+639123456789',
-                    name: 'School Administrator',
-                    role: 'admin',
-                    isActive: true,
-                    createdAt: new Date()
-                },
-                // Guard
-                {
-                    id: 'guard001',
-                    email: 'guard@educaretrack.com',
-                    phone: '+639987654321',
-                    name: 'Security Guard',
-                    role: 'guard',
-                    isActive: true,
-                    createdAt: new Date()
-                },
-                // Clinic Staff
-                {
-                    id: 'clinic001',
-                    email: 'nurse@educaretrack.com',
-                    phone: '+639876543210',
-                    name: 'Clinic Nurse',
-                    role: 'clinic',
-                    isActive: true,
-                    createdAt: new Date()
-                },
-                // Teachers
-                {
-                    id: 'teacher001',
-                    email: 'maria.santos@educaretrack.com',
-                    phone: '+639111111111',
-                    name: 'Maria Santos',
-                    role: 'teacher',
-                    classId: 'kinder',
-                    isHomeroom: true,
-                    isActive: true,
-                    createdAt: new Date()
-                },
-                {
-                    id: 'teacher002',
-                    email: 'juan.delacruz@educaretrack.com',
-                    phone: '+639222222222',
-                    name: 'Juan Dela Cruz',
-                    role: 'teacher',
-                    classId: 'grade7',
-                    isHomeroom: true,
-                    isActive: true,
-                    createdAt: new Date()
-                },
-                {
-                    id: 'teacher003',
-                    email: 'ana.reyes@educaretrack.com',
-                    phone: '+639333333333',
-                    name: 'Ana Reyes',
-                    role: 'teacher',
-                    classId: 'grade11-stem',
-                    isHomeroom: true,
-                    isActive: true,
-                    createdAt: new Date()
-                }
-            ];
-
-            // Create parents
-            for (let i = 1; i <= 15; i++) {
-                users.push({
-                    id: `parent${i.toString().padStart(3, '0')}`,
-                    email: `parent${i}@educaretrack.com`,
-                    phone: `+639${600000000 + i}`,
-                    name: `Parent ${i}`,
-                    role: 'parent',
-                    children: [],
-                    isActive: true,
-                    createdAt: new Date()
-                });
-            }
-
-            let count = 0;
-            for (const user of users) {
-                await db.collection('users').doc(user.id).set(user);
-                count++;
-            }
-            updateSummary('Users', count);
-            logProgress(`✅ Created ${count} users`, 'success');
+        if (new URLSearchParams(window.location.search).get('autorun') === '1') {
+            initializeCompleteDatabase();
         }
 
-        async function createClasses() {
-            const classes = [
-                // Kindergarten
-                {
-                    id: 'kinder',
-                    name: 'Kindergarten',
-                    grade: 'Kindergarten',
-                    subjects: ['Language', 'Mathematics', 'Science', 'Values Education'],
-                    createdAt: new Date()
-                },
-                // Elementary
-                {
-                    id: 'grade1',
-                    name: 'Grade 1',
-                    grade: '1',
-                    subjects: ['Math', 'English', 'Filipino', 'Science'],
-                    createdAt: new Date()
-                },
-                {
-                    id: 'grade2',
-                    name: 'Grade 2',
-                    grade: '2',
-                    subjects: ['Math', 'English', 'Filipino', 'Science'],
-                    createdAt: new Date()
-                },
-                // Junior High
-                {
-                    id: 'grade7',
-                    name: 'Grade 7',
-                    grade: '7',
-                    subjects: ['English', 'Math', 'Science', 'Filipino'],
-                    createdAt: new Date()
-                },
-                // Senior High
-                {
-                    id: 'grade11-stem',
-                    name: 'Grade 11 STEM',
-                    grade: '11',
-                    strand: 'STEM',
-                    subjects: ['Pre-Calculus', 'General Biology', 'General Chemistry', 'General Physics'],
-                    createdAt: new Date()
-                },
-                {
-                    id: 'grade11-abm',
-                    name: 'Grade 11 ABM',
-                    grade: '11',
-                    strand: 'ABM',
-                    subjects: ['Business Math', 'Fundamentals of ABM', 'Principles of Marketing'],
-                    createdAt: new Date()
-                }
-            ];
-
-            let count = 0;
-            for (const classData of classes) {
-                await db.collection('classes').doc(classData.id).set(classData);
-                count++;
-            }
-            updateSummary('Classes', count);
-            logProgress(`✅ Created ${count} classes`, 'success');
-        }
-
-        async function createStudents() {
-            const classes = ['kinder', 'grade1', 'grade2', 'grade7', 'grade11-stem', 'grade11-abm'];
-            const students = [];
-            let studentCount = 0;
-            let parentIndex = 1;
-
-            for (const classId of classes) {
-                for (let i = 1; i <= 5; i++) {
-                    const firstName = ['Maria', 'Juan', 'Ana', 'Jose', 'Carmen', 'Antonio', 'Elena'][studentCount % 7];
-                    const lastName = ['Santos', 'Reyes', 'Cruz', 'Garcia', 'Lim', 'Tan', 'Sy'][studentCount % 7];
-                    const studentId = `EDU-2025-${(1000 + studentCount).toString().slice(-4)}-${(studentCount + 1).toString().padStart(4, '0')}`;
-                    const parentId = `parent${parentIndex.toString().padStart(3, '0')}`;
-
-                    const student = {
-                        id: studentId,
-                        studentId: studentId,
-                        name: `${firstName} ${lastName}`,
-                        classId: classId,
-                        grade: classId.includes('grade') ? classId.replace('grade', '') : 'Kindergarten',
-                        strand: classId.includes('stem') ? 'STEM' : classId.includes('abm') ? 'ABM' : '',
-                        parentId: parentId,
-                        qrCode: `qr_${studentId}`,
-                        currentStatus: 'out_school',
-                        lastAttendance: null,
-                        lastClinicVisit: null,
-                        isActive: true,
-                        createdAt: new Date()
-                    };
-
-                    await db.collection('students').doc(studentId).set(student);
-                    students.push(student);
-                    studentCount++;
-
-                    // Update parent's children array
-                    const parentRef = db.collection('users').doc(parentId);
-                    const parent = await parentRef.get();
-                    if (parent.exists) {
-                        const currentChildren = parent.data().children || [];
-                        await parentRef.update({
-                            children: [...currentChildren, studentId]
-                        });
-                    }
-
-                    // Move to next parent every 2 students
-                    if (studentCount % 2 === 0) parentIndex++;
-                }
-            }
-
-            updateSummary('Students', studentCount);
-            logProgress(`✅ Created ${studentCount} students`, 'success');
-            return students;
-        }
-
-        async function createSampleRecords(students) {
-            // Create attendance records for the past 30 days
-            let attendanceCount = 0;
-            const today = new Date();
-            
-            logProgress('📅 Creating 30 days of attendance records...', 'info');
-            
-            for (const student of students) {
-                // Create attendance records for the past 30 days
-                for (let day = 0; day < 30; day++) {
-                    const recordDate = new Date(today);
-                    recordDate.setDate(today.getDate() - day);
-                    
-                    // Skip weekends (Saturday = 6, Sunday = 0)
-                    if (recordDate.getDay() === 0 || recordDate.getDay() === 6) {
-                        continue;
-                    }
-                    
-                    // Randomize attendance patterns (85% present, 10% late, 5% absent)
-                    const attendancePattern = Math.random();
-                    let status = 'present';
-                    let entryHour = 7;
-                    let entryMinute = 30;
-                    
-                    if (attendancePattern < 0.10) {
-                        // 10% chance of being late (8:00 AM - 9:30 AM)
-                        status = 'late';
-                        entryHour = 8 + Math.floor(Math.random() * 2); // 8:00 or 9:00
-                        entryMinute = Math.floor(Math.random() * 60); // Random minutes
-                    } else if (attendancePattern < 0.15) {
-                        // 5% chance of being absent
-                        continue; // Skip creating attendance record for absent days
-                    }
-                    
-                    // Create entry record
-                    const entryTime = new Date(recordDate);
-                    entryTime.setHours(entryHour, entryMinute, 0);
-                    
-                    const entryRecord = {
-                        studentId: student.id,
-                        studentName: student.name,
-                        classId: student.classId,
-                        entryType: 'entry',
-                        timestamp: entryTime,
-                        time: `${entryHour.toString().padStart(2, '0')}:${entryMinute.toString().padStart(2, '0')}:00`,
-                        session: 'morning',
-                        status: status,
-                        recordedBy: 'guard001',
-                        recordedByName: 'Security Guard',
-                        date: new Date(recordDate.setHours(0, 0, 0, 0))
-                    };
-                    await db.collection('attendance').add(entryRecord);
-                    attendanceCount++;
-
-                    // Create exit record (4-6 hours after entry)
-                    const exitTime = new Date(entryTime);
-                    const schoolDuration = 4 + Math.floor(Math.random() * 3); // 4-6 hours
-                    exitTime.setHours(entryHour + schoolDuration, Math.floor(Math.random() * 60), 0);
-                    
-                    const exitRecord = {
-                        studentId: student.id,
-                        studentName: student.name,
-                        classId: student.classId,
-                        entryType: 'exit',
-                        timestamp: exitTime,
-                        time: `${exitTime.getHours().toString().padStart(2, '0')}:${exitTime.getMinutes().toString().padStart(2, '0')}:00`,
-                        session: 'afternoon',
-                        status: status,
-                        recordedBy: 'guard001',
-                        recordedByName: 'Security Guard',
-                        date: new Date(recordDate.setHours(0, 0, 0, 0))
-                    };
-                    await db.collection('attendance').add(exitRecord);
-                    attendanceCount++;
-                }
-
-                // Update student status based on today's attendance
-                const todayEntry = Math.random() > 0.1; // 90% chance student entered today
-                if (todayEntry) {
-                    await db.collection('students').doc(student.id).update({
-                        currentStatus: 'in_school',
-                        lastAttendance: new Date()
-                    });
-                }
-            }
-
-            // Create clinic visits for 3 students
-            let clinicCount = 0;
-            // ... (rest of the file seems to be cut off in the Read result, but I should probably assume the Write tool needs the full content. 
-            // Wait, I only have the first 20KB. The Read tool truncated the file.
-            // I should NOT use Write to overwrite the file if I don't have the full content.
-            // I should use SearchReplace for data-initializer.html as well.)
+        async function clearDatabase() {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Clear all data is not available in this initializer.', 'Clear Data', 'OK', 'Cancel')
+                : false;
+            if (!ok) return;
         }
     </script>
 </body>

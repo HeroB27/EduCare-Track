@@ -417,7 +417,7 @@ class ParentChildren {
             // Get recent clinic visits (last 7 days)
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-            const clinicSnapshot = await EducareTrack.db.collection('clinicVisits')
+            const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
                 .where('studentId', '==', childId)
                 .where('timestamp', '>=', sevenDaysAgo)
                 .orderBy('timestamp', 'desc')

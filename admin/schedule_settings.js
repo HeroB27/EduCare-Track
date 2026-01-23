@@ -12,6 +12,7 @@ class AttendanceSettingsManager {
             enableSaturdayClasses: false,
             enableSundayClasses: false
         };
+        this.realtimeChannel = null;
         this.init();
     }
 
@@ -35,7 +36,10 @@ class AttendanceSettingsManager {
             this.updateUI();
             
             this.initEventListeners();
+            this.populateScheduleForm(this.defaultSchedule);
+            this.populateCalendarForm(this.defaultCalendarSettings);
             await this.loadSettings();
+            this.setupRealtimeUpdates();
             
             this.hideLoading();
         } catch (error) {
@@ -129,41 +133,45 @@ class AttendanceSettingsManager {
 
     async loadSettings() {
         try {
-            // Load Schedule Settings
             let scheduleSettings = null;
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data } = await window.supabaseClient
-                    .from('system_settings')
-                    .select('value')
-                    .eq('key', 'attendance_schedule')
-                    .single();
-                if (data) scheduleSettings = data.value;
-            } else {
-                const doc = await window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').get();
-                if (doc.exists) scheduleSettings = doc.data();
-            }
-            this.populateScheduleForm(scheduleSettings || this.defaultSchedule);
-
-            // Load Calendar Settings
             let calendarSettings = null;
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data } = await window.supabaseClient
                     .from('system_settings')
-                    .select('value')
-                    .eq('key', 'calendar_settings')
-                    .single();
-                if (data) calendarSettings = data.value;
+                    .select('key,value')
+                    .in('key', ['attendance_schedule', 'calendar_settings']);
+                (data || []).forEach(row => {
+                    if (row.key === 'attendance_schedule') scheduleSettings = row.value;
+                    if (row.key === 'calendar_settings') calendarSettings = row.value;
+                });
             } else {
-                const doc = await window.EducareTrack.db.collection('system_settings').doc('calendar_settings').get();
-                if (doc.exists) calendarSettings = doc.data();
+                const [scheduleDoc, calendarDoc] = await Promise.all([
+                    window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').get(),
+                    window.EducareTrack.db.collection('system_settings').doc('calendar_settings').get()
+                ]);
+                if (scheduleDoc.exists) scheduleSettings = scheduleDoc.data();
+                if (calendarDoc.exists) calendarSettings = calendarDoc.data();
             }
+            this.populateScheduleForm(scheduleSettings || this.defaultSchedule);
             this.populateCalendarForm(calendarSettings || this.defaultCalendarSettings);
-
         } catch (error) {
             console.error('Error loading settings:', error);
             this.populateScheduleForm(this.defaultSchedule);
             this.populateCalendarForm(this.defaultCalendarSettings);
         }
+    }
+
+    setupRealtimeUpdates() {
+        if (!window.supabaseClient) return;
+        if (this.realtimeChannel) {
+            this.realtimeChannel.unsubscribe();
+        }
+        this.realtimeChannel = window.supabaseClient
+            .channel('schedule_settings_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, () => {
+                this.loadSettings();
+            })
+            .subscribe();
     }
 
     populateScheduleForm(data) {

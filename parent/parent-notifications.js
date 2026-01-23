@@ -4,7 +4,8 @@ class ParentNotifications {
         this.notifications = [];
         this.filteredNotifications = [];
         this.currentFilter = 'all';
-        this.lastVisible = null;
+        this.page = 0;
+        this.pageSize = 20;
         this.hasMore = true;
         this.init();
     }
@@ -77,23 +78,24 @@ class ParentNotifications {
     async loadNotifications(loadMore = false) {
         try {
             if (!loadMore) {
-                this.notifications = [];
-                this.lastVisible = null;
+                this.page = 0;
                 this.hasMore = true;
+            } else if (!this.hasMore) {
+                return;
+            } else {
+                this.page += 1;
             }
 
-            let query = EducareTrack.db.collection('notifications')
-                .where('targetUsers', 'array-contains', this.currentUser.id)
-                .orderBy('createdAt', 'desc')
-                .limit(20);
+            const limit = this.pageSize * (this.page + 1);
+            const allNotifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, false, limit);
+            const normalized = (allNotifications || []).map(n => ({
+                ...n,
+                isUrgent: typeof n.isUrgent !== 'undefined' ? n.isUrgent : n.is_urgent
+            }));
 
-            if (loadMore && this.lastVisible) {
-                query = query.startAfter(this.lastVisible);
-            }
+            this.notifications = normalized;
 
-            const snapshot = await query.get();
-            
-            if (snapshot.empty) {
+            if (normalized.length === 0) {
                 if (!loadMore) {
                     this.showEmptyState();
                 }
@@ -102,27 +104,15 @@ class ParentNotifications {
                 return;
             }
 
-            this.lastVisible = snapshot.docs[snapshot.docs.length - 1];
-            
-            const newNotifications = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            if (loadMore) {
-                this.notifications = [...this.notifications, ...newNotifications];
-            } else {
-                this.notifications = newNotifications;
-            }
-
             this.applyFilter();
             this.updateNotificationBadge();
 
             // Show/hide load more button
-            if (snapshot.docs.length === 20) {
+            if (normalized.length === limit) {
                 document.getElementById('loadMore').classList.remove('hidden');
             } else {
                 document.getElementById('loadMore').classList.add('hidden');
+                this.hasMore = false;
             }
 
         } catch (error) {
@@ -267,11 +257,11 @@ class ParentNotifications {
             const notification = this.notifications.find(n => n.id === this.currentNotificationId);
             if (notification && notification.readBy) {
                 notification.readBy = notification.readBy.filter(id => id !== this.currentUser.id);
-                
-                // Update in Firestore (you would need to implement this method in core.js)
-                await EducareTrack.db.collection('notifications').doc(this.currentNotificationId).update({
-                    readBy: notification.readBy
-                });
+                const { error: upErr } = await window.supabaseClient
+                    .from('notifications')
+                    .update({ read_by: notification.readBy })
+                    .eq('id', this.currentNotificationId);
+                if (upErr) throw upErr;
 
                 this.applyFilter();
                 this.updateNotificationBadge();
@@ -295,29 +285,9 @@ class ParentNotifications {
                 return;
             }
 
-            const batch = EducareTrack.db.batch();
-            
-            unreadNotifications.forEach(notification => {
-                const notificationRef = EducareTrack.db.collection('notifications').doc(notification.id);
-                const readBy = notification.readBy || [];
-                if (!readBy.includes(this.currentUser.id)) {
-                    readBy.push(this.currentUser.id);
-                }
-                batch.update(notificationRef, { readBy });
-            });
-
-            await batch.commit();
-
-            // Update local state
-            this.notifications.forEach(notification => {
-                if (!notification.readBy) notification.readBy = [];
-                if (!notification.readBy.includes(this.currentUser.id)) {
-                    notification.readBy.push(this.currentUser.id);
-                }
-            });
-
-            this.applyFilter();
-            this.updateNotificationBadge();
+            const ids = unreadNotifications.map(n => n.id);
+            await EducareTrack.markMultipleNotificationsAsRead(ids);
+            await this.loadNotifications();
             this.showNotification(`Marked ${unreadNotifications.length} notifications as read`, 'success');
 
         } catch (error) {

@@ -152,15 +152,30 @@ async loadChildren() {
     async loadExcuseLetters() {
         try {
             // Get excuse letters for all children
-            this.excuseLetters = [];
-            
-            for (const child of this.children) {
-                const childExcuses = await this.getChildExcuseLetters(child.id);
-                this.excuseLetters = this.excuseLetters.concat(childExcuses);
+            const studentIds = this.children.map(c => c.id);
+
+            if (studentIds.length > 0) {
+                const { data, error } = await window.supabaseClient
+                    .from('excuse_letters')
+                    .select('*')
+                    .in('student_id', studentIds)
+                    .order('submitted_at', { ascending: false });
+
+                if (error) throw error;
+
+                this.excuseLetters = data.map(letter => ({
+                    ...letter,
+                    studentId: letter.student_id,
+                    submittedAt: letter.submitted_at ? { toDate: () => new Date(letter.submitted_at) } : null,
+                    absenceDate: letter.absence_date ? { toDate: () => new Date(letter.absence_date) } : null,
+                    reviewedBy: letter.reviewed_by,
+                    reviewedByName: letter.reviewed_by_name,
+                    reviewedAt: letter.reviewed_at ? { toDate: () => new Date(letter.reviewed_at) } : null,
+                    reviewerNotes: letter.reviewer_notes
+                }));
+            } else {
+                this.excuseLetters = [];
             }
-            
-            // Sort by submitted date (newest first)
-            this.excuseLetters.sort((a, b) => new Date(b.submittedAt?.toDate()) - new Date(a.submittedAt?.toDate()));
             
             this.updateStatistics();
             this.updateExcuseTable();
@@ -172,7 +187,7 @@ async loadChildren() {
 
     async getChildExcuseLetters(childId) {
         try {
-            const snapshot = await EducareTrack.db.collection('excuseLetters')
+            const snapshot = await EducareTrack.db.collection('excuse_letters')
                 .where('studentId', '==', childId)
                 .orderBy('submittedAt', 'desc')
                 .get();
@@ -444,24 +459,27 @@ async loadChildren() {
         let teacherClassId = student.classId;
         let className = student.className || `Grade ${student.grade} - ${student.level}`;
         
-        // If student doesn't have classId, try to find the teacher's class
+        // If student doesn't have classId, try to find the class by grade
         if (!teacherClassId) {
-            console.warn('Student has no classId, attempting to find teacher class...');
-            // Try to get the teacher for this grade/level
-            const teachersSnapshot = await EducareTrack.db.collection('users')
-                .where('role', '==', 'teacher')
-                .where('isActive', '==', true)
-                .get();
-            
-            const teachers = teachersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const matchingTeacher = teachers.find(t => 
-                t.grade === student.grade && t.level === student.level
-            );
-            
-            if (matchingTeacher) {
-                teacherClassId = matchingTeacher.classId;
-                className = matchingTeacher.className || className;
-                console.log('Found matching teacher class:', teacherClassId);
+            console.warn('Student has no classId, attempting to find class by grade...');
+            const { data: classes, error } = await window.supabaseClient
+                .from('classes')
+                .select('id, grade')
+                .eq('grade', student.grade);
+
+            if (error) {
+                console.error('Error loading classes:', error);
+            } else {
+                // Try to find a class that matches grade
+                const matchingClass = (classes || []).find(c => 
+                    c.grade === student.grade
+                );
+                
+                if (matchingClass) {
+                    teacherClassId = matchingClass.id;
+                    className = `Grade ${matchingClass.grade}`;
+                    console.log('Found matching class:', teacherClassId);
+                }
             }
         }
 
@@ -481,16 +499,26 @@ async loadChildren() {
                         window.EducareTrack.showNormalNotification({ title: 'File Too Large', message: 'Maximum allowed is 5MB.', type: 'warning' });
                     }
                 } else {
-                    if (!EducareTrack.storage) {
-                        throw new Error('File upload not available. Firebase Storage not initialized.');
+                    if (!window.supabaseClient) {
+                        throw new Error('Supabase client not initialized.');
                     }
                     const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
                     const path = `excuse_letters/${childId}/${Date.now()}_${sanitizedName}`;
-                    const storageRef = EducareTrack.storage.ref().child(path);
-                    const snapshot = await storageRef.put(file);
-                    const downloadURL = await snapshot.ref.getDownloadURL();
+                    const { error: uploadError } = await window.supabaseClient
+                        .storage
+                        .from('excuse-letters')
+                        .upload(path, file, {
+                            cacheControl: '3600',
+                            upsert: false,
+                            contentType: file.type
+                        });
+                    if (uploadError) throw uploadError;
+                    const { data: publicData } = window.supabaseClient
+                        .storage
+                        .from('excuse-letters')
+                        .getPublicUrl(path);
                     attachments.push({
-                        url: downloadURL,
+                        url: publicData?.publicUrl || '',
                         name: file.name,
                         type: file.type,
                         size: file.size
@@ -502,40 +530,30 @@ async loadChildren() {
             this.showNotification('Attachment upload failed: ' + uploadError.message, 'error');
         }
 
-        // FIX: Ensure all required fields have values, provide defaults for undefined fields
-        const excuseData = {
-            studentId: childId,
-            parentId: this.currentUser.id,
-            parentName: this.currentUser.name,
-            classId: teacherClassId, // Use the determined classId
-            type: type,
-            reason: reason,
-            notes: notes || '',
-            // Both single date and array for compatibility
-            absenceDate: firebase.firestore.Timestamp.fromDate(new Date(dates[0])),
-            dates: dates,
-            attachments: attachments,
-            status: 'pending',
-            submittedAt: new Date().toISOString(),
-            // Additional synchronized fields - WITH FIXES FOR UNDEFINED VALUES
-            studentName: student.name || 'Unknown Student',
-            className: className,
-            grade: student.grade || 'Unknown Grade',
-            level: student.level || 'Unknown Level' // FIX: Provide default value for level
-        };
+        const { data: result, error } = await window.supabaseClient
+            .from('excuse_letters')
+            .insert({
+                student_id: childId,
+                student_name: student.name || 'Unknown Student',
+                class_id: teacherClassId,
+                type: type,
+                reason: reason,
+                notes: notes || '',
+                absence_date: dates[0] ? new Date(dates[0]).toISOString() : null,
+                dates: dates,
+                attachments: attachments,
+                status: 'pending',
+                submitted_at: new Date().toISOString(),
+                parent_id: this.currentUser.id,
+                parent_name: this.currentUser.name,
+                class_name: className,
+                grade: student.grade || 'Unknown Grade',
+                level: student.level || 'Unknown Level'
+            })
+            .select()
+            .single();
 
-        // DEBUG: Log the excuse data before saving
-        console.log('Submitting excuse data:', excuseData);
-
-        // Validate all fields to ensure no undefined values
-        Object.keys(excuseData).forEach(key => {
-            if (excuseData[key] === undefined) {
-                console.warn(`Field ${key} is undefined, setting to default value`);
-                excuseData[key] = ''; // Set to empty string or appropriate default
-            }
-        });
-
-        const result = await EducareTrack.db.collection('excuseLetters').add(excuseData);
+        if (error) throw error;
         console.log('Excuse letter saved with ID:', result.id);
 
         // Success
@@ -746,7 +764,7 @@ async loadChildren() {
         if (!ok) return;
 
         try {
-            await EducareTrack.db.collection('excuseLetters').doc(excuseId).update({
+            await EducareTrack.db.collection('excuse_letters').doc(excuseId).update({
                 status: 'cancelled',
                 cancelledAt: new Date().toISOString()
             });

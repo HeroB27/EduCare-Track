@@ -62,7 +62,7 @@ self.addEventListener('fetch', (e) => {
       return;
     }
   } else {
-    if (/cdn|firebase|gstatic|googleapis|jsdelivr|dummyimage/.test(url.hostname)) {
+    if (/cdn|supabase|googleapis|jsdelivr|dummyimage/.test(url.hostname)) {
       e.respondWith(
         fetch(req)
           .then((resp) => {

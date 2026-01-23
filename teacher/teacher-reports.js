@@ -11,7 +11,7 @@ class TeacherReports {
         try {
             this.showLoading();
             
-            if (!window.EducareTrack || !window.firebase) {
+            if (!window.EducareTrack) {
                 console.log('Waiting for dependencies...');
                 setTimeout(() => this.init(), 100);
                 return;

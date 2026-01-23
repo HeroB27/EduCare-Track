@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EducareTrack - School Calendar</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>window.exports = {};</script>
     <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -96,11 +97,11 @@
                     </a>
                 </li>
                 <li>
-                    <a href="student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
-                        <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
-                        <span class="sidebar-text">Student Management</span>
-                    </a>
-                </li>
+            <a href="admin-student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+                <span class="sidebar-text">Student & ID Info</span>
+            </a>
+        </li>
                 <li>
                     <a href="class-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                         <i class="fas fa-chalkboard w-5 h-5 mr-3"></i>
@@ -108,7 +109,7 @@
                     </a>
                 </li>
                 <li>
-                    <a href="attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                    <a href="admin-schedule_settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                         <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
                         <span class="sidebar-text">Schedule Settings</span>
                     </a>
@@ -242,9 +243,9 @@
     </div>
 
     <!-- Scripts -->
-    <script src="../firebase-config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
     <script src="school-calendar.js"></script>
 </body>
 </html>

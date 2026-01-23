@@ -47,18 +47,27 @@ class StudentManagement {
 
     async loadParents() {
         try {
-            // Fetch users with role 'parent'
-            // We'll use EducareTrack.getUsersByRole if available, otherwise direct query
+            // Fetch users with role 'parent' from profiles table
             let parents = [];
-            if (window.EducareTrack.getUsersByRole) {
-                parents = await window.EducareTrack.getUsersByRole('parent');
-            } else {
-                const snapshot = await window.EducareTrack.db.collection('users')
-                    .where('role', '==', 'parent')
-                    .get();
-                parents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Try using Supabase client directly first
+            if (window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('profiles')
+                    .select('*')
+                    .eq('role', 'parent');
+                    
+                if (!error && data) {
+                    parents = data;
+                }
             }
-            this.parents = parents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            
+            // Fallback to EducareTrack helper if direct query failed or client not available
+            if (parents.length === 0 && window.EducareTrack.getUsersByRole) {
+            parents = await window.EducareTrack.getUsersByRole('parent');
+        }
+        
+        this.parents = parents.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
         } catch (error) {
             console.error('Error loading parents:', error);
         }
@@ -70,7 +79,7 @@ class StudentManagement {
         
         parentSelect.innerHTML = '<option value="">Select Parent</option>';
         this.parents.forEach(parent => {
-            parentSelect.innerHTML += `<option value="${parent.id}">${parent.name} (${parent.phone || 'No Phone'})</option>`;
+            parentSelect.innerHTML += `<option value="${parent.id}">${parent.full_name} (${parent.phone || 'No Phone'})</option>`;
         });
     }
 
@@ -83,7 +92,10 @@ class StudentManagement {
         
         classSelect.innerHTML = '<option value="">Select Class</option>';
         this.classes.forEach(cls => {
-            classSelect.innerHTML += `<option value="${cls.id}">${cls.name} (${cls.grade} - ${cls.level})</option>`;
+            // Construct class name safely since name/level might be undefined in DB
+            const displayName = cls.name || cls.id;
+            const levelInfo = cls.level ? ` - ${cls.level}` : '';
+            classSelect.innerHTML += `<option value="${cls.id}">${displayName} (${cls.grade}${levelInfo})</option>`;
         });
         
         if (currentVal) classSelect.value = currentVal;
@@ -105,9 +117,35 @@ class StudentManagement {
             document.getElementById('studentCount').textContent = 
                 `Total Students: ${this.allStudents.length} (${this.filteredStudents.length} filtered)`;
         } catch (error) {
+            if (error?.code === 'PGRST205' || error?.message?.includes("does not exist")) {
+                 console.warn('Students table missing or query error, skipping load.');
+                 this.allStudents = [];
+                 this.filteredStudents = [];
+                 this.renderStudentsTable();
+                 document.getElementById('studentCount').textContent = 'Total Students: 0 (0 filtered)';
+                 return;
+            }
             console.error('Error loading students:', error);
             this.showNotification('Error loading students', 'error');
         }
+    }
+
+    setupRealtimeUpdates() {
+        if (!window.supabaseClient) return;
+
+        // Subscribe to changes in students table
+        const channel = window.supabaseClient
+            .channel('admin_students_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'students' },
+                (payload) => {
+                    console.log('Realtime student update:', payload);
+                    // Reload students on any change
+                    this.loadStudents();
+                }
+            )
+            .subscribe();
     }
 
     renderStudentsTable() {
@@ -131,11 +169,11 @@ class StudentManagement {
                     ${student.lrn ? `<div class="text-xs text-gray-500">LRN: ${student.lrn}</div>` : ''}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-medium text-gray-900">${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown')}</div>
-                    <div class="text-xs text-gray-500">${this.getClassById(student.class_id || student.classId)?.level || 'N/A'} • ${student.strand || ''}</div>
+                    <div class="text-sm font-medium text-gray-900">${student.full_name || 'Unknown'}</div>
+                    <div class="text-xs text-gray-500">${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'} ${student.strand ? '• ' + student.strand : ''}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-500">${this.getClassById(student.class_id || student.classId)?.name || 'N/A'}</div>
+                    <div class="text-sm text-gray-500">${this.getClassById(student.class_id || student.classId)?.id || 'N/A'}</div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     ${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'}
@@ -263,57 +301,84 @@ class StudentManagement {
             this.showLoading();
 
             const fullName = document.getElementById('studentName').value.trim();
-            const nameParts = fullName.split(' ');
-            const firstName = nameParts[0] || '';
-            const lastName = nameParts.slice(1).join(' ') || '';
-
+            const parentId = document.getElementById('studentParent').value || null;
+            
             const studentData = {
-                name: fullName,
-                first_name: firstName,
-                last_name: lastName,
+                full_name: fullName,
+                name: fullName, // Backward compatibility
                 lrn: document.getElementById('studentLRN').value || '',
                 class_id: document.getElementById('studentClass').value,
-                classId: document.getElementById('studentClass').value, // Add both for compatibility
                 strand: document.getElementById('studentStrand').value || '',
-                parent_id: document.getElementById('studentParent').value || ''
+                // parent_id removed from students table
             };
 
             // Validate required fields
-            if (!studentData.name || !studentData.class_id) {
+            if (!studentData.full_name || !studentData.class_id) {
                 this.showNotification('Please fill in all required fields', 'error');
                 this.hideLoading();
                 return;
             }
 
+            let studentId;
+
             if (this.currentEditingStudent) {
                 // Update existing student
-                await window.EducareTrack.db.collection('students').doc(this.currentEditingStudent.id).update({
-                    ...studentData,
-                    updated_at: new Date(),
-                    updated_by: window.EducareTrack.currentUser.id
-                });
+                studentId = this.currentEditingStudent.id;
+                const { error } = await window.supabaseClient
+                    .from('students')
+                    .update({
+                        ...studentData,
+                        updated_at: new Date()
+                    })
+                    .eq('id', studentId);
                 
-                // If parent changed, we might need to update linking on parent side too
-                // But generally linking is stored on student.parent_id
-                
+                if (error) throw error;
                 this.showNotification('Student updated successfully', 'success');
             } else {
                 // Create new student
                 // We should ideally use EducareTrack.enrollStudent, but that requires parent info.
                 // If we are just adding a student record directly (admin bypass), we can do this:
-                const studentId = window.EducareTrack.generateStudentId(studentData.lrn);
+                studentId = window.EducareTrack.generateStudentId(studentData.lrn);
                 
-                await window.EducareTrack.db.collection('students').doc(studentId).set({
-                    id: studentId,
-                    studentId: studentId,
-                    ...studentData,
-                    current_status: 'out_school',
-                    is_active: true,
-                    created_at: new Date(),
-                    createdBy: window.EducareTrack.currentUser.id
-                });
+                const { error } = await window.supabaseClient
+                    .from('students')
+                    .insert({
+                        id: studentId,
+                        ...studentData,
+                        current_status: 'out_school',
+                        is_active: true,
+                        created_at: new Date()
+                    });
+                
+                if (error) throw error;
                 this.showNotification('Student created successfully', 'success');
             } 
+
+            // Handle Parent-Student Link
+            if (parentId) {
+                // Remove existing links first (simplified approach for 1:1 parent assumption in this UI)
+                await window.supabaseClient
+                    .from('parent_students')
+                    .delete()
+                    .eq('student_id', studentId);
+
+                // Add new link
+                const { error: linkError } = await window.supabaseClient
+                    .from('parent_students')
+                    .insert({
+                        parent_id: parentId,
+                        student_id: studentId,
+                        relationship: 'Parent' // Default
+                    });
+                
+                if (linkError) console.error('Error linking parent:', linkError);
+            } else if (this.currentEditingStudent) {
+                // If parentId is cleared, remove existing link
+                await window.supabaseClient
+                    .from('parent_students')
+                    .delete()
+                    .eq('student_id', studentId);
+            }
 
             this.closeModal();
             await this.loadStudents();
@@ -345,7 +410,7 @@ class StudentManagement {
 
     populateStudentForm(student) {
         const classId = student.class_id || student.classId;
-        document.getElementById('studentName').value = student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '');
+        document.getElementById('studentName').value = student.full_name || '';
         document.getElementById('studentLRN').value = student.lrn || '';
         document.getElementById('studentClass').value = classId || '';
         document.getElementById('studentGrade').value = this.getClassById(classId)?.grade || '';
@@ -391,12 +456,12 @@ class StudentManagement {
                         <div class="text-center">
                             <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4 overflow-hidden">
                                 ${student.photo_url || student.photoUrl ? 
-                                    `<img src="${student.photo_url || student.photoUrl}" alt="${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Student')}" class="w-24 h-24 rounded-full object-cover">` :
-                                    `<span class="text-blue-600 font-semibold text-2xl">${(student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'ST')).split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
+                                    `<img src="${student.photo_url || student.photoUrl}" alt="${student.full_name || 'Student'}" class="w-24 h-24 rounded-full object-cover">` :
+                                    `<span class="text-blue-600 font-semibold text-2xl">${(student.full_name || 'ST').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
                                 }
                             </div>
-                            <h3 class="text-xl font-bold text-gray-800">${student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : 'Unknown')}</h3>
-                            <p class="text-gray-600">${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'} • ${this.getClassById(student.class_id || student.classId)?.level || 'N/A'}</p>
+                            <h3 class="text-xl font-bold text-gray-800">${student.full_name || 'Unknown'}</h3>
+                            <p class="text-gray-600">${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'} • ${this.getClassById(student.class_id || student.classId)?.id || 'N/A'}</p>
                             ${student.strand ? `<p class="text-gray-600">${student.strand}</p>` : ''}
                             <div class="mt-2">
                                 <span class="px-3 py-1 rounded-full text-sm font-medium ${this.getStatusColor(student.current_status)}">
@@ -504,12 +569,15 @@ class StudentManagement {
 
     async getClinicVisitsByStudent(studentId) {
         try {
-            const snapshot = await window.EducareTrack.db.collection('clinicVisits')
-                .where('student_id', '==', studentId)
-                .orderBy('timestamp', 'desc')
-                .limit(20)
-                .get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const { data: visits, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(20);
+
+            if (error) throw error;
+            return visits || [];
         } catch (error) {
             console.error('Error getting clinic visits:', error);
             return [];
@@ -664,7 +732,7 @@ class StudentManagement {
         const statusFilter = document.getElementById('statusFilter').value;
 
         this.filteredStudents = this.allStudents.filter(student => {
-            const displayName = student.name || (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '');
+            const displayName = student.full_name || student.name || '';
             const fullName = displayName.toLowerCase();
             const matchesSearch = fullName.includes(searchTerm) || 
                                 (student.id && student.id.toLowerCase().includes(searchTerm)) ||

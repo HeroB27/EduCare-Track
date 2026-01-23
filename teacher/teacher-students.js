@@ -12,7 +12,7 @@ class TeacherStudents {
             this.showLoading();
             
             // Wait for EducareTrack to be ready
-            if (!window.EducareTrack || !window.firebase) {
+            if (!window.EducareTrack) {
                 console.log('Waiting for dependencies...');
                 setTimeout(() => this.init(), 100);
                 return;
@@ -125,16 +125,26 @@ class TeacherStudents {
                 console.log('EducareTrack method failed, trying direct query...');
             }
             
-            // Method 2: If no students found, try direct query
+            // Method 2: If no students found, try direct query (Supabase)
             if (students.length === 0) {
                 try {
-                    const snapshot = await EducareTrack.db.collection('students')
-                        .where('classId', '==', this.currentUser.classId)
-                        .where('isActive', '==', true)
-                        .get();
-                        
-                    students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    console.log('Loaded students via direct query:', students);
+                    const { data, error } = await window.supabaseClient
+                        .from('students')
+                        .select('*')
+                        .eq('class_id', this.currentUser.classId)
+                        .eq('is_active', true);
+
+                    if (error) throw error;
+                    
+                    students = (data || []).map(s => ({
+                        id: s.id,
+                        ...s,
+                        classId: s.class_id,
+                        parentId: s.parent_id,
+                        emergencyContact: s.emergency_contact,
+                        grade: s.level
+                    }));
+                    console.log('Loaded students via direct query (Supabase):', students);
                 } catch (error) {
                     console.log('Direct query failed:', error);
                 }
@@ -522,13 +532,23 @@ class TeacherStudents {
 
     async getAttendanceByStudent(studentId) {
         try {
-            const snapshot = await EducareTrack.db.collection('attendance')
-                .where('studentId', '==', studentId)
-                .orderBy('timestamp', 'desc')
-                .limit(20)
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(20);
 
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+
+            return (data || []).map(record => ({
+                id: record.id,
+                ...record,
+                studentId: record.student_id,
+                entryType: record.entry_type,
+                classId: record.class_id,
+                timestamp: new Date(record.timestamp)
+            }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);
             return [];
@@ -537,13 +557,23 @@ class TeacherStudents {
 
     async getClinicVisitsByStudent(studentId) {
         try {
-            const snapshot = await EducareTrack.db.collection('clinicVisits')
-                .where('studentId', '==', studentId)
-                .orderBy('timestamp', 'desc')
-                .limit(20)
-                .get();
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(20);
 
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (error) throw error;
+
+            return (data || []).map(record => ({
+                id: record.id,
+                ...record,
+                studentId: record.student_id,
+                checkIn: record.check_in,
+                checkOut: record.check_out,
+                timestamp: new Date(record.timestamp)
+            }));
         } catch (error) {
             console.error('Error getting clinic visits by student:', error);
             return [];

@@ -62,9 +62,9 @@
             </a>
         </li>
         <li>
-            <a href="student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <a href="admin-student-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
-                <span class="sidebar-text">Student Management</span>
+                <span class="sidebar-text">Student & ID Info</span>
             </a>
         </li>
         <li>
@@ -74,7 +74,7 @@
             </a>
         </li>
         <li>
-            <a href="attendance.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+            <a href="admin-schedule_settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
                 <span class="sidebar-text">Schedule Settings</span>
             </a>
@@ -91,12 +91,7 @@
                 <span class="sidebar-text">Announcements</span>
             </a>
         </li>
-        <li>
-            <a href="id-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
-                <i class="fas fa-id-card w-5 h-5 mr-3"></i>
-                <span class="sidebar-text">ID Management</span>
-            </a>
-        </li>
+
         <li>
             <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
@@ -321,12 +316,26 @@
                 <form id="editClassForm" class="space-y-4">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Class Name</label>
-                            <input type="text" id="editClassName" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Level</label>
+                            <input type="text" id="editClassLevel" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-50 text-gray-600" readonly>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Grade</label>
-                            <input type="text" id="editClassGrade" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
+                            <select id="editClassGrade" required class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select Grade</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Strand</label>
+                            <select id="editClassStrand" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select Strand (for Senior High)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Class Name</label>
+                            <input type="text" id="editClassName" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-50 text-gray-600" readonly>
                         </div>
                     </div>
                     <div>
@@ -385,12 +394,6 @@
                 <form id="createClassForm" class="space-y-4">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Class Name *</label>
-                            <input type="text" id="className" required 
-                                   class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                   placeholder="e.g., Grade 7-A">
-                        </div>
-                        <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Level *</label>
                             <select id="classLevel" required
                                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -401,9 +404,6 @@
                                 <option value="Senior High">Senior High</option>
                             </select>
                         </div>
-                    </div>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
                             <select id="classGrade" required
@@ -411,12 +411,20 @@
                                 <option value="">Select Grade</option>
                             </select>
                         </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Strand</label>
                             <select id="classStrand"
                                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="">Select Strand (for Senior High)</option>
                             </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Class Name</label>
+                            <input type="text" id="className"
+                                   class="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-50 text-gray-600" readonly>
                         </div>
                     </div>
                     
@@ -562,6 +570,9 @@
         </div>
     </div>
 
+    <!-- Database: Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
     <script src="../core.js"></script>
     <script src="class-management.js"></script>
 </body>

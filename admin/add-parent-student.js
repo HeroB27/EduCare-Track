@@ -1,5 +1,4 @@
-// Use Firebase from core.js - No duplicate declaration
-let enrollmentDb = null;
+// Use database from core.js - No duplicate declaration
 
 // Enrollment Data Storage
 let enrollmentData = {
@@ -18,62 +17,14 @@ const studentList = document.getElementById('studentList');
 function initializeDatabase() {
     try {
         if (typeof EducareTrack !== 'undefined' && EducareTrack.db) {
-            enrollmentDb = EducareTrack.db;
-            console.log('Using Supabase database from core.js');
+            console.log('Using database from core.js');
             return;
         }
-        // Mock database for demo purposes (fallback)
-        enrollmentDb = {
-            collection: function(name) {
-                console.log('Using mock collection:', name);
-                return {
-                    add: function(data) {
-                        console.log('Mock add:', data);
-                        return Promise.resolve({ id: 'mock-id-' + Date.now() });
-                    },
-                    doc: function(id) {
-                        return {
-                            set: function(data) {
-                                console.log('Mock set:', data);
-                                return Promise.resolve();
-                            },
-                            update: function(data) {
-                                console.log('Mock update:', data);
-                                return Promise.resolve();
-                            },
-                            get: function() {
-                                return Promise.resolve({
-                                    exists: true,
-                                    data: function() { return {}; }
-                                });
-                            }
-                        };
-                    },
-                    where: function() { return this; },
-                    get: function() {
-                        return Promise.resolve({ empty: true });
-                    }
-                };
-            },
-            batch: function() {
-                return {
-                    set: function(ref, data) { return this; },
-                    update: function(ref, data) { return this; },
-                    commit: function() { return Promise.resolve(); }
-                };
-            }
-        };
-        console.log('Using mock database - Supabase client not available');
+        console.error('Database client not available');
+        showNotification('Database connection failed', 'error');
     } catch (error) {
         console.error('Error initializing database:', error);
     }
-}
-
-// Helper to check if Firebase is properly configured
-function isFirebaseAvailable() {
-    return typeof firebase !== 'undefined' && 
-           firebase.apps.length > 0 && 
-           typeof firebase.firestore === 'function';
 }
 
 // Progress Steps
@@ -100,14 +51,13 @@ function updateProgressSteps(currentStep) {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Initializing enrollment page...');
     
-    // Wait a bit for Firebase to initialize
+    // Wait a bit for Supabase to initialize
     setTimeout(() => {
         initializeDatabase();
         initializeEventListeners();
         updateProgressSteps(0);
         
-        console.log('Database initialized:', enrollmentDb);
-        console.log('Firebase available:', isFirebaseAvailable());
+        console.log('Database initialized');
     }, 100);
 });
 
@@ -711,7 +661,6 @@ async function saveEnrollment() {
 
         console.log('Starting enrollment process...', enrollmentData);
 
-        // Save to Firebase
         let savedIds = [];
         let createdParentId = null;
         
@@ -747,9 +696,7 @@ async function saveEnrollment() {
                 savedIds.push(result);
             }
         } else {
-            console.log('Using direct Firestore method');
-            // Use direct database method
-            savedIds = await saveToFirestoreDirect();
+            throw new Error('EducareTrack core system not initialized. Cannot enroll students.');
         }
 
         console.log('Enrollment successful, saved IDs:', savedIds);
@@ -770,136 +717,6 @@ async function saveEnrollment() {
     }
 }
 
-// Improved class creation function - FIXED FOR KINDERGARTEN
-async function getOrCreateClassId(grade, strand) {
-    try {
-        // Create class name - FIXED: Handle Kindergarten properly
-        let className = grade; // grade is already in "Grade X" or "Kindergarten" format
-        let level = getLevelFromGrade(grade);
-        
-        // For Kindergarten, no strand
-        if (strand && level !== 'Kindergarten') {
-            className += ` ${strand}`;
-        }
-
-        // For demo or when Firestore is not available
-        if (!enrollmentDb || (typeof firebase === 'undefined' && !enrollmentDb.collection)) {
-            return `class-${grade.replace(' ', '-').toLowerCase()}-${strand || 'general'}`;
-        }
-
-        // Check if class exists - FIXED: Use proper field names
-        const classesSnapshot = await enrollmentDb.collection('classes')
-            .where('name', '==', className)
-            .where('grade', '==', grade)
-            .get();
-
-        if (!classesSnapshot.empty) {
-            return classesSnapshot.docs[0].id;
-        }
-
-        // Create new class - FIXED: Include all required fields
-        const classData = {
-            name: className,
-            grade: grade,
-            level: level,
-            strand: strand || null,
-            subjects: typeof EducareTrack !== 'undefined' ? EducareTrack.getSubjectsForLevel(level, strand, grade) : [],
-            studentCount: 0,
-            is_active: true,
-            created_at: new Date().toISOString()
-        };
-
-        const classRef = await enrollmentDb.collection('classes').add(classData);
-        console.log(`Created new class: ${className} with ID: ${classRef.id}`);
-        return classRef.id;
-
-    } catch (error) {
-        console.error('Error getting/creating class:', error);
-        // Return fallback class ID
-        return `class-${grade.replace(' ', '-').toLowerCase()}-${strand || 'general'}`;
-    }
-}
-
-// Direct Firestore save method - ENHANCED
-async function saveToFirestoreDirect() {
-    const batch = enrollmentDb.batch();
-    const savedIds = [];
-
-    try {
-        // 1. Create Parent
-        const parentId = 'parent-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-        const parentRef = enrollmentDb.collection('users').doc(parentId);
-        
-        const parentData = {
-            id: parentId,
-            name: enrollmentData.parent.name,
-            phone: enrollmentData.parent.phone,
-            email: enrollmentData.parent.email || '',
-            address: enrollmentData.parent.address,
-            relationship: enrollmentData.parent.relationship,
-            role: 'parent',
-            username: enrollmentData.parent.username,
-            password: enrollmentData.parent.password,
-            children: [],
-            is_active: true,
-            created_at: new Date().toISOString()
-        };
-        
-        batch.set(parentRef, parentData);
-        console.log('Parent data prepared:', parentData);
-
-        // 2. Create Students
-        for (const student of enrollmentData.students) {
-            const studentId = student.studentId || generateStudentId(student.lrn);
-            const studentRef = enrollmentDb.collection('students').doc(studentId);
-            
-            // Get or create class - FIXED: Ensure class is created properly
-            const classId = await getOrCreateClassId(student.grade, student.strand);
-            
-            const studentData = {
-                id: studentId,
-                studentId: studentId,
-                name: student.name,
-                lrn: student.lrn,
-                grade: student.grade,
-                level: student.level,
-                strand: student.strand || null,
-                class_id: classId, // This is crucial for teacher-student relationship
-                parent_id: parentId,
-                address: enrollmentData.parent.address, // Inherit from parent
-                emergencyContact: enrollmentData.parent.phone, // Inherit from parent
-                photo_url: student.picture || null,
-                qrCode: studentId,
-                current_status: 'out_school',
-                last_attendance: null,
-                last_clinic_visit: null,
-                is_active: true,
-                created_at: new Date().toISOString()
-            };
-            
-            batch.set(studentRef, studentData);
-            savedIds.push(studentId);
-            
-            // Add student ID to parent's children array
-            parentData.children.push(studentId);
-            
-            console.log('Student data prepared:', studentData);
-        }
-
-        // Update parent with children IDs
-        batch.update(parentRef, { children: parentData.children });
-
-        // Commit the batch
-        await batch.commit();
-        console.log('Batch committed successfully');
-
-        return savedIds;
-
-    } catch (error) {
-        console.error('Error in direct Firestore save:', error);
-        throw error;
-    }
-}
 
 function enrollAnother() {
     // Close success modal

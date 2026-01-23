@@ -163,7 +163,7 @@ class ParentClinic {
             }
 
             // Sort by timestamp (newest first)
-            clinicData.sort((a, b) => new Date(b.timestamp?.toDate()) - new Date(a.timestamp?.toDate()));
+            clinicData.sort((a, b) => this.getVisitDate(b) - this.getVisitDate(a));
 
             this.clinicVisits = clinicData;
             this.filteredVisits = clinicData;
@@ -181,20 +181,31 @@ class ParentClinic {
 
     async getChildClinicVisits(childId, startDate, endDate) {
         try {
-            const snapshot = await firebase.firestore()
-                .collection('clinicVisits')
-                .where('studentId', '==', childId)
-                .where('timestamp', '>=', startDate)
-                .where('timestamp', '<=', endDate)
-                .orderBy('timestamp', 'desc')
-                .get();
+            const { data: visits, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('student_id', childId)
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false });
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            if (error) throw error;
+            
+            return (visits || []).map(v => ({
+                id: v.id,
+                studentId: v.student_id,
+                studentName: v.student_name,
+                classId: v.class_id,
+                checkIn: !!v.check_in,
+                timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
+                reason: v.reason || '',
+                notes: v.notes || '',
+                staffName: v.treated_by || '',
+                recommendations: v.outcome || '',
+                additionalNotes: v.notes || ''
             }));
         } catch (error) {
-            console.error(`Error getting clinic visits for child ${childId}:`, error);
+            console.error('Error getting child clinic visits:', error);
             return [];
         }
     }
@@ -206,11 +217,11 @@ class ParentClinic {
         const activeCases = this.filteredVisits.filter(visit => {
             if (!visit.checkIn) return false;
             
-            const visitDate = visit.timestamp?.toDate().toDateString();
+            const visitDate = this.getVisitDate(visit)?.toDateString();
             const hasCheckout = this.filteredVisits.some(v => 
                 v.studentId === visit.studentId &&
                 !v.checkIn &&
-                v.timestamp?.toDate().toDateString() === visitDate
+                this.getVisitDate(v)?.toDateString() === visitDate
             );
             
             return !hasCheckout;
@@ -267,7 +278,7 @@ class ParentClinic {
 
         container.innerHTML = this.filteredVisits.map(visit => {
             const child = this.children.find(c => c.id === visit.studentId);
-            const visitDate = visit.timestamp?.toDate();
+            const visitDate = this.getVisitDate(visit);
             
             // Check if urgent
             const isUrgent = visit.recommendations && 
@@ -335,7 +346,7 @@ class ParentClinic {
             const content = document.getElementById('visitDetailsContent');
 
             const child = this.children.find(c => c.id === visit.studentId);
-            const visitDate = visit.timestamp?.toDate();
+            const visitDate = this.getVisitDate(visit);
 
             // Check if urgent
             const isUrgent = visit.recommendations && 
@@ -501,72 +512,26 @@ class ParentClinic {
 
     // Real-time listeners
     initRealTimeListeners() {
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            if (this.pollTimer) {
-                clearInterval(this.pollTimer);
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+        }
+        this.pollTimer = setInterval(async () => {
+            try {
+                await this.applyFilters();
+                await this.loadNotificationCount();
+            } catch (e) {
+                console.error('Polling error:', e);
             }
-            this.pollTimer = setInterval(async () => {
-                try {
-                    await this.applyFilters();
-                    await this.loadNotificationCount();
-                } catch (e) {
-                    console.error('Polling error:', e);
-                }
-            }, 15000);
-        } else {
-            this.setupClinicVisitsListener();
-            this.setupNotificationsListener();
-        }
+        }, 15000);
     }
 
-    setupClinicVisitsListener() {
-        if (!this.currentUser) return;
-
-        // Get children IDs for this parent
-        const childIds = this.children.map(child => child.id);
-        
-        if (childIds.length === 0) return;
-
-        if (!window.USE_SUPABASE || !window.supabaseClient) {
-            this.clinicVisitsListener = firebase.firestore()
-                .collection('clinicVisits')
-                .where('studentId', 'in', childIds)
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'added') {
-                            const visit = { id: change.doc.id, ...change.doc.data() };
-                            this.handleNewClinicVisit(visit);
-                        }
-                    });
-                }, error => {
-                    console.error('Clinic visits listener error:', error);
-                });
-        }
-    }
-
-    setupNotificationsListener() {
-        if (!this.currentUser) return;
-
-        if (!window.USE_SUPABASE || !window.supabaseClient) {
-            this.notificationsListener = firebase.firestore()
-                .collection('notifications')
-                .where('targetUsers', 'array-contains', this.currentUser.id)
-                .where('type', '==', 'clinic')
-                .orderBy('createdAt', 'desc')
-                .limit(5)
-                .onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'added') {
-                            const notification = { id: change.doc.id, ...change.doc.data() };
-                            this.handleNewNotification(notification);
-                        }
-                    });
-                }, error => {
-                    console.error('Notifications listener error:', error);
-                });
-        }
+    getVisitDate(visit) {
+        if (!visit) return null;
+        const ts = visit.timestamp;
+        if (!ts) return null;
+        if (ts instanceof Date) return ts;
+        if (ts.toDate) return ts.toDate();
+        return new Date(ts);
     }
 
     handleNewClinicVisit(visit) {

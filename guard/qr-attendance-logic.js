@@ -14,17 +14,13 @@ class AttendanceLogic {
 
     async loadSettings() {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data } = await window.supabaseClient
-                    .from('system_settings')
-                    .select('value')
-                    .eq('key', 'attendance_schedule')
-                    .single();
-                if (data) this.settings = data.value;
-            } else if (typeof firebase !== 'undefined') {
-                const doc = await firebase.firestore().collection('system_settings').doc('attendance_schedule').get();
-                if (doc.exists) this.settings = doc.data();
-            }
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { data } = await window.supabaseClient
+                .from('system_settings')
+                .select('value')
+                .eq('key', 'attendance_schedule')
+                .single();
+            if (data) this.settings = data.value;
         } catch (e) {
             console.error('Error loading settings', e);
         }
@@ -71,17 +67,13 @@ class AttendanceLogic {
         try {
             // Fetch student data if not provided to determine schedule
             if (!studentData) {
-                if (window.USE_SUPABASE && window.supabaseClient) {
-                    const { data } = await window.supabaseClient
-                        .from('students')
-                        .select('level,grade')
-                        .eq('id', studentId)
-                        .single();
-                    if (data) studentData = data;
-                } else if (typeof firebase !== 'undefined') {
-                    const doc = await firebase.firestore().collection('students').doc(studentId).get();
-                    if (doc.exists) studentData = doc.data();
-                }
+                if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+                const { data } = await window.supabaseClient
+                    .from('students')
+                    .select('level,grade')
+                    .eq('id', studentId)
+                    .single();
+                if (data) studentData = data;
             }
 
             const schedule = this.getScheduleForStudent(studentData?.level, studentData?.grade);
@@ -91,31 +83,21 @@ class AttendanceLogic {
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
             let records = [];
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('studentId,entryType,timestamp,time,session,status')
-                    .eq('studentId', studentId)
-                    .gte('timestamp', startOfDay.toISOString())
-                    .lte('timestamp', endOfDay.toISOString())
-                    .order('timestamp', { ascending: true });
-                if (error) {
-                    throw error;
-                }
-                records = (data || []).map(r => ({
-                    ...r,
-                    timestamp: r.timestamp ? new Date(r.timestamp) : null
-                }));
-            } else {
-                const attendanceSnapshot = await firebase.firestore()
-                    .collection('attendance')
-                    .where('studentId', '==', studentId)
-                    .where('timestamp', '>=', startOfDay)
-                    .where('timestamp', '<=', endOfDay)
-                    .orderBy('timestamp', 'asc')
-                    .get();
-                records = attendanceSnapshot.docs.map(doc => doc.data());
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('studentId,entryType,timestamp,time,session,status')
+                .eq('studentId', studentId)
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString())
+                .order('timestamp', { ascending: true });
+            if (error) {
+                throw error;
             }
+            records = (data || []).map(r => ({
+                ...r,
+                timestamp: r.timestamp ? new Date(r.timestamp) : null
+            }));
             
             return this.analyzeAttendance(records, date, schedule);
         } catch (error) {
@@ -225,42 +207,25 @@ class AttendanceLogic {
             endOfDay.setHours(23, 59, 59, 999);
             let allStudents = [];
             let presentStudentIds = new Set();
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
-                    window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus'),
-                    window.supabaseClient.from('attendance')
-                        .select('studentId,entryType,timestamp')
-                        .gte('timestamp', startOfDay.toISOString())
-                        .lte('timestamp', endOfDay.toISOString())
-                        .eq('entryType', 'entry')
-                ]);
-                if (sErr) throw sErr;
-                if (eErr) throw eErr;
-                allStudents = (students || []).map(s => ({
-                    id: s.id,
-                    name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                    classId: s.classId,
-                    parentId: s.parentId,
-                    currentStatus: s.currentStatus
-                }));
-                presentStudentIds = new Set((entries || []).map(e => e.studentId));
-            } else {
-                const studentsSnapshot = await firebase.firestore()
-                    .collection('students')
-                    .where('isActive', '==', true)
-                    .get();
-                allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                const attendanceSnapshot = await firebase.firestore()
-                    .collection('attendance')
-                    .where('timestamp', '>=', startOfDay)
-                    .where('timestamp', '<=', endOfDay)
-                    .where('entryType', '==', 'entry')
-                    .get();
-                presentStudentIds = new Set();
-                attendanceSnapshot.docs.forEach(doc => {
-                    presentStudentIds.add(doc.data().studentId);
-                });
-            }
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
+                window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus'),
+                window.supabaseClient.from('attendance')
+                    .select('studentId,entryType,timestamp')
+                    .gte('timestamp', startOfDay.toISOString())
+                    .lte('timestamp', endOfDay.toISOString())
+                    .eq('entryType', 'entry')
+            ]);
+            if (sErr) throw sErr;
+            if (eErr) throw eErr;
+            allStudents = (students || []).map(s => ({
+                id: s.id,
+                name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
+                classId: s.classId,
+                parentId: s.parentId,
+                currentStatus: s.currentStatus
+            }));
+            presentStudentIds = new Set((entries || []).map(e => e.studentId));
 
             // Calculate detailed status for each absent student
             const absentStudents = [];
@@ -285,35 +250,23 @@ class AttendanceLogic {
     async generateAttendanceReport(startDate, endDate, studentId = null) {
         try {
             let records = [];
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                let q = window.supabaseClient
-                    .from('attendance')
-                    .select('id,studentId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .order('timestamp', { ascending: false });
-                if (studentId) {
-                    q = q.eq('studentId', studentId);
-                }
-                const { data, error } = await q;
-                if (error) throw error;
-                records = (data || []).map(r => ({
-                    id: r.id,
-                    ...r,
-                    timestamp: r.timestamp ? new Date(r.timestamp) : null
-                }));
-            } else {
-                let query = firebase.firestore()
-                    .collection('attendance')
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .orderBy('timestamp', 'desc');
-                if (studentId) {
-                    query = query.where('studentId', '==', studentId);
-                }
-                const snapshot = await query.get();
-                records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            let q = window.supabaseClient
+                .from('attendance')
+                .select('id,studentId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false });
+            if (studentId) {
+                q = q.eq('studentId', studentId);
             }
+            const { data, error } = await q;
+            if (error) throw error;
+            records = (data || []).map(r => ({
+                id: r.id,
+                ...r,
+                timestamp: r.timestamp ? new Date(r.timestamp) : null
+            }));
 
             // Group by student and date
             const report = {};
@@ -339,60 +292,35 @@ class AttendanceLogic {
     // Mark student as absent manually
     async markStudentAbsent(studentId, date = new Date(), reason = '') {
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data: student, error: sErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,firstName,lastName,classId,parentId')
-                    .eq('id', studentId)
-                    .single();
-                if (sErr || !student) throw new Error('Student not found');
-                const timestamp = new Date(date);
-                timestamp.setHours(8, 0, 0, 0);
-                const row = {
-                    studentId: studentId,
-                    classId: student.classId || '',
-                    entryType: 'entry',
-                    timestamp: timestamp,
-                    time: '08:00',
-                    session: 'morning',
-                    status: 'absent',
-                    remarks: reason || 'Marked absent by staff',
-                    recordedBy: 'system',
-                    recordedByName: 'System',
-                    manualEntry: true
-                };
-                const { error } = await window.supabaseClient.from('attendance').insert(row);
-                if (error) throw error;
-                await this.sendAbsenceNotification({
-                    id: student.id,
-                    name: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
-                    parentId: student.parentId
-                }, reason);
-            } else {
-                const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
-                if (!studentDoc.exists) {
-                    throw new Error('Student not found');
-                }
-                const student = studentDoc.data();
-                const timestamp = new Date(date);
-                timestamp.setHours(8, 0, 0, 0);
-                const attendanceData = {
-                    studentId: studentId,
-                    studentName: student.name,
-                    classId: student.classId,
-                    entryType: 'absent',
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    time: '08:00',
-                    session: 'morning',
-                    status: 'absent',
-                    remarks: reason || 'Marked absent by staff',
-                    recordedBy: 'system',
-                    recordedByName: 'System',
-                    manualEntry: true
-                };
-                await firebase.firestore().collection('attendance').add(attendanceData);
-                await this.sendAbsenceNotification(student, reason);
-            }
+            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            const { data: student, error: sErr } = await window.supabaseClient
+                .from('students')
+                .select('id,firstName,lastName,classId,parentId')
+                .eq('id', studentId)
+                .single();
+            if (sErr || !student) throw new Error('Student not found');
+            const timestamp = new Date(date);
+            timestamp.setHours(8, 0, 0, 0);
+            const row = {
+                studentId: studentId,
+                classId: student.classId || '',
+                entryType: 'entry',
+                timestamp: timestamp,
+                time: '08:00',
+                session: 'morning',
+                status: 'absent',
+                remarks: reason || 'Marked absent by staff',
+                recordedBy: 'system',
+                recordedByName: 'System',
+                manualEntry: true
+            };
+            const { error } = await window.supabaseClient.from('attendance').insert(row);
+            if (error) throw error;
+            await this.sendAbsenceNotification({
+                id: student.id,
+                name: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
+                parentId: student.parentId
+            }, reason);
 
             return true;
         } catch (error) {
@@ -415,10 +343,20 @@ class AttendanceLogic {
             if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
                 await window.EducareTrack.createNotification(notificationData);
             } else {
-                await firebase.firestore().collection('notifications').add({
-                    ...notificationData,
-                    createdAt: new Date().toISOString()
-                });
+                const payload = {
+                    type: notificationData.type,
+                    title: notificationData.title,
+                    message: notificationData.message,
+                    target_users: notificationData.targetUsers,
+                    student_id: notificationData.studentId,
+                    student_name: notificationData.studentName,
+                    is_urgent: notificationData.isUrgent,
+                    is_active: true,
+                    created_at: new Date().toISOString(),
+                    read_by: []
+                };
+                if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+                await window.supabaseClient.from('notifications').insert(payload);
             }
         } catch (error) {
             console.error('Error sending absence notification:', error);
@@ -451,44 +389,27 @@ async getAbsentStudents(date = new Date()) {
         endOfDay.setHours(23, 59, 59, 999);
         let allStudents = [];
         let presentStudentIds = new Set();
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
-                window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus,grade,level'),
-                window.supabaseClient.from('attendance')
-                    .select('studentId,entryType,timestamp')
-                    .gte('timestamp', startOfDay.toISOString())
-                    .lte('timestamp', endOfDay.toISOString())
-                    .eq('entryType', 'entry')
-            ]);
-            if (sErr) throw sErr;
-            if (eErr) throw eErr;
-            allStudents = (students || []).map(s => ({
-                id: s.id,
-                name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                classId: s.classId,
-                parentId: s.parentId,
-                currentStatus: s.currentStatus,
-                grade: s.grade,
-                level: s.level
-            }));
-            presentStudentIds = new Set((entries || []).map(e => e.studentId));
-        } else {
-            const studentsSnapshot = await firebase.firestore()
-                .collection('students')
-                .where('isActive', '==', true)
-                .get();
-            allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const attendanceSnapshot = await firebase.firestore()
-                .collection('attendance')
-                .where('timestamp', '>=', startOfDay)
-                .where('timestamp', '<=', endOfDay)
-                .where('entryType', '==', 'entry')
-                .get();
-            presentStudentIds = new Set();
-            attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().studentId);
-            });
-        }
+        if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+        const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
+            window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus,grade,level'),
+            window.supabaseClient.from('attendance')
+                .select('studentId,entryType,timestamp')
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString())
+                .eq('entryType', 'entry')
+        ]);
+        if (sErr) throw sErr;
+        if (eErr) throw eErr;
+        allStudents = (students || []).map(s => ({
+            id: s.id,
+            name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
+            classId: s.classId,
+            parentId: s.parentId,
+            currentStatus: s.currentStatus,
+            grade: s.grade,
+            level: s.level
+        }));
+        presentStudentIds = new Set((entries || []).map(e => e.studentId));
 
         // Calculate detailed status for each absent student
         const absentStudents = [];

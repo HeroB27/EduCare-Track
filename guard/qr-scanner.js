@@ -330,7 +330,7 @@ class QRScanner {
             // Determine entry type based on current mode
             const entryType = this.currentMode === 'timeIn' ? 'entry' : 'exit';
             
-            // Record attendance using the actual Firestore document ID
+            // Record attendance using the actual document ID
             await this.recordAttendance(student.id, student, entryType);
             
         } catch (error) {
@@ -594,7 +594,7 @@ class QRScanner {
             if (window.EducareTrack && window.EducareTrack.createNotification) {
                 await window.EducareTrack.createNotification(notificationData);
             } else {
-                // Fallback to direct Firestore (wrapper)
+                // Fallback to direct database call
                 await window.EducareTrack.db.collection('notifications').add(notificationData);
             }
 
@@ -608,61 +608,11 @@ class QRScanner {
 
     // Get relevant teachers for notifications
     async getRelevantTeachers(student) {
-        const teacherIds = [];
-        
-        try {
-            // Get homeroom teacher for the student's class
-            if (student.classId || student.class_id) {
-                const classId = student.class_id || student.classId;
-                const homeroomTeacherQuery = await window.EducareTrack.db
-                    .collection('users')
-                    .where('role', '==', 'teacher')
-                    .where('classId', '==', classId) // Keeping classId for legacy compatibility
-                    .where('isHomeroom', '==', true)
-                    .where('isActive', '==', true)
-                    .limit(1)
-                    .get();
-                    
-                if (!homeroomTeacherQuery.empty) {
-                    teacherIds.push(homeroomTeacherQuery.docs[0].id);
-                }
-
-                // Also get any teacher assigned to this class (as backup)
-                const classTeachersQuery = await window.EducareTrack.db
-                    .collection('users')
-                    .where('role', '==', 'teacher')
-                    .where('assignedClasses', 'array-contains', classId)
-                    .where('isActive', '==', true)
-                    .limit(3)
-                    .get();
-                    
-                classTeachersQuery.docs.forEach(doc => {
-                    if (!teacherIds.includes(doc.id)) {
-                        teacherIds.push(doc.id);
-                    }
-                });
-            }
-
-            // If no teachers found for class, try to find teachers by grade level
-            if (teacherIds.length === 0 && student.grade) {
-                const gradeTeachersQuery = await window.EducareTrack.db
-                    .collection('users')
-                    .where('role', '==', 'teacher')
-                    .where('assignedGrades', 'array-contains', student.grade)
-                    .where('isActive', '==', true)
-                    .limit(2)
-                    .get();
-                    
-                gradeTeachersQuery.docs.forEach(doc => {
-                    teacherIds.push(doc.id);
-                });
-            }
-
-            return teacherIds;
-        } catch (error) {
-            console.error('Error getting relevant teachers:', error);
-            return teacherIds;
+        // Delegate to core system logic which is already schema-aligned
+        if (window.EducareTrack && typeof window.EducareTrack.getRelevantTeachersForStudent === 'function') {
+            return await window.EducareTrack.getRelevantTeachersForStudent(student);
         }
+        return [];
     }
 
     // Helper method to check morning attendance

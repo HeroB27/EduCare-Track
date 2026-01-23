@@ -19,48 +19,36 @@ class CalendarManager {
         try {
             this.settings = { enableSaturdayClasses: false, enableSundayClasses: false };
             
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data } = await window.supabaseClient
-                    .from('system_settings')
-                    .select('value')
-                    .eq('key', 'calendar_settings')
-                    .single();
-                if (data) this.settings = { ...this.settings, ...data.value };
-            } else {
-                const doc = await window.EducareTrack.db.collection('system_settings').doc('calendar_settings').get();
-                if (doc.exists) this.settings = { ...this.settings, ...doc.data() };
+            if (!window.supabaseClient) {
+                throw new Error('Supabase client not initialized');
             }
+            const { data } = await window.supabaseClient
+                .from('system_settings')
+                .select('value')
+                .eq('key', 'calendar_settings')
+                .single();
+            if (data) this.settings = { ...this.settings, ...data.value };
         } catch (error) {
             console.error('Error loading settings:', error);
         }
     }
 
     setupRealtimeSubscription() {
-        if (window.USE_SUPABASE && window.supabaseClient) {
-            const channel = window.supabaseClient
-                .channel('calendar_events_changes')
-                .on(
-                    'postgres_changes',
-                    { event: '*', schema: 'public', table: 'calendar_events' },
-                    (payload) => {
-                        console.log('Real-time update received:', payload);
-                        this.loadEvents(false); // Pass false to suppress loading spinner if possible
-                    }
-                )
-                .subscribe();
-        } else {
-            // Firestore Real-time Listener
-            try {
-                window.EducareTrack.db.collection('calendar_events').onSnapshot((snapshot) => {
-                    this.events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    this.renderCalendar();
-                }, (error) => {
-                    console.error('Error in real-time subscription:', error);
-                });
-            } catch (e) {
-                console.error('Error setting up real-time subscription:', e);
-            }
+        if (!window.supabaseClient) {
+            console.error('Supabase client not initialized');
+            return;
         }
+        window.supabaseClient
+            .channel('calendar_events_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'calendar_events' },
+                (payload) => {
+                    console.log('Real-time update received:', payload);
+                    this.loadEvents(false);
+                }
+            )
+            .subscribe();
     }
 
     setupEventListeners() {
@@ -119,17 +107,14 @@ class CalendarManager {
     async loadEvents(showSpinner = true) {
         if (showSpinner) this.showLoading();
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('calendar_events')
-                    .select('*');
-                if (error) throw error;
-                this.events = data || [];
-            } else {
-                // Firestore Fallback
-                const snapshot = await window.EducareTrack.db.collection('calendar_events').get();
-                this.events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (!window.supabaseClient) {
+                throw new Error('Supabase client not initialized');
             }
+            const { data, error } = await window.supabaseClient
+                .from('calendar_events')
+                .select('*');
+            if (error) throw error;
+            this.events = data || [];
         } catch (error) {
             console.error('Error loading events:', error);
             // Fallback for demo if no table exists yet
@@ -278,26 +263,20 @@ class CalendarManager {
 
         this.showLoading();
         try {
-            if (window.USE_SUPABASE && window.supabaseClient) {
-                if (id) {
-                    const { error } = await window.supabaseClient
-                        .from('calendar_events')
-                        .update(eventData)
-                        .eq('id', id);
-                    if (error) throw error;
-                } else {
-                    const { error } = await window.supabaseClient
-                        .from('calendar_events')
-                        .insert([{ ...eventData, created_at: new Date().toISOString() }]);
-                    if (error) throw error;
-                }
+            if (!window.supabaseClient) {
+                throw new Error('Supabase client not initialized');
+            }
+            if (id) {
+                const { error } = await window.supabaseClient
+                    .from('calendar_events')
+                    .update(eventData)
+                    .eq('id', id);
+                if (error) throw error;
             } else {
-                // Firestore Fallback
-                if (id) {
-                    await window.EducareTrack.db.collection('calendar_events').doc(id).update(eventData);
-                } else {
-                    await window.EducareTrack.db.collection('calendar_events').add({ ...eventData, created_at: new Date().toISOString() });
-                }
+                const { error } = await window.supabaseClient
+                    .from('calendar_events')
+                    .insert([{ ...eventData, created_at: new Date().toISOString() }]);
+                if (error) throw error;
             }
             this.closeModal();
             this.loadEvents();
