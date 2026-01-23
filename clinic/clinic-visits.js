@@ -48,26 +48,29 @@ class ClinicVisits {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('id,studentId,studentName,classId,reason,checkIn,timestamp,notes,treatedBy,outcome')
-                    .order('timestamp', { ascending: false });
+                    .from('clinic_visits')
+                    .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                    .order('visit_time', { ascending: false });
                 if (error) throw error;
                 this.visits = (data || []).map(v => ({
                     id: v.id,
-                    studentId: v.studentId,
-                    studentName: v.studentName,
-                    classId: v.classId,
+                    studentId: v.student_id,
+                    studentName: '', // Will be loaded separately if needed
+                    classId: '', // Will be loaded separately if needed
                     reason: v.reason || '',
-                    checkIn: !!v.checkIn,
-                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
+                    checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
+                    timestamp: v.visit_time ? new Date(v.visit_time) : new Date(),
                     notes: v.notes || '',
-                    staffName: v.treatedBy || '',
+                    staffName: v.treated_by || '',
                     recommendations: v.outcome || ''
                 }));
                 this.applyFilters();
             } else {
-                const snapshot = await firebase.firestore()
-                    .collection('clinicVisits')
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (!db) {
+                    throw new Error('Database not available');
+                }
+                const snapshot = await db.collection('clinicVisits')
                     .orderBy('timestamp', 'desc')
                     .get();
                 this.visits = snapshot.docs.map(doc => {
@@ -368,13 +371,31 @@ class ClinicVisits {
                     return;
                 }
                 try {
-                    await firebase.firestore().collection('clinicVisits').doc(visitId).update({
-                        reason: newReason,
-                        notes: newNotes,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        updatedBy: this.currentUser.id,
-                        updatedByName: this.currentUser.name
-                    });
+                    if (window.USE_SUPABASE && window.supabaseClient) {
+                        const { error } = await window.supabaseClient
+                            .from('clinic_visits')
+                            .update({
+                                reason: newReason,
+                                notes: newNotes,
+                                updated_at: new Date().toISOString(),
+                                updated_by: this.currentUser.id
+                            })
+                            .eq('id', visitId);
+                        if (error) throw error;
+                    } else {
+                        const db = window.EducareTrack ? window.EducareTrack.db : null;
+                        if (db) {
+                            await db.collection('clinicVisits').doc(visitId).update({
+                                reason: newReason,
+                                notes: newNotes,
+                                updatedAt: new Date().toISOString(),
+                                updatedBy: this.currentUser.id,
+                                updatedByName: this.currentUser.name
+                            });
+                        } else {
+                            throw new Error('Database not available');
+                        }
+                    }
                     visit.reason = newReason;
                     visit.notes = newNotes;
                     this.applyFilters();

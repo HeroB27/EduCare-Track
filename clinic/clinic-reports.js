@@ -42,20 +42,27 @@ class ClinicReports {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
-                    .from('clinicVisits')
-                    .select('id,studentId,classId,checkIn,timestamp,reason,notes')
-                    .order('timestamp', { ascending: false });
+                    .from('clinic_visits')
+                    .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                    .order('visit_time', { ascending: false });
                 if (error) {
                     throw error;
                 }
                 this.visits = (data || []).map(v => ({
                     id: v.id,
+                    studentId: v.student_id,
+                    studentName: '', // Will be loaded separately if needed
+                    classId: '', // Will be loaded separately if needed
+                    checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
                     ...v,
-                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
+                    timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
                 }));
             } else {
-                const snapshot = await firebase.firestore()
-                    .collection('clinicVisits')
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (!db) {
+                    throw new Error('Database not available');
+                }
+                const snapshot = await db.collection('clinicVisits')
                     .orderBy('timestamp', 'desc')
                     .get();
                 this.visits = snapshot.docs.map(doc => {

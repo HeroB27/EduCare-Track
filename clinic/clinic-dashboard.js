@@ -47,14 +47,14 @@ class ClinicDashboard {
 
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const [{ data: visits, error: vErr }, { data: patients, error: pErr }, statsSnapshot] = await Promise.all([
-                    window.supabaseClient.from('clinicVisits')
-                        .select('id,student_id,student_name,class_id,check_in,timestamp,reason,notes')
-                        .gte('timestamp', today.toISOString())
-                        .lt('timestamp', tomorrow.toISOString())
-                        .order('timestamp', { ascending: false })
+                    window.supabaseClient.from('clinic_visits')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                        .gte('visit_time', today.toISOString())
+                        .lt('visit_time', tomorrow.toISOString())
+                        .order('visit_time', { ascending: false })
                         .limit(10),
                     window.supabaseClient.from('students')
-                        .select('id,first_name,last_name,class_id,current_status,parent_id')
+                        .select('id,full_name,class_id,current_status')
                         .eq('current_status', 'in_clinic'),
                     this.getClinicStats()
                 ]);
@@ -62,31 +62,36 @@ class ClinicDashboard {
                 if (pErr) throw pErr;
                 this.recentVisits = (visits || []).map(v => ({
                     id: v.id,
+                    studentId: v.student_id,
+                    studentName: '', // Will be loaded separately if needed
+                    classId: '', // Will be loaded separately if needed
+                    checkIn: true, // All visits in clinic_visits are check-ins by default
                     ...v,
-                    timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
+                    timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
                 }));
                 this.currentPatients = (patients || []).map(s => ({
                     id: s.id,
-                    first_name: s.first_name,
-                    last_name: s.last_name,
-                    name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
-                    class_id: s.class_id,
-                    current_status: s.current_status,
-                    parent_id: s.parent_id,
-                    grade: s.grade || ''
+                    name: s.full_name || '',
+                    classId: s.class_id,
+                    currentStatus: s.current_status,
+                    grade: '' // Grade field not in new schema
                 }));
                 this.stats = statsSnapshot;
             } else {
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (!db) {
+                    throw new Error('Database not available');
+                }
                 const [visitsSnapshot, patientsSnapshot, statsSnapshot] = await Promise.all([
-                    firebase.firestore().collection('clinicVisits')
+                    db.collection('clinicVisits')
                         .where('timestamp', '>=', today)
                         .where('timestamp', '<', tomorrow)
                         .orderBy('timestamp', 'desc')
                         .limit(10)
                         .get(),
                     
-                    firebase.firestore().collection('students')
-                        .where('currentStatus', '==', 'in_clinic')
+                    db.collection('students')
+                        .where('current_status', '==', 'in_clinic')
                         .get(),
                     
                     this.getClinicStats()
@@ -120,10 +125,10 @@ class ClinicDashboard {
 
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const [{ data: visits, error: vErr }, { data: patients, error: pErr }, { count, error: cErr }] = await Promise.all([
-                    window.supabaseClient.from('clinicVisits')
-                        .select('id,reason,timestamp', { count: 'exact' })
-                        .gte('timestamp', today.toISOString())
-                        .lt('timestamp', tomorrow.toISOString()),
+                    window.supabaseClient.from('clinic_visits')
+                        .select('id,reason,visit_time', { count: 'exact' })
+                        .gte('visit_time', today.toISOString())
+                        .lt('visit_time', tomorrow.toISOString()),
                     window.supabaseClient.from('students')
                         .select('id', { count: 'exact' })
                         .eq('current_status', 'in_clinic'),
@@ -148,17 +153,22 @@ class ClinicDashboard {
                     topReason: this.capitalizeFirstLetter(topReason)
                 };
             } else {
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (!db) {
+                    throw new Error('Database not available');
+                }
                 const [todayVisits, currentPatients, totalStudents] = await Promise.all([
-                    firebase.firestore().collection('clinicVisits')
+                    db.collection('clinicVisits')
                         .where('timestamp', '>=', today)
                         .where('timestamp', '<', tomorrow)
+                        .where('check_in', '==', true)
                         .get(),
                     
-                    firebase.firestore().collection('students')
+                    db.collection('students')
                         .where('currentStatus', '==', 'in_clinic')
                         .get(),
                     
-                    firebase.firestore().collection('students')
+                    db.collection('students')
                         .where('isActive', '==', true)
                         .get()
                 ]);
@@ -312,7 +322,7 @@ class ClinicDashboard {
                                 <span class="text-sm font-medium text-gray-700">Health Reports</span>
                             </button>
                             
-                            <button onclick="this.quickCheckoutAll()" class="p-4 border border-gray-300 rounded-lg text-center hover:bg-red-50 hover:border-red-500 transition duration-200 group">
+                            <button onclick="clinicDashboard.quickCheckoutAll()" class="p-4 border border-gray-300 rounded-lg text-center hover:bg-red-50 hover:border-red-500 transition duration-200 group">
                                 <svg class="w-8 h-8 text-red-600 mx-auto mb-2 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
                                 </svg>
@@ -359,7 +369,7 @@ class ClinicDashboard {
         }
 
         return this.currentPatients.map(patient => {
-            const classInfo = patient.class_id || 'Unknown Class';
+            const classInfo = patient.classId || 'Unknown Class';
             const gradeInfo = patient.grade ? ` • ${patient.grade}` : '';
             
             return `
@@ -399,9 +409,9 @@ class ClinicDashboard {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-            const type = visit.check_in ? 'Check-in' : 'Check-out';
-            const typeColor = visit.check_in ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
-            const icon = visit.check_in ? '↩️' : '↪️';
+            const type = visit.checkIn ? 'Check-in' : 'Check-out';
+            const typeColor = visit.checkIn ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
+            const icon = visit.checkIn ? '↩️' : '↪️';
             
             return `
                 <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -452,9 +462,13 @@ class ClinicDashboard {
             : true;
         if (!ok) return;
         try {
-            const checkoutPromises = this.currentPatients.map(patient => 
-                this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false)
-            );
+            const checkoutPromises = this.currentPatients.map(patient => {
+                if (window.EducareTrack) {
+                    return window.EducareTrack.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false);
+                } else {
+                    return this.recordClinicVisit(patient.id, 'Batch Checkout', 'Checked out all patients', false);
+                }
+            });
             await Promise.all(checkoutPromises);
             await this.loadDashboardData();
             await this.loadPage(this.currentPage);
@@ -467,39 +481,201 @@ class ClinicDashboard {
 
     async recordClinicVisit(studentId, reason, notes, checkIn) {
         try {
-            const studentDoc = await firebase.firestore().collection('students').doc(studentId).get();
-            
-            if (!studentDoc.exists) {
-                throw new Error('Student not found');
+            let student;
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data: studentData, error: sErr } = await window.supabaseClient
+                    .from('students')
+                    .select('id,full_name,class_id')
+                    .eq('id', studentId)
+                    .single();
+                if (sErr || !studentData) throw new Error('Student not found');
+                student = studentData;
+                
+                const timestamp = new Date();
+                const insertData = {
+                    student_id: studentId,
+                    reason: reason,
+                    visit_time: timestamp,
+                    notes: notes || '',
+                    treated_by: this.currentUser.name || this.currentUser.id,
+                    outcome: checkIn ? 'checked_in' : 'checked_out'
+                };
+                
+                const { data: inserted, error } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .insert(insertData)
+                    .select('id')
+                    .single();
+                if (error) throw error;
+                
+                const newStatus = checkIn ? 'in_clinic' : 'in_school';
+                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+                
+                // Send notifications to parents and teachers
+                await this.sendClinicNotifications(
+                    { id: studentId, classId: student.class_id, name: student.full_name },
+                    checkIn,
+                    reason,
+                    notes
+                );
+                
+                return inserted.id;
+            } else {
+                // Firebase fallback
+                let studentDoc;
+                if (window.EducareTrack && window.EducareTrack.db) {
+                    studentDoc = await window.EducareTrack.db.collection('students').doc(studentId).get();
+                } else {
+                    throw new Error('Database not available');
+                }
+                if (!studentDoc.exists) throw new Error('Student not found');
+                student = studentDoc.data();
+                
+                const clinicData = {
+                    studentId: studentId,
+                    studentName: student.name,
+                    classId: student.classId || student.class_id || '',
+                    checkIn: checkIn,
+                    timestamp: new Date(),
+                    reason: reason,
+                    notes: notes,
+                    staffId: this.currentUser.id,
+                    staffName: this.currentUser.name
+                };
+
+                if (window.EducareTrack && window.EducareTrack.db) {
+                    await window.EducareTrack.db.collection('clinicVisits').add(clinicData);
+                    await window.EducareTrack.db.collection('students').doc(studentId).update({
+                        currentStatus: checkIn ? 'in_clinic' : 'in_school',
+                        lastClinicVisit: new Date()
+                    });
+                } else {
+                    throw new Error('Database not available');
+                }
+                
+                // Send notifications to parents and teachers
+                await this.sendClinicNotifications(
+                    { id: studentId, parentId: student.parentId || student.parent_id, classId: student.classId || student.class_id, name: student.name },
+                    checkIn,
+                    reason,
+                    notes
+                );
             }
-
-            const student = studentDoc.data();
-            
-            const clinicData = {
-                student_id: studentId,
-                student_name: student.name,
-                class_id: student.class_id || '',
-                check_in: checkIn,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                reason: reason,
-                notes: notes,
-                staff_id: this.currentUser.id,
-                staff_name: this.currentUser.name
-            };
-
-            await firebase.firestore().collection('clinicVisits').add(clinicData);
-
-            // Update student status
-            await firebase.firestore().collection('students').doc(studentId).update({
-                current_status: checkIn ? 'in_clinic' : 'in_school',
-                last_clinic_visit: firebase.firestore.FieldValue.serverTimestamp()
-            });
 
             return true;
         } catch (error) {
             console.error('Error recording clinic visit:', error);
             throw error;
         }
+    }
+
+    async sendClinicNotifications(student, checkIn, reason, notes) {
+        try {
+            const parentId = student.parentId || student.parent_id;
+            let teacherId = null;
+            
+            // Validate parent ID
+            if (!parentId) {
+                console.warn('No parent ID found for student:', student.id);
+            }
+            
+            // Find homeroom teacher
+            const classId = student.classId || student.class_id;
+            if (classId) {
+                if (window.USE_SUPABASE && window.supabaseClient) {
+                    const { data: homeroom, error: hrErr } = await window.supabaseClient
+                        .from('teachers')
+                        .select('id')
+                        .eq('class_id', classId)
+                        .eq('is_homeroom', true)
+                        .limit(1);
+                    if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
+                        teacherId = homeroom[0].id;
+                    }
+                } else if (window.EducareTrack && window.EducareTrack.db) {
+                    const teacherQuery = await window.EducareTrack.db
+                        .collection('users')
+                        .where('role', '==', 'teacher')
+                        .where('class_id', '==', classId)
+                        .where('is_homeroom', '==', true)
+                        .limit(1)
+                        .get();
+                    if (!teacherQuery.empty) {
+                        teacherId = teacherQuery.docs[0].id;
+                    }
+                } else {
+                    throw new Error('Database not available');
+                }
+            }
+
+            // Build target users array, ensuring no null/undefined values
+            const targetUsers = [];
+            if (parentId) targetUsers.push(parentId);
+            if (teacherId) targetUsers.push(teacherId);
+
+            // Check if we have any valid recipients
+            if (targetUsers.length === 0) {
+                console.warn('No valid recipients for clinic notification:', {
+                    studentId: student.id,
+                    parentId: parentId,
+                    teacherId: teacherId,
+                    classId: classId
+                });
+                // Don't send notification if no recipients
+                return;
+            }
+
+            const action = checkIn ? 'checked into' : 'checked out from';
+            const notificationTitle = checkIn ? 'Clinic Check-in' : 'Clinic Check-out';
+            
+            let message = `${student.name} has ${action} the clinic.`;
+            if (reason) message += `\nReason: ${reason}`;
+            if (notes) message += `\nNotes: ${notes}`;
+
+            const notificationData = {
+                type: 'clinic',
+                title: notificationTitle,
+                message: message,
+                target_users: targetUsers
+            };
+            
+            console.log('Sending clinic notification to:', targetUsers);
+            
+            if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
+                await window.EducareTrack.createNotification(notificationData);
+            } else if (window.USE_SUPABASE && window.supabaseClient) {
+                // Supabase notification
+                await window.supabaseClient.from('notifications').insert({
+                    target_users: targetUsers,
+                    title: notificationTitle,
+                    message: message,
+                    type: 'clinic',
+                    read_by: [], // Initialize as empty array
+                    created_at: new Date().toISOString()
+                });
+            } else {
+                // Firebase notification using db object
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (db) {
+                    await db.collection('notifications').add({
+                        ...notificationData,
+                        createdAt: new Date().toISOString()
+                    });
+                } else {
+                    throw new Error('Database not available');
+                }
+            }
+            
+            console.log(`Clinic notification sent for ${student.name}'s ${checkIn ? 'check-in' : 'check-out'}`);
+            
+        } catch (error) {
+            console.error('Error sending clinic notifications:', error);
+        }
+    }
+
+    async quickCheckIn(reason) {
+        // Redirect to check-in page with reason parameter
+        window.location.href = `clinic-checkin.html?reason=${encodeURIComponent(reason)}`;
     }
 
     // Utility Methods

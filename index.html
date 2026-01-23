@@ -240,10 +240,10 @@
                         throw new Error('Supabase client not initialized');
                     }
                     
-                    // Query the users table
+                    // Query the profiles table
                     const { data, error } = await window.supabaseClient
-                        .from('users')
-                        .select('id, username, password, name, role, is_active')
+                        .from('profiles')
+                        .select('id, username, password, full_name, role, is_active')
                         .eq('username', username)
                         .eq('is_active', true)
                         .single();
@@ -260,13 +260,13 @@
                     
                     // Update last login
                     await window.supabaseClient
-                        .from('users')
-                        .update({ last_login: new Date().toISOString() })
+                        .from('profiles')
+                        .update({ updated_at: new Date().toISOString() })
                         .eq('id', data.id);
                     
                     return {
                         id: data.id,
-                        name: data.name,
+                        name: data.full_name,
                         role: data.role,
                         username: data.username
                     };
