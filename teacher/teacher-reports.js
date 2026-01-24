@@ -2,8 +2,11 @@ class TeacherReports {
     constructor() {
         this.currentUser = null;
         this.classStudents = [];
+        this.classLevel = null;
         this.attendanceData = [];
         this.charts = {};
+        this.currentStartDate = null;
+        this.currentEndDate = null;
         this.init();
     }
 
@@ -16,6 +19,9 @@ class TeacherReports {
                 setTimeout(() => this.init(), 100);
                 return;
             }
+
+            // Pre-fetch calendar data for school day checks
+            await EducareTrack.fetchCalendarData();
 
             const savedUser = localStorage.getItem('educareTrack_user');
             if (!savedUser) {
@@ -33,6 +39,7 @@ class TeacherReports {
 
             this.updateUI();
             await this.loadClassStudents();
+            await window.EducareTrack.fetchCalendarData();
             this.initEventListeners();
             this.initCharts();
             await this.loadInitialData();
@@ -77,6 +84,9 @@ class TeacherReports {
     async loadClassStudents() {
         try {
             this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+            if (this.classStudents.length > 0) {
+                this.classLevel = this.classStudents[0].level;
+            }
             this.populateStudentFilter();
         } catch (error) {
             console.error('Error loading class students:', error);
@@ -101,6 +111,9 @@ class TeacherReports {
             const startDate = new Date();
             startDate.setDate(startDate.getDate() - 30);
 
+            this.currentStartDate = startDate;
+            this.currentEndDate = endDate;
+
             console.log('Loading attendance data from', startDate, 'to', endDate);
             
             this.attendanceData = await this.getAttendanceReport(startDate, endDate, 1000);
@@ -117,16 +130,46 @@ class TeacherReports {
     async getAttendanceReport(startDate, endDate, limit = 100) {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
-                    .eq('classId', this.currentUser.classId)
-                    .gte('timestamp', startDate)
-                    .lte('timestamp', endDate)
-                    .order('timestamp', { ascending: false })
-                    .limit(limit);
-                if (error || !data) return [];
-                return data;
+                let allData = [];
+                let from = 0;
+                const batchSize = 1000;
+                let more = true;
+                const fetchAll = limit === 'all' || limit > 1000;
+                const maxRecords = fetchAll ? Number.MAX_SAFE_INTEGER : limit;
+
+                while (more) {
+                    const currentBatchSize = Math.min(batchSize, maxRecords - allData.length);
+                    if (currentBatchSize <= 0) {
+                        more = false;
+                        break;
+                    }
+
+                    const { data, error } = await window.supabaseClient
+                        .from('attendance')
+                        .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
+                        .eq('classId', this.currentUser.classId)
+                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                        .order('timestamp', { ascending: false })
+                        .range(from, from + currentBatchSize - 1);
+
+                    if (error) {
+                        console.error('Error fetching attendance batch:', error);
+                        break;
+                    }
+
+                    if (data && data.length > 0) {
+                        allData = allData.concat(data);
+                        if (data.length < currentBatchSize) {
+                            more = false;
+                        } else {
+                            from += currentBatchSize;
+                        }
+                    } else {
+                        more = false;
+                    }
+                }
+                return allData;
             } else {
                 let query = EducareTrack.db.collection('attendance')
                     .where('classId', '==', this.currentUser.classId)
@@ -364,7 +407,10 @@ class TeacherReports {
                 d.setDate(today.getDate() - i);
                 const key = d.toDateString();
                 const data = dailyData[key] || { present: 0, total: 0 };
-                const isSchoolDay = window.EducareTrack.isSchoolDay(d);
+                
+                const classLevel = this.classStudents.length > 0 ? this.classStudents[0].level : null;
+                const isSchoolDay = window.EducareTrack.isSchoolDay(d, classLevel);
+                
                 const rate = isSchoolDay ? (data.total > 0 ? Math.round((data.present / data.total) * 100) : 0) : 0;
                 const label = d.toLocaleDateString('en-US', { weekday: 'short' });
                 labels.push(isSchoolDay ? label : `${label} (No School)`);
@@ -421,7 +467,7 @@ class TeacherReports {
     }
 
     updateTopPerformers() {
-        const studentAttendance = this.calculateStudentAttendance();
+        const studentAttendance = this.calculateStudentAttendance(this.currentStartDate, this.currentEndDate);
         const topPerformers = Object.entries(studentAttendance)
             .sort(([,a], [,b]) => b.attendanceRate - a.attendanceRate)
             .slice(0, 5);
@@ -446,7 +492,7 @@ class TeacherReports {
     }
 
     updateFrequentAbsences() {
-        const studentAttendance = this.calculateStudentAttendance();
+        const studentAttendance = this.calculateStudentAttendance(this.currentStartDate, this.currentEndDate);
         const frequentAbsences = Object.entries(studentAttendance)
             .sort(([,a], [,b]) => b.absences - a.absences)
             .slice(0, 5);
@@ -471,7 +517,7 @@ class TeacherReports {
     }
 
     updateQuickStats() {
-        const studentAttendance = this.calculateStudentAttendance();
+        const studentAttendance = this.calculateStudentAttendance(this.currentStartDate, this.currentEndDate);
         const totalStudents = this.classStudents.length;
         const avgAttendance = totalStudents > 0 ? 
             Math.round(Object.values(studentAttendance).reduce((sum, data) => sum + data.attendanceRate, 0) / totalStudents) : 0;
@@ -502,34 +548,52 @@ class TeacherReports {
         }
     }
 
-    calculateStudentAttendance() {
+    calculateStudentAttendance(startDate, endDate) {
         const studentData = {};
         
+        // Calculate total school days in range
+        let totalSchoolDays = 0;
+        if (startDate && endDate) {
+            const cur = new Date(startDate);
+            const end = new Date(endDate);
+            cur.setHours(0,0,0,0);
+            end.setHours(23,59,59,999);
+            
+            while (cur <= end) {
+                if (window.EducareTrack.isSchoolDay(cur, this.classLevel)) {
+                    totalSchoolDays++;
+                }
+                cur.setDate(cur.getDate() + 1);
+            }
+        }
+
         // Initialize student data
         this.classStudents.forEach(student => {
             studentData[student.id] = {
                 present: 0,
-                total: 0,
+                total: totalSchoolDays, // Use calculated school days
                 absences: 0,
                 attendanceRate: 0
             };
         });
 
-        // Count attendance by student
+        // Count attendance by student (only present/late counts as present)
         this.attendanceData.forEach(record => {
             if (record.entryType === 'entry' && studentData[record.studentId]) {
-                studentData[record.studentId].total++;
-                if (record.status === 'present' || record.status === 'late') {
-                    studentData[record.studentId].present++;
-                } else {
-                    studentData[record.studentId].absences++;
+                // Only count if it's within date range (attendanceData might contain more)
+                const recordDate = record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+                if ((!startDate || recordDate >= startDate) && (!endDate || recordDate <= endDate)) {
+                    if (record.status === 'present' || record.status === 'late') {
+                        studentData[record.studentId].present++;
+                    }
                 }
             }
         });
 
-        // Calculate rates
+        // Calculate rates and absences
         Object.keys(studentData).forEach(studentId => {
             const data = studentData[studentId];
+            data.absences = Math.max(0, data.total - data.present);
             data.attendanceRate = data.total > 0 ? Math.round((data.present / data.total) * 100) : 0;
         });
 
@@ -554,7 +618,7 @@ class TeacherReports {
                     container.innerHTML = this.generateDailySummary(attendanceData, startDate, endDate);
                     break;
                 case 'student':
-                    container.innerHTML = this.generateStudentReport(attendanceData);
+                    container.innerHTML = this.generateStudentReport(attendanceData, startDate, endDate);
                     break;
                 case 'trend':
                     container.innerHTML = this.generateTrendAnalysis(attendanceData, startDate, endDate);
@@ -574,9 +638,10 @@ class TeacherReports {
         
         // Initialize dates in range
         const currentDate = new Date(startDate);
+        
         while (currentDate <= endDate) {
             const dateStr = currentDate.toDateString();
-            dailySummary[dateStr] = { present: 0, late: 0, absent: 0, clinic: 0, total: this.classStudents.length, noSchool: !window.EducareTrack.isSchoolDay(currentDate) };
+            dailySummary[dateStr] = { present: 0, late: 0, absent: 0, clinic: 0, total: this.classStudents.length, noSchool: !window.EducareTrack.isSchoolDay(currentDate, this.classLevel) };
             currentDate.setDate(currentDate.getDate() + 1);
         }
 
@@ -588,19 +653,25 @@ class TeacherReports {
                     if (record.status === 'present') dailySummary[dateStr].present++;
                     else if (record.status === 'late') dailySummary[dateStr].late++;
                     else if (record.status === 'in_clinic') dailySummary[dateStr].clinic++;
-                    else dailySummary[dateStr].absent++;
+                    // Don't count explicit absent records here, we'll calculate remainder
                 }
             }
         });
 
         const rows = Object.entries(dailySummary).map(([date, data]) => {
+            // Calculate implied absents
+            const calculatedAbsent = Math.max(0, data.total - data.present - data.late - data.clinic);
+            // If no school, absents should be 0
+            const displayAbsent = data.noSchool ? 0 : calculatedAbsent;
+            
             const attendanceRate = data.total > 0 ? Math.round(((data.present + data.late) / data.total) * 100) : 0;
+            
             return `
                 <tr class="hover:bg-gray-50">
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${new Date(date).toLocaleDateString()}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${data.present}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${data.late}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${data.absent}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${displayAbsent}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${data.clinic}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium ${data.noSchool ? 'text-gray-500' : attendanceRate >= 90 ? 'text-green-600' : attendanceRate >= 80 ? 'text-yellow-600' : 'text-red-600'}">
                         ${data.noSchool ? 'No School' : `${attendanceRate}%`}

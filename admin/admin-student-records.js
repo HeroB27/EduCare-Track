@@ -181,14 +181,20 @@ class StudentRecords {
         }
     }
 
-    calculateAttendanceStats(studentId) {
+    calculateAttendanceStats(student, schoolDaysByLevel = {}) {
+        const studentId = student.id;
         const records = this.attendanceRecords.filter(r => r.student_id === studentId || r.studentId === studentId);
         const present = records.filter(r => r.status === 'present').length;
         const late = records.filter(r => r.status === 'late').length;
         const absent = records.filter(r => r.status === 'absent').length;
-        const total = present + late + absent; // Using total recorded days as base
         
-        // If no records, return 0 or N/A
+        // Use expected days if available, otherwise fallback to recorded total
+        let total = schoolDaysByLevel[student.level] || (present + late + absent);
+        
+        // Ensure total covers at least the recorded attendance to avoid > 100% due to data anomalies
+        total = Math.max(total, present + late + absent);
+        
+        // If no records and no school days passed, return 0
         if (total === 0) return { rate: 0, present, late, absent, total };
 
         // Rate: (Present + Late) / Total * 100
@@ -199,8 +205,54 @@ class StudentRecords {
     async loadStudents() {
         try {
             const students = await window.EducareTrack.getStudents(true);
+
+            // Pre-calculate school days by level for accurate attendance rates
+            let schoolDaysByLevel = {};
+            if (this.attendanceRecords.length > 0 && window.EducareTrack && window.EducareTrack.isSchoolDay) {
+                try {
+                    // Ensure calendar data is loaded
+                    if (window.EducareTrack.fetchCalendarData) {
+                        await window.EducareTrack.fetchCalendarData();
+                    }
+
+                    // Find date range from records
+                    let minTs = new Date().getTime();
+                    this.attendanceRecords.forEach(r => {
+                        const ts = new Date(r.timestamp).getTime();
+                        if (ts < minTs) minTs = ts;
+                    });
+                    
+                    const minDate = new Date(minTs);
+                    minDate.setHours(0,0,0,0);
+                    
+                    const today = new Date();
+                    today.setHours(23,59,59,999);
+                    
+                    // Get unique levels
+                    const levels = new Set(students.map(s => s.level).filter(l => l));
+                    
+                    // Calculate school days for each level
+                    levels.forEach(level => {
+                        let count = 0;
+                        let d = new Date(minDate);
+                        // Clone to avoid modifying minDate in loop (though we reset d)
+                        // Actually we need a fresh iterator for each level
+                        const current = new Date(minDate);
+                        while(current <= today) {
+                            if (window.EducareTrack.isSchoolDay(current, level)) {
+                                count++;
+                            }
+                            current.setDate(current.getDate() + 1);
+                        }
+                        schoolDaysByLevel[level] = count;
+                    });
+                } catch (err) {
+                    console.error('Error calculating school days:', err);
+                }
+            }
+
             this.allStudents = students.map(student => {
-                const stats = this.calculateAttendanceStats(student.id);
+                const stats = this.calculateAttendanceStats(student, schoolDaysByLevel);
                 return {
                     ...student,
                     attendanceStats: stats

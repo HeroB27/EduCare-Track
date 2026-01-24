@@ -246,9 +246,25 @@ class ParentChildren {
                 }
             });
 
-            const totalDays = 30;
+            // Calculate total school days in last 30 days
+            let totalSchoolDays = 0;
+            const endDate = new Date();
+            const startDate = new Date(thirtyDaysAgo);
+            
+            // Normalize dates
+            startDate.setHours(0,0,0,0);
+            endDate.setHours(23,59,59,999);
+            
+            const curDate = new Date(startDate);
+            while (curDate <= endDate) {
+                if (window.EducareTrack.isSchoolDay(curDate, child.level)) {
+                    totalSchoolDays++;
+                }
+                curDate.setDate(curDate.getDate() + 1);
+            }
+
             const presentDays = uniqueDays.size;
-            const attendanceRate = Math.round((presentDays / totalDays) * 100);
+            const attendanceRate = totalSchoolDays > 0 ? Math.round((presentDays / totalSchoolDays) * 100) : 0;
 
             academicContent += `
                 <div class="bg-white rounded-lg shadow-md p-6">

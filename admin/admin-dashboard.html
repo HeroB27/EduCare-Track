@@ -764,7 +764,7 @@
                     // Check if day is disabled (weekend and not enabled)
                     let isWeekendDisabled = false;
                     if (dayOfWeek === 6 && !settings.enableSaturdayClasses) isWeekendDisabled = true;
-                    if (dayOfWeek === 0 && !settings.enableSundayClasses) isWeekendDisabled = true;
+                    if (dayOfWeek === 0) isWeekendDisabled = true; // Always disable Sunday
 
                     let classes = '';
                     if (isToday) {
@@ -807,7 +807,7 @@
                     let events = [];
                     if (window.USE_SUPABASE && window.supabaseClient) {
                         const { data } = await window.supabaseClient
-                            .from('calendar_events')
+                            .from('school_calendar')
                             .select('*')
                             .gte('start_date', today.toISOString())
                             .order('start_date', { ascending: true })
@@ -926,36 +926,9 @@
             }
 
             async loadRealAttendanceData() {
-                try {
-                    this.showLoading();
-                    
-                    // Get date range for the past 7 days
-                    const endDate = new Date();
-                    const startDate = new Date();
-                    startDate.setDate(startDate.getDate() - 7);
-
-                    // Get real attendance data
-                    const attendanceData = await EducareTrack.getAttendanceTrend(startDate, endDate, 'day');
-                    
-                    const chartInfoEl = document.getElementById('chartInfo');
-                    
-                    if (attendanceData && attendanceData.labels && attendanceData.datasets) {
-                        this.createRealAttendanceChart(attendanceData);
-                        if (chartInfoEl) chartInfoEl.textContent = 'Showing real attendance data from your system';
-                    } else {
-                        // Fallback to sample data if no real data available
-                        this.createSampleAttendanceChart();
-                        if (chartInfoEl) chartInfoEl.textContent = 'Showing sample data (no real data available)';
-                    }
-                    
-                    this.hideLoading();
-                } catch (error) {
-                    console.error('Error loading attendance data:', error);
-                    this.createSampleAttendanceChart();
-                    const chartInfoEl = document.getElementById('chartInfo');
-                    if (chartInfoEl) chartInfoEl.textContent = 'Showing sample data (error loading real data)';
-                    this.hideLoading();
-                }
+                const chartTimeRange = document.getElementById('chartTimeRange');
+                const days = chartTimeRange ? parseInt(chartTimeRange.value) : 7;
+                await this.loadAttendanceDataForPeriod(days);
             }
 
             createRealAttendanceChart(attendanceData) {
@@ -1077,16 +1050,11 @@
                         day: 'numeric' 
                     }));
                     
-                    // Generate realistic sample data
-                    const basePresent = Math.floor(Math.random() * 50) + 150;
-                    const baseLate = Math.floor(Math.random() * 10) + 5;
-                    const baseClinic = Math.floor(Math.random() * 8) + 2;
-                    const baseAbsent = Math.floor(Math.random() * 15) + 10;
-                    
-                    presentData.push(basePresent);
-                    lateData.push(baseLate);
-                    clinicData.push(baseClinic);
-                    absentData.push(baseAbsent);
+                    // Zero data (no random data)
+                    presentData.push(0);
+                    lateData.push(0);
+                    clinicData.push(0);
+                    absentData.push(0);
                 }
 
                 if (this.attendanceChart) {
@@ -1152,7 +1120,7 @@
                             },
                             title: {
                                 display: true,
-                                text: 'Weekly Attendance Overview (Sample Data)'
+                                text: 'Weekly Attendance Overview (No Data Available)'
                             },
                             tooltip: {
                                 callbacks: {
@@ -1185,7 +1153,7 @@
                         if (chartInfoEl) chartInfoEl.textContent = `Showing attendance data for the past ${days} days`;
                     } else {
                         this.createSampleAttendanceChart();
-                        if (chartInfoEl) chartInfoEl.textContent = 'Showing sample data (no real data available)';
+                        if (chartInfoEl) chartInfoEl.textContent = 'No attendance data available for this period';
                     }
                     
                     this.hideLoading();
@@ -1193,7 +1161,7 @@
                     console.error('Error loading attendance data for period:', error);
                     this.createSampleAttendanceChart();
                     const chartInfoEl = document.getElementById('chartInfo');
-                    if (chartInfoEl) chartInfoEl.textContent = 'Showing sample data (error loading real data)';
+                    if (chartInfoEl) chartInfoEl.textContent = 'Error loading data';
                     this.hideLoading();
                 }
             }

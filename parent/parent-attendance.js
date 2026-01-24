@@ -114,6 +114,11 @@ class ParentAttendance {
 
     async loadAttendanceData() {
         try {
+            // Pre-fetch calendar data
+            if (window.EducareTrack && window.EducareTrack.fetchCalendarData) {
+                await window.EducareTrack.fetchCalendarData();
+            }
+
             // Set default date range (last 30 days)
             const defaultDateTo = new Date();
             const defaultDateFrom = new Date();
@@ -277,8 +282,42 @@ class ParentAttendance {
             record.status === 'absent'
         ).length;
 
-        const totalEntries = presentCount + lateCount + absentCount;
-        const attendanceRate = totalEntries > 0 ? Math.round((presentCount / totalEntries) * 100) : 0;
+        // Calculate expected attendance based on school days and student levels
+        let expectedAttendance = 0;
+        const dateFromVal = document.getElementById('dateFrom').value;
+        const dateToVal = document.getElementById('dateTo').value;
+        
+        if (dateFromVal && dateToVal && window.EducareTrack && window.EducareTrack.isSchoolDay) {
+            const startDate = new Date(dateFromVal);
+            const endDate = new Date(dateToVal);
+            startDate.setHours(0,0,0,0);
+            endDate.setHours(23,59,59,999);
+            
+            // Get selected children
+            const childFilter = document.getElementById('childFilter').value;
+            const targetChildren = childFilter === 'all' 
+                ? this.children 
+                : this.children.filter(c => c.id === childFilter);
+                
+            // Loop dates
+            const curDate = new Date(startDate);
+            while (curDate <= endDate) {
+                targetChildren.forEach(child => {
+                    // Use level-specific school day check
+                    if (window.EducareTrack.isSchoolDay(curDate, child.level)) {
+                        expectedAttendance++;
+                    }
+                });
+                curDate.setDate(curDate.getDate() + 1);
+            }
+        } else {
+            // Fallback if dates not set or helper not available
+            expectedAttendance = presentCount + lateCount + absentCount;
+        }
+
+        // Avoid division by zero
+        const denominator = expectedAttendance > 0 ? expectedAttendance : (presentCount + lateCount + absentCount);
+        const attendanceRate = denominator > 0 ? Math.round((presentCount / denominator) * 100) : 0;
 
         document.getElementById('totalPresent').textContent = presentCount;
         document.getElementById('totalLate').textContent = lateCount;

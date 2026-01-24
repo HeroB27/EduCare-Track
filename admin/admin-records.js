@@ -144,11 +144,12 @@ class AdminRecords {
             this.isLoadingData = true;
 
             // Load all required data in parallel
-            const [students, classes, attendance, clinicVisits] = await Promise.all([
+            const [students, classes, attendance, clinicVisits, _calendar] = await Promise.all([
                 EducareTrack.getStudents(true),
                 EducareTrack.getClasses(true),
                 this.getAttendanceData(),
-                this.getClinicVisitsData()
+                this.getClinicVisitsData(),
+                EducareTrack.fetchCalendarData()
             ]);
 
             this.students = students;
@@ -181,15 +182,36 @@ class AdminRecords {
             endDate.setHours(23, 59, 59, 999); // Include entire end date
 
             if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            const { data, error } = await window.supabaseClient
-                .from('attendance')
-                .select('*')
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .order('timestamp', { ascending: false });
-            if (error) throw error;
 
-            return (data || []).map(row => this.normalizeAttendanceRecord(row));
+            let allData = [];
+            let from = 0;
+            const batchSize = 1000;
+            let more = true;
+
+            while (more) {
+                const { data, error } = await window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .gte('timestamp', startDate.toISOString())
+                    .lte('timestamp', endDate.toISOString())
+                    .order('timestamp', { ascending: false })
+                    .range(from, from + batchSize - 1);
+
+                if (error) throw error;
+
+                if (data && data.length > 0) {
+                    allData = allData.concat(data);
+                    if (data.length < batchSize) {
+                        more = false;
+                    } else {
+                        from += batchSize;
+                    }
+                } else {
+                    more = false;
+                }
+            }
+
+            return allData.map(row => this.normalizeAttendanceRecord(row));
         } catch (error) {
             console.error('Error getting attendance data:', error);
             return [];
@@ -203,15 +225,36 @@ class AdminRecords {
             endDate.setHours(23, 59, 59, 999);
 
             if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            const { data, error } = await window.supabaseClient
-                .from('clinic_visits')
-                .select('*')
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .order('timestamp', { ascending: false });
-            if (error) throw error;
 
-            return (data || []).map(row => this.normalizeClinicVisit(row));
+            let allData = [];
+            let from = 0;
+            const batchSize = 1000;
+            let more = true;
+
+            while (more) {
+                const { data, error } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('*')
+                    .gte('timestamp', startDate.toISOString())
+                    .lte('timestamp', endDate.toISOString())
+                    .order('timestamp', { ascending: false })
+                    .range(from, from + batchSize - 1);
+
+                if (error) throw error;
+
+                if (data && data.length > 0) {
+                    allData = allData.concat(data);
+                    if (data.length < batchSize) {
+                        more = false;
+                    } else {
+                        from += batchSize;
+                    }
+                } else {
+                    more = false;
+                }
+            }
+
+            return allData.map(row => this.normalizeClinicVisit(row));
         } catch (error) {
             console.error('Error getting clinic visits data:', error);
             return [];
@@ -242,13 +285,53 @@ class AdminRecords {
         const lateToday = todayAttendance.filter(record => record.status === 'late').length;
 
         // Overall attendance rate for the period
-        const uniqueStudentsPresent = new Set(this.attendanceData
-            .filter(record => record.status === 'present' || record.status === 'late')
-            .map(record => record.studentId)
-        ).size;
-        
-        const overallAttendanceRate = totalStudents > 0 ? 
-            Math.round((uniqueStudentsPresent / totalStudents) * 100) : 0;
+        const dateMap = {};
+        this.attendanceData.forEach(record => {
+            const d = record.timestamp?.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+            const dateStr = d.toDateString();
+            if (!dateMap[dateStr]) dateMap[dateStr] = new Set();
+            
+            if (record.status === 'present' || record.status === 'late') {
+                dateMap[dateStr].add(record.studentId);
+            }
+        });
+
+        const sumDailyPresent = Object.values(dateMap).reduce((sum, set) => sum + set.size, 0);
+
+        // Calculate Total Expected Attendance (Denominator)
+        // Group students by level
+        const levelCounts = {};
+        this.students.forEach(s => {
+            const cls = this.classes.find(c => c.id === s.class_id);
+            // Assuming classes have 'grade' or 'level' field. User said 'level' exists in schema.
+            // Check usage: 'grade' might be 'Grade 1', 'level' might be 'Elementary' or similar.
+            // Using 'level' as per schema.
+            const level = cls ? (cls.level || cls.grade || 'Unknown') : 'Unknown';
+            levelCounts[level] = (levelCounts[level] || 0) + 1;
+        });
+
+        let totalExpected = 0;
+        if (this.currentDateRange.startDate && this.currentDateRange.endDate) {
+            const loopDate = new Date(this.currentDateRange.startDate);
+            const endDate = new Date(this.currentDateRange.endDate);
+            // Ensure time part doesn't mess up comparison
+            loopDate.setHours(0,0,0,0);
+            endDate.setHours(23,59,59,999);
+
+            while (loopDate <= endDate) {
+                // Check for each level if it's a school day
+                const currentDay = new Date(loopDate);
+                for (const [level, count] of Object.entries(levelCounts)) {
+                    if (window.EducareTrack && window.EducareTrack.isSchoolDay(currentDay, level)) {
+                        totalExpected += count;
+                    }
+                }
+                loopDate.setDate(loopDate.getDate() + 1);
+            }
+        }
+
+        const overallAttendanceRate = totalExpected > 0 ? 
+            Math.min(100, Math.round((sumDailyPresent / totalExpected) * 100)) : 0;
 
         // Update DOM
         document.getElementById('overallAttendanceRate').textContent = `${overallAttendanceRate}%`;

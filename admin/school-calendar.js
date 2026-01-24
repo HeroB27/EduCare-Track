@@ -39,10 +39,10 @@ class CalendarManager {
             return;
         }
         window.supabaseClient
-            .channel('calendar_events_changes')
+            .channel('school_calendar_changes')
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'calendar_events' },
+                { event: '*', schema: 'public', table: 'school_calendar' },
                 (payload) => {
                     console.log('Real-time update received:', payload);
                     this.loadEvents(false);
@@ -111,10 +111,19 @@ class CalendarManager {
                 throw new Error('Supabase client not initialized');
             }
             const { data, error } = await window.supabaseClient
-                .from('calendar_events')
+                .from('school_calendar')
                 .select('*');
             if (error) throw error;
-            this.events = data || [];
+            // Map database columns to app properties
+            this.events = (data || []).map(event => ({
+                id: event.id,
+                title: event.title,
+                date: event.start_date.split('T')[0], // Extract date part
+                type: event.type,
+                description: event.notes,
+                start_date: event.start_date,
+                end_date: event.end_date
+            }));
         } catch (error) {
             console.error('Error loading events:', error);
             // Fallback for demo if no table exists yet
@@ -163,8 +172,8 @@ class CalendarManager {
 
             if (isSaturday && !this.settings.enableSaturdayClasses) {
                 dayDiv.classList.add('bg-gray-100'); // Visual cue for non-school Saturday
-            } else if (isSunday && !this.settings.enableSundayClasses) {
-                dayDiv.classList.add('bg-gray-100'); // Visual cue for non-school Sunday
+            } else if (isSunday) {
+                dayDiv.classList.add('bg-gray-100'); // Visual cue for non-school Sunday (always)
             }
 
             if (today.getDate() === day && today.getMonth() === month && today.getFullYear() === year) {
@@ -253,12 +262,20 @@ class CalendarManager {
 
     async saveEvent() {
         const id = document.getElementById('eventId').value;
+        const dateStr = document.getElementById('eventDate').value;
+        // Construct ISO string for start_date (assuming all day event for now, or use specific time if available)
+        // If we want to support multi-day, we need end date input. For now, defaulting end_date to same day.
+        const startDate = new Date(dateStr);
+        const endDate = new Date(dateStr);
+        endDate.setHours(23, 59, 59, 999); // End of day
+
         const eventData = {
-            date: document.getElementById('eventDate').value,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
             title: document.getElementById('eventTitle').value,
             type: document.getElementById('eventType').value,
-            description: document.getElementById('eventDescription').value,
-            updated_at: new Date().toISOString()
+            notes: document.getElementById('eventDescription').value,
+            // updated_at is handled by trigger usually, but we can set it if needed, or rely on default
         };
 
         this.showLoading();
@@ -268,13 +285,13 @@ class CalendarManager {
             }
             if (id) {
                 const { error } = await window.supabaseClient
-                    .from('calendar_events')
+                    .from('school_calendar')
                     .update(eventData)
                     .eq('id', id);
                 if (error) throw error;
             } else {
                 const { error } = await window.supabaseClient
-                    .from('calendar_events')
+                    .from('school_calendar')
                     .insert([{ ...eventData, created_at: new Date().toISOString() }]);
                 if (error) throw error;
             }

@@ -342,6 +342,17 @@ class ParentDashboard {
                 todayAttendance = attendanceSnapshot.docs[0].data();
             }
 
+            const isSchoolDay = window.EducareTrack.isSchoolDay(today, child.level);
+            
+            // Determine display status
+            let displayStatus = EducareTrack.getStatusText(child.currentStatus);
+            let displayColor = EducareTrack.getStatusColor(child.currentStatus);
+            
+            if (!isSchoolDay && (child.currentStatus === 'out_school' || child.currentStatus === 'absent')) {
+                displayStatus = 'No Class';
+                displayColor = 'bg-gray-100 text-gray-600';
+            }
+
             content.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div class="md:col-span-1">
@@ -352,8 +363,8 @@ class ParentDashboard {
                             <h3 class="font-semibold text-lg">${child.name}</h3>
                             <p class="text-gray-600">${child.grade} • ${child.level}</p>
                             <div class="mt-2">
-                                <span class="px-3 py-1 rounded-full text-sm font-medium ${EducareTrack.getStatusColor(child.currentStatus)}">
-                                    ${EducareTrack.getStatusText(child.currentStatus)}
+                                <span class="px-3 py-1 rounded-full text-sm font-medium ${displayColor}">
+                                    ${displayStatus}
                                 </span>
                             </div>
                         </div>
@@ -399,7 +410,7 @@ class ParentDashboard {
                                     </div>
                                 ` : `
                                     <div class="bg-gray-50 rounded-lg p-3 text-center text-gray-500">
-                                        No attendance recorded today
+                                        ${isSchoolDay ? 'No attendance recorded today' : 'No Class Today'}
                                     </div>
                                 `}
                             </div>

@@ -33,6 +33,9 @@ class TeacherStudents {
                 return;
             }
 
+            // Pre-fetch calendar data
+            await EducareTrack.fetchCalendarData();
+
             this.updateUI();
 
             if (!this.currentUser.classId) {
@@ -445,23 +448,36 @@ class TeacherStudents {
         }
     }
 
-    calculateAttendanceRate(attendanceRecords) {
-        const entryDays = new Set();
-        const presentLateDays = new Set();
-        attendanceRecords.forEach(a => {
-            const ts = a.timestamp;
-            if (ts && a.entryType === 'entry') {
-                const d = ts.toDate ? ts.toDate() : new Date(ts);
-                const key = d.toDateString();
-                entryDays.add(key);
-                if (a.status === 'present' || a.status === 'late') {
-                    presentLateDays.add(key);
-                }
+    calculateAttendanceRate(attendanceRecords, level) {
+        // Calculate based on last 30 days
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        
+        // Normalize
+        startDate.setHours(0,0,0,0);
+        endDate.setHours(23,59,59,999);
+
+        // Count school days
+        let totalSchoolDays = 0;
+        const cur = new Date(startDate);
+        while (cur <= endDate) {
+            if (window.EducareTrack.isSchoolDay(cur, level)) {
+                totalSchoolDays++;
+            }
+            cur.setDate(cur.getDate() + 1);
+        }
+
+        // Count present days in range
+        const presentDays = new Set();
+        attendanceRecords.forEach(r => {
+            const d = r.timestamp instanceof Date ? r.timestamp : new Date(r.timestamp);
+            if (d >= startDate && d <= endDate && (r.status === 'present' || r.status === 'late')) {
+                presentDays.add(d.toDateString());
             }
         });
-        const total = entryDays.size;
-        const present = presentLateDays.size;
-        return total > 0 ? Math.round((present / total) * 100) : 0;
+
+        return totalSchoolDays > 0 ? Math.round((presentDays.size / totalSchoolDays) * 100) : 0;
     }
 
     countUniqueEntryDays(attendanceRecords) {
@@ -537,7 +553,7 @@ class TeacherStudents {
                 .select('*')
                 .eq('student_id', studentId)
                 .order('timestamp', { ascending: false })
-                .limit(20);
+                .limit(100); // Increased limit for better stats
 
             if (error) throw error;
 

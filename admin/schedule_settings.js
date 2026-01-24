@@ -135,6 +135,15 @@ class AttendanceSettingsManager {
             });
         }
 
+        // Semester Break Form Submit
+        const semesterBreakForm = document.getElementById('semesterBreakForm');
+        if (semesterBreakForm) {
+            semesterBreakForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveSemesterBreak();
+            });
+        }
+
         // Calendar Controls
         const prevBtn = document.getElementById('prevMonth');
         if (prevBtn) {
@@ -174,26 +183,31 @@ class AttendanceSettingsManager {
         try {
             let scheduleSettings = null;
             let calendarSettings = null;
+            let semesterBreak = null;
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data } = await window.supabaseClient
                     .from('system_settings')
                     .select('key,value')
-                    .in('key', ['attendance_schedule', 'calendar_settings']);
+                    .in('key', ['attendance_schedule', 'calendar_settings', 'semester_break']);
                 (data || []).forEach(row => {
                     if (row.key === 'attendance_schedule') scheduleSettings = row.value;
                     if (row.key === 'calendar_settings') calendarSettings = row.value;
+                    if (row.key === 'semester_break') semesterBreak = row.value;
                 });
             } else {
-                const [scheduleDoc, calendarDoc] = await Promise.all([
+                const [scheduleDoc, calendarDoc, semesterDoc] = await Promise.all([
                     window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').get(),
-                    window.EducareTrack.db.collection('system_settings').doc('calendar_settings').get()
+                    window.EducareTrack.db.collection('system_settings').doc('calendar_settings').get(),
+                    window.EducareTrack.db.collection('system_settings').doc('semester_break').get()
                 ]);
                 if (scheduleDoc.exists) scheduleSettings = scheduleDoc.data();
                 if (calendarDoc.exists) calendarSettings = calendarDoc.data();
+                if (semesterDoc.exists) semesterBreak = semesterDoc.data();
             }
             this.populateScheduleForm(scheduleSettings || this.defaultSchedule);
             this.calendarSettings = calendarSettings || this.calendarSettings;
             this.populateCalendarForm(this.calendarSettings);
+            this.populateSemesterBreakForm(semesterBreak);
         } catch (error) {
             console.error('Error loading settings:', error);
             this.populateScheduleForm(this.defaultSchedule);
@@ -220,10 +234,10 @@ class AttendanceSettingsManager {
             this.calendarSubscription.unsubscribe();
         }
         this.calendarSubscription = window.supabaseClient
-            .channel('calendar_events_changes')
+            .channel('school_calendar_changes')
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'calendar_events' },
+                { event: '*', schema: 'public', table: 'school_calendar' },
                 (payload) => {
                     console.log('Real-time update received:', payload);
                     this.loadEvents(false);
@@ -248,9 +262,7 @@ class AttendanceSettingsManager {
         if (form.elements['enableSaturdayClasses']) {
             form.elements['enableSaturdayClasses'].checked = !!data.enableSaturdayClasses;
         }
-        if (form.elements['enableSundayClasses']) {
-            form.elements['enableSundayClasses'].checked = !!data.enableSundayClasses;
-        }
+        // Sunday is always disabled/false, no need to populate
     }
 
     async saveScheduleSettings() {
@@ -286,7 +298,7 @@ class AttendanceSettingsManager {
         const form = document.getElementById('calendarSettingsForm');
         const settings = {
             enableSaturdayClasses: form.elements['enableSaturdayClasses'].checked,
-            enableSundayClasses: form.elements['enableSundayClasses'].checked
+            enableSundayClasses: false // Enforce no Sunday classes
         };
 
         try {
@@ -315,15 +327,63 @@ class AttendanceSettingsManager {
         }
     }
 
+    populateSemesterBreakForm(data) {
+        if (!data) return;
+        const form = document.getElementById('semesterBreakForm');
+        if (!form) return;
+
+        if (data.start) form.elements['sem_break_start'].value = data.start;
+        if (data.end) form.elements['sem_break_end'].value = data.end;
+    }
+
+    async saveSemesterBreak() {
+        this.showLoading();
+        const form = document.getElementById('semesterBreakForm');
+        const settings = {
+            start: form.elements['sem_break_start'].value,
+            end: form.elements['sem_break_end'].value
+        };
+
+        try {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { error } = await window.supabaseClient
+                    .from('system_settings')
+                    .upsert({ 
+                        key: 'semester_break', 
+                        value: settings,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'key' });
+                if (error) throw error;
+            } else {
+                await window.EducareTrack.db.collection('system_settings').doc('semester_break').set(settings);
+            }
+            alert('Semester break saved successfully!');
+        } catch (error) {
+            console.error('Error saving semester break:', error);
+            alert('Error saving semester break: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
     async loadEvents(showSpinner = true) {
         if (showSpinner) this.showLoading();
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
-                    .from('calendar_events')
+                    .from('school_calendar')
                     .select('*');
                 if (error) throw error;
-                this.events = data || [];
+                // Map database columns to app properties
+                this.events = (data || []).map(event => ({
+                    id: event.id,
+                    title: event.title,
+                    date: event.start_date.split('T')[0], // Extract date part
+                    type: event.type,
+                    description: event.notes,
+                    start_date: event.start_date,
+                    end_date: event.end_date
+                }));
             } else {
                 this.events = [];
             }
@@ -464,7 +524,36 @@ class AttendanceSettingsManager {
         if (eventDate) eventDate.value = event.date;
         if (eventTitle) eventTitle.value = event.title;
         if (eventType) eventType.value = event.type;
-        if (eventDescription) eventDescription.value = event.description || '';
+        
+        // Handle levels extraction from notes
+        let description = event.description || '';
+        const levelMatch = description.match(/{{LEVELS:(.*?)}}/);
+        const allLevelsCb = document.getElementById('level_all');
+        
+        if (levelMatch) {
+            // Specific levels
+            if (allLevelsCb) {
+                allLevelsCb.checked = false;
+                this.toggleAllLevels(allLevelsCb);
+            }
+            
+            const levels = levelMatch[1].split(',');
+            const levelCbs = document.querySelectorAll('input[name="affected_level"]');
+            levelCbs.forEach(cb => {
+                cb.checked = levels.includes(cb.value);
+            });
+            
+            // Clean description for display
+            description = description.replace(levelMatch[0], '').trim();
+        } else {
+            // All levels
+            if (allLevelsCb) {
+                allLevelsCb.checked = true;
+                this.toggleAllLevels(allLevelsCb);
+            }
+        }
+        
+        if (eventDescription) eventDescription.value = description;
         
         const modal = document.getElementById('eventModal');
         if (modal) {
@@ -481,14 +570,41 @@ class AttendanceSettingsManager {
         }
     }
 
+    toggleAllLevels(checkbox) {
+        const levelCbs = document.querySelectorAll('input[name="affected_level"]');
+        levelCbs.forEach(cb => {
+            if (checkbox.checked) cb.checked = true;
+            cb.disabled = checkbox.checked;
+        });
+    }
+
     async saveEvent() {
         const id = document.getElementById('eventId').value;
+        const dateStr = document.getElementById('eventDate').value;
+        // Construct ISO string for start_date (assuming all day event for now)
+        const startDate = new Date(dateStr);
+        const endDate = new Date(dateStr);
+        endDate.setHours(23, 59, 59, 999);
+
+        let notes = document.getElementById('eventDescription').value;
+        
+        // Handle affected levels
+        const allLevelsChecked = document.getElementById('level_all').checked;
+        if (!allLevelsChecked) {
+            const checkboxes = document.querySelectorAll('input[name="affected_level"]:checked');
+            const levels = Array.from(checkboxes).map(cb => cb.value);
+            if (levels.length > 0) {
+                // Append levels tag to notes
+                notes = (notes + `\n\n{{LEVELS:${levels.join(',')}}}`).trim();
+            }
+        }
+
         const eventData = {
-            date: document.getElementById('eventDate').value,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
             title: document.getElementById('eventTitle').value,
             type: document.getElementById('eventType').value,
-            description: document.getElementById('eventDescription').value,
-            updated_at: new Date().toISOString()
+            notes: notes,
         };
 
         this.showLoading();
@@ -496,13 +612,13 @@ class AttendanceSettingsManager {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 if (id) {
                     const { error } = await window.supabaseClient
-                        .from('calendar_events')
+                        .from('school_calendar')
                         .update(eventData)
                         .eq('id', id);
                     if (error) throw error;
                 } else {
                     const { error } = await window.supabaseClient
-                        .from('calendar_events')
+                        .from('school_calendar')
                         .insert([{ ...eventData, created_at: new Date().toISOString() }]);
                     if (error) throw error;
                 }

@@ -692,6 +692,38 @@ class UserManagement {
                         
                         <!-- Step 3: Subject Qualification -->
                         <div id="step3" class="${this.currentStep === 3 ? 'block' : 'hidden'} space-y-4">
+                            ${isEditing && user.actualSchedules && user.actualSchedules.length > 0 ? `
+                            <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+                                <h4 class="text-sm font-bold text-blue-700 mb-2">Current Class Assignments</h4>
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full text-xs text-left">
+                                        <thead>
+                                            <tr>
+                                                <th class="px-2 py-1 font-semibold text-blue-800">Subject</th>
+                                                <th class="px-2 py-1 font-semibold text-blue-800">Class</th>
+                                                <th class="px-2 py-1 font-semibold text-blue-800">Schedule</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-blue-200">
+                                            ${user.actualSchedules.map(sch => `
+                                                <tr>
+                                                    <td class="px-2 py-1 text-blue-900">${sch.subject}</td>
+                                                    <td class="px-2 py-1 text-blue-900">
+                                                        ${sch.classes ? (sch.classes.grade + (sch.classes.strand ? ' ' + sch.classes.strand : '')) : 'Unknown'}
+                                                    </td>
+                                                    <td class="px-2 py-1 text-blue-900">${sch.schedule_text || ((sch.day_of_week || '') + ' ' + (sch.start_time || ''))}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p class="text-xs text-blue-600 mt-2">
+                                    <i class="fas fa-info-circle mr-1"></i>
+                                    Manage these assignments in Class Management
+                                </p>
+                            </div>
+                            ` : ''}
+
                             <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
                                 <p class="text-sm text-yellow-700">
                                     <strong>Important:</strong> Define what this teacher is <em>qualified</em> to teach. 
@@ -1175,81 +1207,32 @@ class UserManagement {
         } else if (level === 'Senior High') {
             // Core subjects for all Senior High
             const coreSubjects = [
-                'Oral Communication',
-                'Reading and Writing',
-                'Komunikasyon at Pananaliksik sa Wika at Kulturang Pilipino',
-                'Pagbasa at Pagsuri ng Iba\'t Ibang Teksto Tungo sa Pananaliksik',
-                '21st Century Literature from the Philippines and the World',
-                'Contemporary Philippine Arts from the Region',
-                'Media and Information Literacy',
-                'General Mathematics',
-                'Statistics and Probability',
-                'Earth Science',
-                'Physical Science',
-                'Introduction to Philosophy of the Human Person',
-                'Physical Education and Health',
-                'Personal Development',
-                'Understanding Culture, Society, and Politics',
-                'Disaster Readiness and Risk Reduction'
+                'Oral Communication', 'Reading and Writing', 'Komunikasyon at Pananaliksik',
+                'Pagbasa at Pagsusuri', '21st Century Literature (Philippines)', '21st Century Literature (World)',
+                'Media and Information Literacy', 'General Mathematics', 'Statistics and Probability',
+                'Earth and Life Science', 'Physical Science', 'Personal Development',
+                'Understanding Culture, Society and Politics', 'PE and Health'
             ];
 
             // Applied subjects for all Senior High
             const appliedSubjects = [
-                'English for Academic and Professional Purposes',
-                'Practical Research 1 (Qualitative)',
-                'Practical Research 2 (Quantitative)',
-                'Filipino sa Piling Larang',
-                'Empowerment Technologies',
-                'Entrepreneurship'
+                'English for Academic and Professional Purposes', 'Practical Research 1', 'Practical Research 2',
+                'Filipino sa Piling Larang', 'Empowerment Technologies', 'Entrepreneurship', 'Inquiries, Investigations and Immersion'
             ];
 
             subjects = [...coreSubjects, ...appliedSubjects];
 
             // Add specialized subjects based on strand
             if (strand === 'STEM') {
-                subjects = subjects.concat([
-                    'Pre-Calculus',
-                    'Basic Calculus',
-                    'General Biology 1',
-                    'General Biology 2',
-                    'General Chemistry 1',
-                    'General Chemistry 2',
-                    'General Physics 1',
-                    'General Physics 2',
-                    'Research',
-                    'Capstone'
-                ]);
+                subjects = subjects.concat(['Pre-Calculus', 'Basic Calculus', 'General Biology 1', 'General Biology 2', 'General Physics 1', 'General Physics 2', 'General Chemistry 1', 'General Chemistry 2']);
             } else if (strand === 'ABM') {
-                subjects = subjects.concat([
-                    'Applied Economics',
-                    'Business Ethics and Social Responsibility',
-                    'Fundamentals of Accounting and Business Management 1',
-                    'Fundamentals of Accounting and Business Management 2',
-                    'Business Mathematics',
-                    'Business Finance',
-                    'Organization and Business Management',
-                    'Principles of Marketing',
-                    'Work Immersion/Research/Career Advocacy/Culminating Activity'
-                ]);
+                subjects = subjects.concat(['Business Math', 'Business Finance', 'Organization and Management', 'Principles of Marketing', 'Fundamentals of ABM 1', 'Fundamentals of ABM 2', 'Applied Economics', 'Business Ethics']);
             } else if (strand === 'HUMSS') {
+                subjects = subjects.concat(['Creative Writing', 'World Religions', 'Trends and Networks', 'Philippine Politics', 'Community Engagement', 'Discipline in Social Sciences', 'Discipline in Applied Social Sciences', 'Work Immersion']);
+            } else if (strand === 'TVL' || strand === 'ICT') {
                 subjects = subjects.concat([
-                    'Creative Writing (Fiction)',
-                    'Creative Writing (Non-Fiction)',
-                    'Introduction to World Religions and Belief Systems',
-                    'Trends, Networks, and Critical Thinking in the 21st Century Culture',
-                    'Philippine Politics and Governance',
-                    'Community Engagement, Solidarity, and Citizenship',
-                    'Discipline and Ideas in the Social Sciences',
-                    'Discipline and Ideas in the Applied Social Sciences',
-                    'Work Immersion/Research Project/Culminating Activity'
-                ]);
-            } else if (strand === 'TVL') {
-                subjects = subjects.concat([
-                    'Programming 1',
-                    'Programming 2',
-                    'Animation',
-                    'Computer Servicing',
-                    'ICT Specialized Subjects'
+                    'Computer Systems Servicing', 'Computer Programming 1', 'Computer Programming 2', 
+                    'Animation', 'Illustration', 'Empowerment Technologies (TVL)', 'ICT Project'
                 ]);
             }
         }
@@ -1960,6 +1943,32 @@ class UserManagement {
                 this.currentRole = user.role;
                 this.currentStep = 1;
                 this.tempChildren = user.children ? [...user.children] : [];
+
+                // Fetch real assignments for teachers
+                if (user.role === 'teacher') {
+                    // Fetch Homeroom from classes table
+                    const { data: homeroomClass } = await window.supabaseClient
+                        .from('classes')
+                        .select('*')
+                        .eq('adviser_id', userId)
+                        .maybeSingle();
+                    
+                    if (homeroomClass) {
+                        this.currentEditingUser.actualHomeroom = homeroomClass;
+                        // Sync with form expectation
+                        this.currentEditingUser.class_id = homeroomClass.id;
+                        this.currentEditingUser.classId = homeroomClass.id; 
+                    }
+
+                    // Fetch Subject Schedules
+                    const { data: schedules } = await window.supabaseClient
+                        .from('class_schedules')
+                        .select('*, classes(grade, strand, section)')
+                        .eq('teacher_id', userId);
+                    
+                    this.currentEditingUser.actualSchedules = schedules || [];
+                }
+
                 this.renderUserModal();
                 
                 // If editing a teacher, set the selected subjects

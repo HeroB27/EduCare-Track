@@ -63,15 +63,15 @@ class GuardReports {
 
             switch (reportType) {
                 case 'attendance':
-                    reportData = await EducareTrack.getAttendanceReport(start, end, 1000);
+                    reportData = await EducareTrack.getAttendanceReport(start, end, 'all');
                     reportTitle = 'Attendance Report';
                     break;
                 case 'late':
-                    reportData = await EducareTrack.getLateArrivalsReport(start, end, 1000);
+                    reportData = await EducareTrack.getLateArrivalsReport(start, end, 'all');
                     reportTitle = 'Late Arrivals Report';
                     break;
                 case 'clinic':
-                    reportData = await EducareTrack.getClinicReport(start, end, 1000);
+                    reportData = await EducareTrack.getClinicReport(start, end, 'all');
                     reportTitle = 'Clinic Visits Report';
                     break;
                 case 'summary':

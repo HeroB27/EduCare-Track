@@ -171,21 +171,33 @@ class TeacherDashboard {
     }
 
     updateStudentStatus() {
+        // Check if today is a school day for this class level
+        const today = new Date();
+        const isSchoolDay = window.EducareTrack.isSchoolDay(today, this.assignedClass?.level);
+
         const inClassCount = this.classStudents.filter(s => s.currentStatus === 'in_school').length;
         const inClinicCount = this.classStudents.filter(s => s.currentStatus === 'in_clinic').length;
-        const absentCount = this.classStudents.filter(s => s.currentStatus === 'out_school').length;
+        
+        // If not a school day, absent count is 0 (or we could show "No Class")
+        // If it is a school day, anyone out_school is absent
+        const absentCount = isSchoolDay ? this.classStudents.filter(s => s.currentStatus === 'out_school').length : 0;
         
         // Count late students from today's attendance
-        const today = new Date();
         today.setHours(0, 0, 0, 0);
         
         const lateCount = this.lateStudentsCount || 0;
 
         document.getElementById('inClassCount').textContent = inClassCount;
         document.getElementById('inClinicCount').textContent = inClinicCount;
-        document.getElementById('absentCount').textContent = absentCount;
+        document.getElementById('absentCount').textContent = isSchoolDay ? absentCount : '-';
         document.getElementById('lateCount').textContent = lateCount;
         document.getElementById('totalStatusCount').textContent = this.classStudents.length;
+
+        // Optional: Update label if not school day
+        const absentLabel = document.getElementById('absentLabel');
+        if (absentLabel) {
+            absentLabel.textContent = isSchoolDay ? 'Absent' : 'No Class';
+        }
     }
 
     async loadRecentActivity() {

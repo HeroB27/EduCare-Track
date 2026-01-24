@@ -274,6 +274,7 @@ const dataCache = {
     classes: null,
     stats: null,
     notifications: null,
+    calendar: null,
     lastUpdated: null
 };
 
@@ -297,6 +298,107 @@ const EducareTrack = {
 
     // Database reference
     db: db,
+
+    // Calendar & Schedule Helper
+    async fetchCalendarData() {
+        if (dataCache.calendar && dataCache.lastUpdated && (Date.now() - dataCache.lastUpdated < CACHE_DURATION)) {
+            return dataCache.calendar;
+        }
+
+        try {
+            // Fetch System Settings (Break, Weekends)
+            let settings = {
+                enableSaturdayClasses: false,
+                enableSundayClasses: false,
+                semesterBreak: null
+            };
+
+            const { data: settingsData } = await window.supabaseClient
+                .from('system_settings')
+                .select('*')
+                .in('key', ['calendar_settings', 'semester_break']);
+
+            if (settingsData) {
+                settingsData.forEach(item => {
+                    if (item.key === 'calendar_settings') {
+                        settings.enableSaturdayClasses = !!item.value.enableSaturdayClasses;
+                        settings.enableSundayClasses = false; // Always false
+                    } else if (item.key === 'semester_break') {
+                        settings.semesterBreak = item.value;
+                    }
+                });
+            }
+
+            // Fetch Calendar Events
+            const { data: events } = await window.supabaseClient
+                .from('school_calendar')
+                .select('*');
+
+            dataCache.calendar = { settings, events: events || [] };
+            dataCache.lastUpdated = Date.now();
+            return dataCache.calendar;
+        } catch (error) {
+            console.error('Error fetching calendar data:', error);
+            return { settings: { enableSaturdayClasses: false, enableSundayClasses: false, semesterBreak: null }, events: [] };
+        }
+    },
+
+    isSchoolDay(date, studentLevel = null) {
+        if (!dataCache.calendar) {
+            console.warn('Calendar data not loaded. Call fetchCalendarData() first.');
+            const day = date.getDay();
+            if (day === 0) return false;
+            return true;
+        }
+
+        const { settings, events } = dataCache.calendar;
+        const day = date.getDay();
+        
+        // 1. Check Weekends
+        if (day === 0) return false;
+        if (day === 6 && !settings.enableSaturdayClasses) return false;
+
+        // 2. Check Semester Break
+        if (settings.semesterBreak && settings.semesterBreak.start && settings.semesterBreak.end) {
+            const start = new Date(settings.semesterBreak.start);
+            const end = new Date(settings.semesterBreak.end);
+            start.setHours(0,0,0,0);
+            end.setHours(23,59,59,999);
+            const checkDate = new Date(date);
+            checkDate.setHours(12,0,0,0);
+            
+            if (checkDate >= start && checkDate <= end) return false;
+        }
+
+        // 3. Check Events
+        const dateStr = date.toISOString().split('T')[0];
+        const dayEvents = events.filter(e => {
+            const eStart = e.start_date.split('T')[0];
+            const eEnd = e.end_date.split('T')[0];
+            return dateStr >= eStart && dateStr <= eEnd;
+        });
+
+        for (const event of dayEvents) {
+            if (event.type === 'holiday' || event.type === 'suspension') {
+                const notes = event.notes || '';
+                const levelMatch = notes.match(/{{LEVELS:(.*?)}}/);
+                
+                if (levelMatch) {
+                    if (studentLevel) {
+                        const affectedLevels = levelMatch[1].split(',');
+                        if (affectedLevels.includes(studentLevel)) return false;
+                    } else {
+                        // Partial suspension implies school is open for others
+                        return true; 
+                    }
+                } else {
+                    return false; // All levels suspended
+                }
+            }
+        }
+
+        return true;
+    },
     storage: storage,
 
     // Current user session
@@ -908,9 +1010,15 @@ const EducareTrack = {
     // Get dashboard statistics
     async getDashboardStats() {
         try {
+            // Ensure calendar data is loaded for accurate calculations
+            await this.fetchCalendarData();
+
             const endDate = new Date();
             const startDate = new Date();
             startDate.setDate(startDate.getDate() - 30);
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setHours(23, 59, 59, 999);
+
             // Use Promise.all for parallel queries
             const [studentsCount, teachersCount, parentsCount, classesCount, todayCount, attendanceSummary] = await Promise.all([
                 this.getCollectionCount('students'),
@@ -921,15 +1029,47 @@ const EducareTrack = {
                 this.getAttendanceSummary(startDate, endDate)
             ]);
 
+            // Calculate accurate expected attendance based on level-specific school days
+            let expectedAttendance = 0;
+            
+            // Get student counts by level
+            const { data: students } = await window.supabaseClient
+                .from('students')
+                .select('level')
+                .eq('is_active', true);
+            
+            const levelCounts = (students || []).reduce((acc, s) => {
+                if (s.level) {
+                    acc[s.level] = (acc[s.level] || 0) + 1;
+                }
+                return acc;
+            }, {});
+
+            // Iterate through last 30 days
+            const curDate = new Date(startDate);
+            while (curDate <= endDate) {
+                // For each level, check if it was a school day
+                Object.keys(levelCounts).forEach(level => {
+                    if (this.isSchoolDay(curDate, level)) {
+                        expectedAttendance += levelCounts[level];
+                    }
+                });
+                curDate.setDate(curDate.getDate() + 1);
+            }
+
+            // Fallback if expectedAttendance is 0 (to avoid division by zero)
+            // This happens if no students or no school days in range
+            const attendanceRate = expectedAttendance > 0
+                ? Math.round((attendanceSummary.totalPresent / expectedAttendance) * 100)
+                : 0;
+
             const stats = {
                 totalStudents: studentsCount,
                 totalTeachers: teachersCount,
                 totalParents: parentsCount,
                 totalClasses: classesCount,
                 presentToday: todayCount,
-                attendanceRate: studentsCount > 0
-                    ? Math.round((attendanceSummary.uniquePresent / studentsCount) * 100)
-                    : 0
+                attendanceRate: attendanceRate
             };
 
             // Cache the stats
@@ -1005,20 +1145,31 @@ const EducareTrack = {
             end.setHours(23, 59, 59, 999);
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .select('student_id,status')
+                .select('student_id,status,timestamp')
                 .gte('timestamp', start.toISOString())
-                .lte('timestamp', end.toISOString());
-            if (error) return { uniquePresent: 0 };
+                .lte('timestamp', end.toISOString())
+                .eq('entry_type', 'entry');
+
+            if (error) return { uniquePresent: 0, totalPresent: 0, days: 0 };
+            
             const presentIds = new Set();
+            let totalPresent = 0;
+            const uniqueDays = new Set();
+
             (data || []).forEach(row => {
+                if (row.timestamp) {
+                    const dateStr = new Date(row.timestamp).toDateString();
+                    uniqueDays.add(dateStr);
+                }
                 if (row.status === 'present' || row.status === 'late') {
                     presentIds.add(row.student_id || row.studentId);
+                    totalPresent++;
                 }
             });
-            return { uniquePresent: presentIds.size };
+            return { uniquePresent: presentIds.size, totalPresent, days: uniqueDays.size };
         } catch (error) {
             console.error('Error getting attendance summary:', error);
-            return { uniquePresent: 0 };
+            return { uniquePresent: 0, totalPresent: 0, days: 0 };
         }
     },
 
@@ -1506,11 +1657,30 @@ const EducareTrack = {
         }
 
         try {
-            const [{ data: students, error: sErr }, { data: relations, error: rErr }, { data: classes, error: cErr }] = await Promise.all([
-                window.supabaseClient
+            // Fetch all students with pagination
+            let allStudents = [];
+            let from = 0;
+            const batchSize = 1000;
+            let more = true;
+
+            while (more) {
+                const { data, error } = await window.supabaseClient
                     .from('students')
                     .select('*')
-                    .limit(200),
+                    .range(from, from + batchSize - 1);
+                
+                if (error) throw error;
+                
+                if (data && data.length > 0) {
+                    allStudents = allStudents.concat(data);
+                    if (data.length < batchSize) more = false;
+                    else from += batchSize;
+                } else {
+                    more = false;
+                }
+            }
+
+            const [{ data: relations, error: rErr }, { data: classes, error: cErr }] = await Promise.all([
                 window.supabaseClient
                     .from('parent_students')
                     .select('student_id,parent_id'),
@@ -1519,7 +1689,8 @@ const EducareTrack = {
                     .select('id,grade,strand')
             ]);
 
-            if (sErr) throw sErr;
+            if (rErr) throw rErr;
+            if (cErr) throw cErr;
 
             const parentMap = new Map();
             (relations || []).forEach(r => {
@@ -1531,7 +1702,7 @@ const EducareTrack = {
                 classMap.set(c.id, c);
             });
 
-            dataCache.students = (students || []).map(s => {
+            dataCache.students = (allStudents || []).map(s => {
                 const classInfo = classMap.get(s.class_id);
                 return {
                     ...s,
@@ -3259,6 +3430,34 @@ const EducareTrack = {
     // Get attendance report with date range
     async getAttendanceReport(startDate, endDate, limit = 100) {
         try {
+            if (limit === 'all') {
+                let allData = [];
+                let from = 0;
+                const batchSize = 1000;
+                let more = true;
+                
+                while (more) {
+                    const { data, error } = await window.supabaseClient
+                        .from('attendance')
+                        .select('*')
+                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                        .order('timestamp', { ascending: false })
+                        .range(from, from + batchSize - 1);
+                        
+                    if (error) throw error;
+                    
+                    if (data && data.length > 0) {
+                        allData = allData.concat(data);
+                        if (data.length < batchSize) more = false;
+                        else from += batchSize;
+                    } else {
+                        more = false;
+                    }
+                }
+                return allData.map(doc => ({ id: doc.id, ...doc }));
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('attendance')
                 .select('*')
@@ -3277,6 +3476,34 @@ const EducareTrack = {
 
     async getClinicReport(startDate, endDate, limit = 100) {
         try {
+            if (limit === 'all') {
+                let allData = [];
+                let from = 0;
+                const batchSize = 1000;
+                let more = true;
+                
+                while (more) {
+                    const { data, error } = await window.supabaseClient
+                        .from('clinic_visits')
+                        .select('*')
+                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                        .order('timestamp', { ascending: false })
+                        .range(from, from + batchSize - 1);
+                        
+                    if (error) throw error;
+                    
+                    if (data && data.length > 0) {
+                        allData = allData.concat(data);
+                        if (data.length < batchSize) more = false;
+                        else from += batchSize;
+                    } else {
+                        more = false;
+                    }
+                }
+                return allData.map(doc => ({ id: doc.id, ...doc }));
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('clinic_visits')
                 .select('*')
@@ -3338,6 +3565,35 @@ const EducareTrack = {
 
     async getLateArrivalsReport(startDate, endDate, limit = 100) {
         try {
+            if (limit === 'all') {
+                let allData = [];
+                let from = 0;
+                const batchSize = 1000;
+                let more = true;
+                
+                while (more) {
+                    const { data, error } = await window.supabaseClient
+                        .from('attendance')
+                        .select('*')
+                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                        .eq('status', 'late')
+                        .order('timestamp', { ascending: false })
+                        .range(from, from + batchSize - 1);
+                        
+                    if (error) throw error;
+                    
+                    if (data && data.length > 0) {
+                        allData = allData.concat(data);
+                        if (data.length < batchSize) more = false;
+                        else from += batchSize;
+                    } else {
+                        more = false;
+                    }
+                }
+                return allData.map(doc => ({ id: doc.id, ...doc }));
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('attendance')
                 .select('*')
@@ -3599,12 +3855,28 @@ const EducareTrack = {
     // Enhanced attendance trend with real data
     async getAttendanceTrend(startDate, endDate, interval = 'day') {
         try {
-            const attendanceData = await this.getAttendanceReport(startDate, endDate, 1000);
+            // Ensure calendar data is loaded
+            await this.fetchCalendarData();
+
+            const attendanceData = await this.getAttendanceReport(startDate, endDate, 'all');
             
             // Group by date
             const dateGroups = {};
-            const allStudents = await this.getStudents();
-            const totalStudents = allStudents.length;
+            
+            // Get student counts by level for accurate daily expected attendance
+            const { data: students } = await window.supabaseClient
+                .from('students')
+                .select('level')
+                .eq('is_active', true);
+            
+            const levelCounts = (students || []).reduce((acc, s) => {
+                if (s.level) {
+                    acc[s.level] = (acc[s.level] || 0) + 1;
+                }
+                return acc;
+            }, {});
+
+            const totalActiveStudents = (students || []).length;
 
             attendanceData.forEach(record => {
                 if (record.timestamp) {
@@ -3641,6 +3913,10 @@ const EducareTrack = {
             const currentDate = new Date(startDate);
             const end = new Date(endDate);
 
+            // Normalize dates to midnight for comparison
+            currentDate.setHours(0, 0, 0, 0);
+            end.setHours(23, 59, 59, 999);
+
             while (currentDate <= end) {
                 const dateString = currentDate.toDateString();
                 const group = dateGroups[dateString] || {
@@ -3650,20 +3926,35 @@ const EducareTrack = {
                     clinic: new Set()
                 };
 
-                const isSchoolDay = this.isSchoolDay(currentDate);
-                const presentCount = isSchoolDay ? (group.present.size + group.late.size) : 0;
-                const absentCount = isSchoolDay ? Math.max(0, totalStudents - presentCount - group.clinic.size) : 0;
+                // Calculate expected attendance for this specific day based on level-specific school status
+                let dailyExpectedAttendance = 0;
+                let isGlobalSchoolDay = false;
+
+                Object.keys(levelCounts).forEach(level => {
+                    if (this.isSchoolDay(currentDate, level)) {
+                        dailyExpectedAttendance += levelCounts[level];
+                        isGlobalSchoolDay = true;
+                    }
+                });
+
+                // If no levels have school, treat as non-school day
+                const presentCount = isGlobalSchoolDay ? (group.present.size + group.late.size) : 0;
+                
+                // Absent = Expected - Present - Clinic
+                // Ensure we don't get negative numbers
+                const absentCount = isGlobalSchoolDay ? Math.max(0, dailyExpectedAttendance - presentCount - group.clinic.size) : 0;
+                
                 const labelBase = currentDate.toLocaleDateString('en-US', { 
                     weekday: 'short', 
                     month: 'short', 
                     day: 'numeric' 
                 });
-                labels.push(isSchoolDay ? labelBase : `${labelBase} (No School)`);
+                labels.push(isGlobalSchoolDay ? labelBase : `${labelBase} (No School)`);
                 
                 presentData.push(presentCount);
                 absentData.push(absentCount);
-                lateData.push(isSchoolDay ? group.late.size : 0);
-                clinicData.push(isSchoolDay ? group.clinic.size : 0);
+                lateData.push(isGlobalSchoolDay ? group.late.size : 0);
+                clinicData.push(isGlobalSchoolDay ? group.clinic.size : 0);
 
                 currentDate.setDate(currentDate.getDate() + 1);
             }
@@ -3676,7 +3967,7 @@ const EducareTrack = {
                     late: lateData,
                     clinic: clinicData
                 },
-                totalStudents
+                totalStudents: totalActiveStudents
             };
         } catch (error) {
             console.error('Error getting attendance trend:', error);
@@ -3741,6 +4032,18 @@ const EducareTrack = {
         try {
             const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
             const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+            
+            // Get class level for accurate school day checking
+            const { data: classData } = await window.supabaseClient
+                .from('classes')
+                .select('level')
+                .eq('id', classId)
+                .single();
+            const classLevel = classData?.level;
+
+            // Ensure calendar data is loaded
+            await this.fetchCalendarData();
+
             const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
                 window.supabaseClient
                     .from('attendance')
@@ -3812,10 +4115,18 @@ const EducareTrack = {
 
             const current = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
             const end = endDate instanceof Date ? new Date(endDate) : new Date(endDate);
+            
+            // Normalize dates
+            current.setHours(0,0,0,0);
+            end.setHours(23,59,59,999);
+
             while (current <= end) {
                 const key = current.toDateString();
                 const group = dateGroups[key] || { present: new Set(), late: new Set(), clinic: new Set() };
-                const isSchoolDay = this.isSchoolDay(current);
+                
+                // Use level-specific school day check
+                const isSchoolDay = this.isSchoolDay(current, classLevel);
+                
                 const presentCount = isSchoolDay ? (group.present.size + group.late.size) : 0;
                 const absentCount = isSchoolDay ? Math.max(0, totalStudents - presentCount - group.clinic.size) : 0;
                 const labelBase = current.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });

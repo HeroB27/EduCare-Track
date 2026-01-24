@@ -7,6 +7,8 @@ class ClassManagement {
         this.selectedClassId = null;
         this.realtimeChannel = null;
         this.realtimeRefreshTimer = null;
+        this.currentPage = 1;
+        this.itemsPerPage = 10;
         this.init();
     }
 
@@ -45,25 +47,35 @@ class ClassManagement {
     }
 
     setupClassFormLogic() {
-        const levelSelect = document.getElementById('classLevel');
-        const gradeSelect = document.getElementById('classGrade');
-        const strandSelect = document.getElementById('classStrand');
+        this.setupFormListeners('classLevel', 'classGrade', 'classStrand', 'className');
+        this.setupFormListeners('editClassLevel', 'editClassGrade', 'editClassStrand', 'editClassName');
+    }
+
+    setupFormListeners(levelId, gradeId, strandId, nameId) {
+        const levelSelect = document.getElementById(levelId);
+        const gradeSelect = document.getElementById(gradeId);
+        const strandSelect = document.getElementById(strandId);
+        
         if (levelSelect) {
             levelSelect.addEventListener('change', () => {
                 this.populateGradeOptions(gradeSelect, levelSelect.value);
                 this.toggleStrandSelect(strandSelect, levelSelect.value);
-                this.updateClassNamePreview();
+                this.updateClassNamePreview(levelId, gradeId, strandId, nameId);
             });
         }
         if (gradeSelect) {
-            gradeSelect.addEventListener('change', () => this.updateClassNamePreview());
+            gradeSelect.addEventListener('change', () => this.updateClassNamePreview(levelId, gradeId, strandId, nameId));
         }
         if (strandSelect) {
-            strandSelect.addEventListener('change', () => this.updateClassNamePreview());
+            strandSelect.addEventListener('change', () => this.updateClassNamePreview(levelId, gradeId, strandId, nameId));
         }
-        this.populateGradeOptions(gradeSelect, levelSelect ? levelSelect.value : '');
-        this.toggleStrandSelect(strandSelect, levelSelect ? levelSelect.value : '');
-        this.updateClassNamePreview();
+        
+        // Initial setup for create form
+        if (levelId === 'classLevel') {
+            this.populateGradeOptions(gradeSelect, levelSelect ? levelSelect.value : '');
+            this.toggleStrandSelect(strandSelect, levelSelect ? levelSelect.value : '');
+            this.updateClassNamePreview(levelId, gradeId, strandId, nameId);
+        }
     }
 
     populateStrandSelects() {
@@ -82,8 +94,13 @@ class ClassManagement {
     populateGradeOptions(select, level) {
         if (!select) return;
         const grades = this.getGradesForLevel(level);
+        // Keep existing value if possible after repopulating
+        const currentValue = select.value;
         select.innerHTML = '<option value="">Select Grade</option>' +
             grades.map(g => `<option value="${g}">${g}</option>`).join('');
+        if (currentValue && grades.includes(currentValue)) {
+            select.value = currentValue;
+        }
     }
 
     getGradesForLevel(level) {
@@ -106,12 +123,12 @@ class ClassManagement {
         }
     }
 
-    updateClassNamePreview() {
-        const level = document.getElementById('classLevel')?.value || '';
-        const grade = document.getElementById('classGrade')?.value || '';
-        const strand = document.getElementById('classStrand')?.value || '';
+    updateClassNamePreview(levelId = 'classLevel', gradeId = 'classGrade', strandId = 'classStrand', nameId = 'className') {
+        const level = document.getElementById(levelId)?.value || '';
+        const grade = document.getElementById(gradeId)?.value || '';
+        const strand = document.getElementById(strandId)?.value || '';
         const name = this.composeClassName(grade, strand, level);
-        const nameInput = document.getElementById('className');
+        const nameInput = document.getElementById(nameId);
         if (nameInput) nameInput.value = name;
     }
 
@@ -146,13 +163,14 @@ class ClassManagement {
     async loadTeachers() {
         try {
             // Use Supabase client to fetch teachers with profile data
+            // Use !inner to perform an inner join, filtering out teachers with inactive profiles
             const { data, error } = await window.supabaseClient
                 .from('teachers')
                 .select(`
                     *,
-                    profiles:id (
+                    profiles!inner (
                         full_name,
-                        email: id
+                        email
                     )
                 `)
                 .eq('profiles.is_active', true);
@@ -162,6 +180,7 @@ class ClassManagement {
             this.teachers = data.map(t => ({
                 id: t.id,
                 name: t.profiles?.full_name || 'Unknown',
+                email: t.profiles?.email || '',
                 ...t
             }));
             
@@ -201,9 +220,90 @@ class ClassManagement {
             });
             document.getElementById('totalClasses').textContent = this.allClasses.length;
             await this.updateStudentsCount();
+            await this.updatePerformanceRates();
             this.filterClasses(); // Apply filters initially
         } catch (error) {
             console.error('Error loading classes:', error);
+        }
+    }
+
+    async updatePerformanceRates() {
+        try {
+            // Fetch all attendance records with timestamp for validation
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('class_id, status, timestamp');
+
+            if (error) {
+                console.warn('Could not fetch attendance for performance rates:', error);
+                return;
+            }
+
+            // Map class levels for school day checking
+            const classLevels = {};
+            this.allClasses.forEach(c => {
+                classLevels[c.id] = c.level;
+            });
+
+            // Ensure calendar data is loaded
+            if (window.EducareTrack && window.EducareTrack.fetchCalendarData) {
+                await window.EducareTrack.fetchCalendarData();
+            }
+
+            // Group by date and class
+            // date -> classId -> { present, total }
+            const dateMap = {};
+
+            (data || []).forEach(r => {
+                if (!r.class_id || !r.timestamp) return;
+                
+                const dateKey = new Date(r.timestamp).toDateString(); // Normalize to local date string
+                
+                if (!dateMap[dateKey]) dateMap[dateKey] = {};
+                if (!dateMap[dateKey][r.class_id]) dateMap[dateKey][r.class_id] = { present: 0, total: 0 };
+                
+                const stats = dateMap[dateKey][r.class_id];
+                
+                if (r.status === 'present' || r.status === 'late') {
+                    stats.present++;
+                }
+                if (r.status === 'present' || r.status === 'late' || r.status === 'absent') {
+                    stats.total++;
+                }
+            });
+
+            // Aggregate valid school day stats
+            const finalStats = {}; // classId -> { present, total }
+
+            Object.keys(dateMap).forEach(dateStr => {
+                const date = new Date(dateStr);
+                const classesOnDate = dateMap[dateStr];
+                
+                Object.keys(classesOnDate).forEach(classId => {
+                    const level = classLevels[classId];
+                    // Check if it was a school day for this class level
+                    if (window.EducareTrack && window.EducareTrack.isSchoolDay(date, level)) {
+                        if (!finalStats[classId]) finalStats[classId] = { present: 0, total: 0 };
+                        
+                        finalStats[classId].present += classesOnDate[classId].present;
+                        finalStats[classId].total += classesOnDate[classId].total;
+                    }
+                });
+            });
+
+            this.allClasses = this.allClasses.map(c => {
+                const s = finalStats[c.id];
+                const rate = s && s.total > 0 ? (s.present / s.total) * 100 : null;
+                return { 
+                    ...c, 
+                    attendanceRate: rate 
+                };
+            });
+            
+            this.filterClasses(); 
+
+        } catch (error) {
+            console.error('Error updating performance rates:', error);
         }
     }
 
@@ -320,26 +420,36 @@ class ClassManagement {
             return matchesLevel && matchesGrade && matchesStatus && matchesSearch;
         });
 
+        // Reset to first page on filter change
+        this.currentPage = 1;
         this.renderClassesTable();
-        
-        // Update pagination info (simple version)
-        const startEl = document.getElementById('paginationStart');
-        const endEl = document.getElementById('paginationEnd');
-        const totalEl = document.getElementById('paginationTotal');
-        
-        if (startEl) startEl.textContent = this.classes.length > 0 ? 1 : 0;
-        if (endEl) endEl.textContent = this.classes.length;
-        if (totalEl) totalEl.textContent = this.classes.length;
+    }
+
+    changePage(delta) {
+        const totalPages = Math.ceil(this.classes.length / this.itemsPerPage);
+        const newPage = this.currentPage + delta;
+        if (newPage >= 1 && newPage <= totalPages) {
+            this.currentPage = newPage;
+            this.renderClassesTable();
+        }
     }
 
     renderClassesTable() {
         const body = document.getElementById('classesTableBody');
         if (!body) return;
+
         if (this.classes.length === 0) {
             body.innerHTML = `<tr><td colspan="8" class="px-6 py-8 text-center text-gray-500">No classes found</td></tr>`;
+            this.updatePaginationInfo();
             return;
         }
-        body.innerHTML = this.classes.map(c => {
+
+        // Calculate pagination
+        const startIndex = (this.currentPage - 1) * this.itemsPerPage;
+        const endIndex = startIndex + this.itemsPerPage;
+        const visibleClasses = this.classes.slice(startIndex, endIndex);
+
+        body.innerHTML = visibleClasses.map(c => {
             // Calculate a dummy performance rate for now, or fetch if available
             // In a real app, we would fetch this or calculate it on load.
             // For now, I'll put a placeholder or basic calculation if data exists.
@@ -375,6 +485,36 @@ class ClassManagement {
                 </td>
             </tr>
         `}).join('');
+
+        this.updatePaginationInfo();
+    }
+
+    updatePaginationInfo() {
+        const total = this.classes.length;
+        const totalPages = Math.ceil(total / this.itemsPerPage);
+        const start = total === 0 ? 0 : (this.currentPage - 1) * this.itemsPerPage + 1;
+        const end = Math.min(start + this.itemsPerPage - 1, total);
+        
+        const startEl = document.getElementById('paginationStart');
+        const endEl = document.getElementById('paginationEnd');
+        const totalEl = document.getElementById('paginationTotal');
+        const prevBtn = document.getElementById('prevPage');
+        const nextBtn = document.getElementById('nextPage');
+        
+        if (startEl) startEl.textContent = start;
+        if (endEl) endEl.textContent = end;
+        if (totalEl) totalEl.textContent = total;
+
+        if (prevBtn) {
+            prevBtn.disabled = this.currentPage <= 1;
+            prevBtn.classList.toggle('opacity-50', this.currentPage <= 1);
+            prevBtn.classList.toggle('cursor-not-allowed', this.currentPage <= 1);
+        }
+        if (nextBtn) {
+            nextBtn.disabled = this.currentPage >= totalPages;
+            nextBtn.classList.toggle('opacity-50', this.currentPage >= totalPages);
+            nextBtn.classList.toggle('cursor-not-allowed', this.currentPage >= totalPages);
+        }
     }
 
     setupEventListeners() {
@@ -388,6 +528,12 @@ class ClassManagement {
             const el = document.getElementById(id);
             if (el) el.addEventListener('input', () => this.filterClasses());
         });
+
+        // Pagination listeners
+        const prevBtn = document.getElementById('prevPage');
+        const nextBtn = document.getElementById('nextPage');
+        if (prevBtn) prevBtn.addEventListener('click', () => this.changePage(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => this.changePage(1));
     }
 
     openCreateClassModal() {
@@ -445,16 +591,7 @@ class ClassManagement {
         document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
         const teacherSel = document.getElementById('editClassTeacher');
         if (teacherSel) teacherSel.value = cls.teacher_id || cls.teacherId || '';
-        if (gradeSelect) {
-            gradeSelect.onchange = () => {
-                document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
-            };
-        }
-        if (strandSelect) {
-            strandSelect.onchange = () => {
-                document.getElementById('editClassName').value = this.composeClassName(gradeSelect.value, strandSelect.value, cls.level || '');
-            };
-        }
+        
         const modal = document.getElementById('editClassModal');
         if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
     }
@@ -493,7 +630,7 @@ class ClassManagement {
     }
 
     // Schedule / Subjects Management
-    openScheduleModal(classId) {
+    async openScheduleModal(classId) {
         this.selectedClassId = classId;
         const cls = this.classes.find(c => c.id === classId);
         if (!cls) return;
@@ -509,18 +646,32 @@ class ClassManagement {
         // Get available subjects for this class level/strand
         this.currentClassSubjects = this.getSubjectsForClass(cls);
 
-        // Populate Subjects
-        let schedule = cls.schedule || [];
-        
-        if (schedule.length === 0) {
-            // Pre-populate with all available subjects for the grade level
-            this.currentClassSubjects.forEach(subj => {
-                this.addSubjectRow(subj, '', '');
-            });
-        } else {
-            schedule.forEach(item => {
-                this.addSubjectRow(item.subject, item.teacher_id, item.time || '');
-            });
+        try {
+            // Fetch existing schedule from class_schedules table
+            const { data: scheduleData, error } = await window.supabaseClient
+                .from('class_schedules')
+                .select('*')
+                .eq('class_id', classId);
+            
+            if (error) {
+                console.warn('Error fetching schedules (might be empty/new table):', error);
+                // Fallback to local schedule if any (for migration) or empty
+            }
+
+            const schedule = scheduleData || cls.schedule || [];
+            
+            if (schedule.length === 0) {
+                // Pre-populate with all available subjects for the grade level
+                this.currentClassSubjects.forEach(subj => {
+                    this.addSubjectRow(subj, '', '');
+                });
+            } else {
+                schedule.forEach(item => {
+                    this.addSubjectRow(item.subject, item.teacher_id, item.day_of_week ? `${item.day_of_week} ${item.start_time || ''}-${item.end_time || ''}` : (item.time || ''));
+                });
+            }
+        } catch (err) {
+            console.error('Error in openScheduleModal:', err);
         }
 
         const modal = document.getElementById('scheduleClassModal');
@@ -741,10 +892,87 @@ class ClassManagement {
     }
 
     isTimeOverlap(time1, time2) {
-        // Very basic overlap check: exact match or substring match
-        // "M/W/F 9:00-10:00" vs "M/W/F 9:00-10:00"
         if (!time1 || !time2) return false;
-        return time1.toLowerCase() === time2.toLowerCase();
+        const t1 = time1.toLowerCase().trim();
+        const t2 = time2.toLowerCase().trim();
+        if (t1 === t2) return true;
+
+        // Helper to parse "Day Time-Time"
+        const parse = (t) => {
+            // Check for day patterns: M, T, W, Th, F, S, Su or Mon, Tue...
+            // Extract time range: H:MM-H:MM
+            const timeMatch = t.match(/(\d{1,2}:\d{2})\s*(?:-|\sto\s)\s*(\d{1,2}:\d{2})/);
+            if (!timeMatch) return null;
+
+            const daysPart = t.substring(0, timeMatch.index).trim();
+            const startStr = timeMatch[1];
+            const endStr = timeMatch[2];
+
+            // Convert time to minutes
+            const toMins = (str) => {
+                const [h, m] = str.split(':').map(Number);
+                return h * 60 + m;
+            };
+
+            return {
+                days: daysPart, // Keep string for now
+                start: toMins(startStr),
+                end: toMins(endStr)
+            };
+        };
+
+        const s1 = parse(t1);
+        const s2 = parse(t2);
+
+        if (s1 && s2) {
+            // Check day overlap
+            // If one has no days specified, assume it applies to the other's days? Or conflict?
+            // Assume if days are present in BOTH, we check overlap.
+            // If missing in one, maybe it's a specific date or "Everyday"?
+            // Let's assume if days are missing, it might conflict with anything on those times.
+            
+            let daysOverlap = true;
+            if (s1.days && s2.days) {
+                // Simple day intersection check
+                const d1 = s1.days;
+                const d2 = s2.days;
+                // Check for common tokens
+                const tokens = ['m', 't', 'w', 'th', 'f', 's', 'su', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+                // This is still tricky. Let's do a basic substring check.
+                // If "Mon" is in "Mon/Wed", it overlaps.
+                // If "M" is in "MWF", it overlaps.
+                
+                // Construct normalized day sets
+                const getDaySet = (str) => {
+                    const set = new Set();
+                    if (/mon|m\b|mw/.test(str)) set.add(1);
+                    if (/tue|t\b|tth/.test(str)) set.add(2);
+                    if (/wed|w\b|mw/.test(str)) set.add(3);
+                    if (/thu|th\b|tth/.test(str)) set.add(4);
+                    if (/fri|f\b/.test(str)) set.add(5);
+                    if (/sat|s\b/.test(str)) set.add(6);
+                    if (/sun|su\b/.test(str)) set.add(0);
+                    return set;
+                };
+                
+                const set1 = getDaySet(d1);
+                const set2 = getDaySet(d2);
+                
+                // Intersection
+                const intersection = new Set([...set1].filter(x => set2.has(x)));
+                daysOverlap = intersection.size > 0;
+            }
+
+            if (daysOverlap) {
+                // Check time overlap
+                // (StartA < EndB) and (EndA > StartB)
+                return (s1.start < s2.end && s1.end > s2.start);
+            }
+            return false;
+        }
+
+        // Fallback to string match
+        return t1.includes(t2) || t2.includes(t1);
     }
 
     async saveSchedule() {
@@ -754,7 +982,7 @@ class ClassManagement {
             
             // Collect rows
             const rows = document.querySelectorAll('#scheduleTableBody tr');
-            const schedule = [];
+            const scheduleItems = [];
             
             rows.forEach(row => {
                 const subjectSelect = row.querySelector('.subject-select');
@@ -765,25 +993,69 @@ class ClassManagement {
                 const time = row.querySelector('.time-input').value.trim();
                 
                 if (subject && teacher_id) {
-                    schedule.push({ subject, teacher_id, time });
+                    scheduleItems.push({ 
+                        class_id: this.selectedClassId,
+                        subject: subject, 
+                        teacher_id: teacher_id, 
+                        schedule_text: time 
+                    });
                 }
             });
 
-            // Note: Schema doesn't support schedule storage in classes table yet.
-            // We only update the adviser_id.
-            const updates = {
-                adviser_id: hrTeacherId || null
-            };
+            // Validate conflicts before saving
+            for (const item of scheduleItems) {
+                // Check conflicts with other classes
+                const { data: existingSchedules, error: conflictError } = await window.supabaseClient
+                    .from('class_schedules')
+                    .select('*, classes(grade, section, strand)')
+                    .eq('teacher_id', item.teacher_id)
+                    .neq('class_id', this.selectedClassId);
+                
+                if (conflictError) {
+                    console.error('Error checking conflicts:', conflictError);
+                    // Continue cautiously or throw? Let's warn but proceed if just a fetch error, or stop.
+                    // Safer to stop.
+                    throw new Error('Could not validate teacher availability.');
+                }
 
-            const { error } = await window.supabaseClient
+                if (existingSchedules) {
+                    for (const existing of existingSchedules) {
+                        if (this.isTimeOverlap(item.schedule_text, existing.schedule_text)) {
+                            const teacherName = this.getTeacherName(item.teacher_id);
+                            const className = existing.classes ? `${existing.classes.grade} ${existing.classes.strand || ''} ${existing.classes.section || ''}` : 'another class';
+                            alert(`Conflict detected!\n\nTeacher: ${teacherName}\nTime: ${item.schedule_text}\n\nConflict with: ${existing.subject} in ${className} (${existing.schedule_text}).\n\nPlease adjust the time or assign a different teacher.`);
+                            return; // Stop save
+                        }
+                    }
+                }
+            }
+
+            // 1. Update Homeroom Teacher (adviser_id) in classes table
+            const { error: classError } = await window.supabaseClient
                 .from('classes')
-                .update(updates)
+                .update({ adviser_id: hrTeacherId || null })
                 .eq('id', this.selectedClassId);
 
-            if (error) throw error;
+            if (classError) throw classError;
+
+            // 2. Update Schedules in class_schedules table
+            // Strategy: Delete all existing for this class, then insert new ones.
+            const { error: deleteError } = await window.supabaseClient
+                .from('class_schedules')
+                .delete()
+                .eq('class_id', this.selectedClassId);
             
-            // Warn user about schedule not persisting
-            alert('Homeroom teacher updated. Note: Class schedule details are not yet persisted to database due to schema limitations.');
+            if (deleteError) throw deleteError;
+
+            if (scheduleItems.length > 0) {
+                const { error: insertError } = await window.supabaseClient
+                    .from('class_schedules')
+                    .insert(scheduleItems);
+                
+                if (insertError) throw insertError;
+            }
+            
+            alert('Schedule saved successfully!');
 
             this.closeScheduleModal();
             await this.loadClasses(); // Reload to show updates
