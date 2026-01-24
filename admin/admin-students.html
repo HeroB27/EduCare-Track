@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Management Hub - EducareTrack</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .sidebar { transition: all 0.3s ease; }
+        .sidebar.collapsed { width: 70px; }
+        .sidebar.collapsed .sidebar-text { display: none; }
+        .main-content { transition: all 0.3s ease; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1); }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40 no-print">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+            <button id="sidebarToggle" class="ml-auto md:hidden">
+                <i class="fas fa-times text-gray-600"></i>
+            </button>
+        </div>
+        
+        <!-- User Info -->
+        <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center">
+                <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <span class="text-blue-600 font-semibold" id="userInitials">AD</span>
+                </div>
+                <div class="ml-3 sidebar-text">
+                    <h2 class="font-semibold text-gray-800" id="userName">Admin User</h2>
+                    <p class="text-sm text-gray-600 capitalize" id="userRole">admin</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Menu -->
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li>
+                    <a href="admin-dashboard.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="user-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-users w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">User Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-students.html" class="nav-item flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg transition duration-200">
+                        <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text font-medium">Students</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="class-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chalkboard w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Class Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-schedule_settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Schedule Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-records.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Reports & Analytics</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Announcements</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Enroll Student</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="school-calendar.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-calendar-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">School Calendar</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-cog w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-notifications.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bell w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Notifications</span>
+                        <span id="notificationBoxCount" class="ml-auto text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-600 hidden">0</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-200">
+            <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+                <i class="fas fa-sign-out-alt w-5 h-5 mr-2"></i>
+                Sign Out
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content ml-64 p-6 fade-in h-screen flex flex-col">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Student Management</h1>
+                <p class="text-gray-600">Select an option to proceed</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm text-gray-500">
+                    <span id="currentTime">Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Options Container -->
+        <div class="flex-1 flex flex-col md:flex-row gap-8 items-center justify-center pb-20">
+            
+            <!-- Student Records Option (Right -> actually left in visual flow usually, but following user's "Right (Students Records)") -->
+            <!-- Wait, user said "Right (Students Records) left Id Management" 
+                 If I put ID Management on Left and Records on Right, it matches the description. -->
+
+            <!-- ID Management (Left) -->
+            <a href="admin-id-management.html" class="group w-full md:w-1/2 max-w-md h-80 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 flex flex-col items-center justify-center text-center p-8 border border-transparent hover:border-indigo-200 relative overflow-hidden card-hover">
+                <div class="absolute inset-0 bg-gradient-to-br from-indigo-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div class="w-24 h-24 bg-indigo-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 z-10">
+                    <i class="fas fa-id-card text-4xl text-indigo-600"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-3 z-10">ID Management</h2>
+                <p class="text-gray-600 z-10">Search students, preview ID cards, and print IDs.</p>
+            </a>
+
+            <!-- Student Records (Right) -->
+            <a href="admin-student-records.html" class="group w-full md:w-1/2 max-w-md h-80 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 flex flex-col items-center justify-center text-center p-8 border border-transparent hover:border-blue-200 relative overflow-hidden card-hover">
+                <div class="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div class="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 z-10">
+                    <i class="fas fa-user-graduate text-4xl text-blue-600"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-3 z-10">Student Records</h2>
+                <p class="text-gray-600 z-10">Manage student information, enrollment, and attendance records.</p>
+            </a>
+
+        </div>
+    </div>
+
+    <script>
+        // Simple script for sidebar and time
+        document.getElementById('sidebarToggle').addEventListener('click', () => {
+            document.querySelector('.sidebar').classList.toggle('-translate-x-full');
+        });
+
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleString('en-US', {
+                weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+        }
+        updateTime();
+        setInterval(updateTime, 60000);
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            if (confirm('Are you sure you want to logout?')) {
+                localStorage.removeItem('educareTrack_user');
+                window.location.href = '../index.html';
+            }
+        });
+
+        // User Info (mock or from local storage)
+        const savedUser = localStorage.getItem('educareTrack_user');
+        if (savedUser) {
+            const user = JSON.parse(savedUser);
+            document.getElementById('userName').textContent = user.name;
+            document.getElementById('userRole').textContent = user.role;
+            document.getElementById('userInitials').textContent = user.name.split(' ').map(n=>n[0]).join('').substring(0,2);
+        }
+    </script>
+</body>
+</html>

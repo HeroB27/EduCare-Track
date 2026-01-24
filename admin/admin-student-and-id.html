@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Information and ID Card Management - EducareTrack</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Libraries for ID Management -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+
+    <style>
+        .sidebar { transition: all 0.3s ease; }
+        .sidebar.collapsed { width: 70px; }
+        .sidebar.collapsed .sidebar-text { display: none; }
+        .main-content { transition: all 0.3s ease; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1); }
+        
+        /* ID Card Styles */
+        .id-cr80 { width: 2.125in; height: 3.375in; border-radius: 0.125in; overflow: hidden; position: relative; background: white; }
+        .print-only { display: none; }
+        
+        @media print {
+            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            .print-only { display: block; }
+            body { margin: 0; padding: 0; background: white; }
+            .id-card-print-container { 
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .id-cr80 { 
+                margin: 0; 
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40 no-print">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800 sidebar-text">EducareTrack</h1>
+            <button id="sidebarToggle" class="ml-auto md:hidden">
+                <i class="fas fa-times text-gray-600"></i>
+            </button>
+        </div>
+        
+        <!-- User Info -->
+        <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center">
+                <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <span class="text-blue-600 font-semibold" id="userInitials">AD</span>
+                </div>
+                <div class="ml-3 sidebar-text">
+                    <h2 class="font-semibold text-gray-800" id="userName">Admin User</h2>
+                    <p class="text-sm text-gray-600 capitalize" id="userRole">admin</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Menu -->
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li>
+                    <a href="admin-dashboard.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="user-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-users w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">User Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-student-and-id.html" class="nav-item flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg transition duration-200">
+                        <i class="fas fa-user-graduate w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text font-medium">Student & ID Info</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="class-management.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chalkboard w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Class Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-schedule_settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Schedule Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-records.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Reports & Analytics</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Announcements</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Enroll Student</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="school-calendar.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-calendar-alt w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">School Calendar</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="settings.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-cog w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="admin-notifications.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-bell w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Notifications</span>
+                        <span id="notificationBoxCount" class="ml-auto text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-600 hidden">0</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-200">
+            <button id="logoutBtn" class="w-full flex items-center justify-center p-2 text-gray-600 hover:text-red-600 rounded-lg transition duration-200 sidebar-text">
+                <i class="fas fa-sign-out-alt w-5 h-5 mr-2"></i>
+                Sign Out
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content ml-64 p-6 fade-in">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8 no-print">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Student Information and ID Card Management</h1>
+                <p class="text-gray-600">Manage student records and generate ID cards</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm text-gray-500">
+                    <span id="currentTime">Loading...</span>
+                </div>
+                <button onclick="studentManagement.openAddStudentModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
+                    <i class="fas fa-plus mr-2"></i>Enroll Student
+                </button>
+            </div>
+        </header>
+
+        <!-- Search and Filters -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6 no-print">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="relative">
+                    <input type="text" id="searchStudents" placeholder="Search by Name, LRN, or ID..." 
+                           class="w-full border border-gray-300 rounded-md px-4 py-2 pl-10 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           onkeyup="studentManagement.searchStudents()">
+                    <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                </div>
+                
+                <select id="classFilter" onchange="studentManagement.filterStudents()" 
+                        class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">All Classes</option>
+                </select>
+
+                <select id="gradeFilter" onchange="studentManagement.filterStudents()" 
+                        class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">All Grades</option>
+                    <option value="Kindergarten">Kindergarten</option>
+                    <option value="Grade 1">Grade 1</option>
+                    <option value="Grade 2">Grade 2</option>
+                    <option value="Grade 3">Grade 3</option>
+                    <option value="Grade 4">Grade 4</option>
+                    <option value="Grade 5">Grade 5</option>
+                    <option value="Grade 6">Grade 6</option>
+                    <option value="Grade 7">Grade 7</option>
+                    <option value="Grade 8">Grade 8</option>
+                    <option value="Grade 9">Grade 9</option>
+                    <option value="Grade 10">Grade 10</option>
+                    <option value="Grade 11">Grade 11</option>
+                    <option value="Grade 12">Grade 12</option>
+                </select>
+                
+                <select id="statusFilter" onchange="studentManagement.filterStudents()" 
+                        class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">All Status</option>
+                    <option value="in_school">In School</option>
+                    <option value="out_school">Out of School</option>
+                    <option value="in_clinic">In Clinic</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Students Table -->
+        <div class="bg-white rounded-lg shadow-md overflow-hidden no-print">
+            <div class="p-4 border-b flex justify-between items-center">
+                <h2 class="text-xl font-semibold text-gray-800">Student Records</h2>
+                <p class="text-sm text-gray-600" id="studentCount">Loading students...</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student ID / LRN</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class / Grade</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentsTableBody" class="bg-white divide-y divide-gray-200">
+                        <!-- Students will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Detail Modal -->
+    <div id="studentDetailModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div class="bg-blue-600 text-white p-4 rounded-t-lg flex justify-between items-center">
+                <h3 class="text-lg font-semibold">Student Details</h3>
+                <button onclick="studentManagement.closeViewModal()" class="text-white hover:text-gray-200">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6" id="studentDetailContent">
+                <!-- Content injected via JS -->
+            </div>
+            
+            <div class="p-4 border-t bg-gray-50 flex justify-end">
+                <button onclick="studentManagement.reissueID()" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg transition-colors mr-2">
+                    <i class="fas fa-sync-alt mr-2"></i>Reissue ID
+                </button>
+                <button onclick="studentManagement.openIDPreview()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors mr-2">
+                    <i class="fas fa-id-card mr-2"></i>Generate ID Card
+                </button>
+                <button onclick="studentManagement.closeViewModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg transition-colors">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ID Card Preview Modal -->
+    <div id="idPreviewModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+            <div class="bg-indigo-600 text-white p-4 rounded-t-lg flex justify-between items-center">
+                <h3 class="text-lg font-semibold">ID Card Preview (2x3 inches)</h3>
+                <button onclick="studentManagement.closeIDPreview()" class="text-white hover:text-gray-200">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 flex flex-col lg:flex-row gap-8 justify-center items-start">
+                <!-- Preview Area -->
+                <div class="flex-1 flex flex-col items-center space-y-4">
+                    <h4 class="text-gray-700 font-medium mb-2">Front & Back Preview</h4>
+                    <div id="idCardPreviewArea" class="flex flex-col md:flex-row gap-4 p-4 bg-gray-100 rounded-lg border border-gray-200 justify-center items-center">
+                        <!-- Front and Back will be injected here by JS -->
+                        <div id="idCardFront" class="id-cr80 bg-white shadow-md relative overflow-hidden flex flex-col">
+                            <!-- Placeholder Front -->
+                        </div>
+                        <div id="idCardBack" class="id-cr80 bg-white shadow-md relative overflow-hidden flex flex-col">
+                            <!-- Placeholder Back -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="space-y-4 w-full lg:w-64">
+                    <button onclick="studentManagement.printID()" class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        <i class="fas fa-print mr-2"></i>Print ID
+                    </button>
+                    <button onclick="studentManagement.reissueID()" class="w-full px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">
+                        <i class="fas fa-sync-alt mr-2"></i>Re-issue ID (New #)
+                    </button>
+                    <button onclick="studentManagement.saveAsPNG()" class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                        <i class="fas fa-image mr-2"></i>Save as PNG
+                    </button>
+                    <button onclick="studentManagement.saveAsPDF()" class="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                        <i class="fas fa-file-pdf mr-2"></i>Save as PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Student Modal -->
+    <div id="addStudentModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-6 border-b">
+                <h3 id="studentModalTitle" class="text-xl font-semibold text-gray-800">Enroll New Student</h3>
+                <button onclick="studentManagement.closeModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <form id="studentForm" onsubmit="event.preventDefault(); studentManagement.saveStudent();">
+                    <div class="grid grid-cols-1 gap-4">
+                        <!-- Photo and ID Section -->
+                        <div class="flex items-start space-x-4 mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <div class="flex-shrink-0 text-center">
+                                <div class="w-24 h-24 rounded-full bg-gray-200 border-2 border-white shadow overflow-hidden mb-2 relative group">
+                                    <img id="editStudentPhotoPreview" src="" class="w-full h-full object-cover hidden">
+                                    <div id="editStudentPhotoPlaceholder" class="w-full h-full flex items-center justify-center text-gray-400">
+                                        <i class="fas fa-user text-3xl"></i>
+                                    </div>
+                                    <div class="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                         onclick="document.getElementById('editStudentPhotoInput').click()">
+                                        <i class="fas fa-camera text-white"></i>
+                                    </div>
+                                </div>
+                                <input type="file" id="editStudentPhotoInput" accept="image/*" class="hidden" onchange="studentManagement.handleEditPhotoPreview(event)">
+                                <button type="button" onclick="document.getElementById('editStudentPhotoInput').click()" class="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                    Change Photo
+                                </button>
+                            </div>
+                            <div class="flex-grow">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentIdInput">Student ID</label>
+                                <input type="text" id="studentIdInput" 
+                                       class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-white"
+                                       placeholder="Auto-generated if empty">
+                                <p class="text-xs text-gray-500 mt-1">Unique identifier for the student.</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="mb-4">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentName">Full Name</label>
+                                <input type="text" id="studentName" required
+                                       class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+                        
+                            <div class="mb-4">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentLRN">LRN</label>
+                                <input type="text" id="studentLRN"
+                                       class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentLevel">Level</label>
+                                <select id="studentLevel" required
+                                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                    <option value="">Select Level</option>
+                                    <option value="Elementary">Elementary</option>
+                                    <option value="Junior High School">Junior High School</option>
+                                    <option value="Senior High School">Senior High School</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentGrade">Grade/Year</label>
+                                <select id="studentGrade" required
+                                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                    <option value="">Select Grade</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-4 hidden" id="strandGroup">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentStrand">Strand</label>
+                                <select id="studentStrand"
+                                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                    <option value="">Select Strand</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="studentParent">Parent/Guardian</label>
+                                <select id="studentParent"
+                                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                    <option value="">Select Parent</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="studentClass">Class Section</label>
+                            <select id="studentClass" required
+                                    class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                <option value="">Select Class</option>
+                            </select>
+                        </div>
+
+                        <!-- Parent Details (Auto-filled/Editable) -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 bg-gray-50 p-3 rounded border border-gray-200">
+                            <div>
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="parentPhone">Parent Phone</label>
+                                <input type="tel" id="parentPhone" placeholder="Auto-filled from parent"
+                                       class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+                            <div>
+                                <label class="block text-gray-700 text-sm font-bold mb-2" for="parentAddress">Parent Address</label>
+                                <input type="text" id="parentAddress" placeholder="Auto-filled from parent"
+                                       class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end space-x-3 mt-4">
+                            <button type="button" onclick="studentManagement.closeModal()" 
+                                    class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors">
+                                Cancel
+                            </button>
+                            <button type="submit" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors">
+                                Save Student
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+            <p class="text-gray-700 font-semibold">Processing...</p>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="fixed bottom-4 right-4 transform translate-y-full transition-transform duration-300 z-50">
+        <div class="bg-white border-l-4 border-blue-600 shadow-lg rounded p-4 flex items-center">
+            <div id="notificationIcon" class="mr-3 text-blue-600">
+                <i class="fas fa-info-circle"></i>
+            </div>
+            <div class="mr-4">
+                <p class="font-bold text-gray-800" id="notificationTitle">Notification</p>
+                <p class="text-sm text-gray-600" id="notificationMessage">Message content</p>
+            </div>
+            <button onclick="document.getElementById('notification').classList.add('translate-y-full')" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../supabase-config.js"></script>
+    <script src="../core.js"></script>
+    <script src="admin-student-and-id.js"></script>
+</body>
+</html>

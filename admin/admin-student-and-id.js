@@ -1,5 +1,5 @@
 
-class AdminStudentManagement {
+class StudentAndIDManagement {
     constructor() {
         this.currentEditingStudent = null;
         this.currentViewStudent = null;
@@ -184,8 +184,15 @@ class AdminStudentManagement {
                     ${student.lrn ? `<div class="text-xs text-gray-500">LRN: ${student.lrn}</div>` : ''}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-medium text-gray-900">${student.full_name || 'Unknown'}</div>
-                    <div class="text-xs text-gray-500">${student.strand ? student.strand : ''}</div>
+                    <div class="flex items-center">
+                        <div class="h-8 w-8 rounded-full bg-gray-200 flex-shrink-0 overflow-hidden mr-3">
+                            ${student.photo_url ? `<img src="${student.photo_url}" class="h-full w-full object-cover">` : '<i class="fas fa-user text-gray-400 p-2"></i>'}
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-gray-900">${student.full_name || 'Unknown'}</div>
+                            <div class="text-xs text-gray-500">${student.strand ? student.strand : ''}</div>
+                        </div>
+                    </div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm text-gray-900">${this.getClassById(student.class_id || student.classId)?.name || this.getClassById(student.class_id || student.classId)?.id || 'N/A'}</div>
@@ -250,6 +257,7 @@ class AdminStudentManagement {
 
     filterStudents(searchTerm = '') {
         const classFilter = document.getElementById('classFilter').value;
+        const gradeFilter = document.getElementById('gradeFilter').value;
         const statusFilter = document.getElementById('statusFilter').value;
         
         if (!searchTerm) {
@@ -261,10 +269,13 @@ class AdminStudentManagement {
                                 (student.lrn || '').toLowerCase().includes(searchTerm) ||
                                 (student.id || '').toLowerCase().includes(searchTerm);
             
+            const studentClass = this.getClassById(student.class_id || student.classId);
+            
             const matchesClass = !classFilter || (student.class_id || student.classId) === classFilter;
+            const matchesGrade = !gradeFilter || (studentClass && studentClass.grade === gradeFilter);
             const matchesStatus = !statusFilter || student.current_status === statusFilter;
             
-            return matchesSearch && matchesClass && matchesStatus;
+            return matchesSearch && matchesClass && matchesGrade && matchesStatus;
         });
         
         this.renderStudentsTable();
@@ -281,16 +292,20 @@ class AdminStudentManagement {
     }
 
     setupEventListeners() {
-        // Photo upload preview
-        const photoUpload = document.getElementById('photoUpload');
-        if (photoUpload) {
-            photoUpload.addEventListener('change', (e) => this.handlePhotoUpload(e));
-        }
-        
-        // Save photo button
-        const savePhotoBtn = document.getElementById('savePhotoBtn');
-        if (savePhotoBtn) {
-            savePhotoBtn.addEventListener('click', () => this.savePhoto());
+        // Parent dropdown change listener
+        const parentSelect = document.getElementById('studentParent');
+        if (parentSelect) {
+            parentSelect.addEventListener('change', (e) => {
+                const parentId = e.target.value;
+                const parent = this.parents.find(p => p.id === parentId);
+                if (parent) {
+                    document.getElementById('parentPhone').value = parent.phone || '';
+                    document.getElementById('parentAddress').value = parent.address || '';
+                } else {
+                    document.getElementById('parentPhone').value = '';
+                    document.getElementById('parentAddress').value = '';
+                }
+            });
         }
     }
 
@@ -298,6 +313,12 @@ class AdminStudentManagement {
         this.currentEditingStudent = null;
         document.getElementById('studentModalTitle').textContent = 'Enroll New Student';
         document.getElementById('studentForm').reset();
+        
+        // Reset Photo Preview
+        document.getElementById('editStudentPhotoPreview').classList.add('hidden');
+        document.getElementById('editStudentPhotoPlaceholder').classList.remove('hidden');
+        document.getElementById('studentIdInput').value = ''; 
+
         this.openModal();
     }
 
@@ -346,11 +367,40 @@ class AdminStudentManagement {
         });
     }
 
+    // Handle photo preview in edit modal
+    handleEditPhotoPreview(event) {
+        const file = event.target.files[0];
+        if (file) {
+            if (file.size > 2 * 1024 * 1024) {
+                this.showNotification('File size must be less than 2MB', 'error');
+                event.target.value = '';
+                return;
+            }
+            if (!file.type.startsWith('image/')) {
+                this.showNotification('Please select an image file', 'error');
+                event.target.value = '';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const preview = document.getElementById('editStudentPhotoPreview');
+                const placeholder = document.getElementById('editStudentPhotoPlaceholder');
+                preview.src = e.target.result;
+                preview.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
     async saveStudent() {
         try {
             this.showLoading();
             const fullName = document.getElementById('studentName').value.trim();
             const parentId = document.getElementById('studentParent').value || null;
+            const parentPhone = document.getElementById('parentPhone').value;
+            const parentAddress = document.getElementById('parentAddress').value;
+            const inputId = document.getElementById('studentIdInput').value.trim();
             
             const studentData = {
                 full_name: fullName,
@@ -359,6 +409,20 @@ class AdminStudentManagement {
                 class_id: document.getElementById('studentClass').value,
                 strand: document.getElementById('studentStrand').value || '',
             };
+
+            // Handle Photo Upload first if new file selected
+            const photoInput = document.getElementById('editStudentPhotoInput');
+            if (photoInput.files[0]) {
+                 const file = photoInput.files[0];
+                 const reader = new FileReader();
+                 const photoPromise = new Promise((resolve, reject) => {
+                     reader.onload = e => resolve(e.target.result);
+                     reader.onerror = reject;
+                 });
+                 reader.readAsDataURL(file);
+                 const photoDataUrl = await photoPromise;
+                 studentData.photo_url = photoDataUrl;
+            }
 
             if (!studentData.full_name || !studentData.class_id) {
                 this.showNotification('Please fill in all required fields', 'error');
@@ -369,83 +433,47 @@ class AdminStudentManagement {
             let studentId;
             if (this.currentEditingStudent) {
                 studentId = this.currentEditingStudent.id;
+                
+                if (inputId && inputId !== studentId) {
+                    studentData.id = inputId;
+                }
+
                 const { error } = await window.supabaseClient
                     .from('students')
                     .update({ ...studentData, updated_at: new Date() })
                     .eq('id', studentId);
+
                 if (error) throw error;
                 this.showNotification('Student updated successfully', 'success');
             } else {
-                studentId = window.EducareTrack.generateStudentId(studentData.lrn);
-                const { error } = await window.supabaseClient
+                if (inputId) {
+                    studentData.id = inputId;
+                } else {
+                     // Generate ID if not provided: Year-XXXX
+                     const year = new Date().getFullYear();
+                     const random = Math.floor(1000 + Math.random() * 9000);
+                     studentData.id = `${year}-${random}`;
+                }
+
+                const { data, error } = await window.supabaseClient
                     .from('students')
-                    .insert({
-                        id: studentId,
-                        ...studentData,
-                        current_status: 'out_school',
-                        is_active: true,
-                        created_at: new Date()
-                    });
+                    .insert([{ ...studentData, created_at: new Date(), is_active: true }])
+                    .select();
+
                 if (error) throw error;
-                this.showNotification('Student created successfully', 'success');
+                studentId = data[0].id;
+                this.showNotification('Student enrolled successfully', 'success');
             }
 
-            if (parentId) {
-                await window.supabaseClient.from('parent_students').delete().eq('student_id', studentId);
-                await window.supabaseClient.from('parent_students').insert({
-                    parent_id: parentId,
-                    student_id: studentId,
-                    relationship: 'Parent'
-                });
-            } else if (this.currentEditingStudent) {
-                await window.supabaseClient.from('parent_students').delete().eq('student_id', studentId);
-            }
+            // Update parent info if needed (skipping for now as it's complex to update profile from here)
 
             this.closeModal();
-            await this.loadStudents();
-            this.hideLoading();
+            this.loadStudents();
         } catch (error) {
             console.error('Error saving student:', error);
             this.showNotification('Error saving student: ' + error.message, 'error');
             this.hideLoading();
         }
-    }
-
-    async editStudent(studentId) {
-        try {
-            this.showLoading();
-            const student = await window.EducareTrack.getStudentById(studentId);
-            if (student) {
-                this.currentEditingStudent = student;
-                document.getElementById('studentModalTitle').textContent = 'Edit Student';
-                this.populateStudentForm(student);
-                this.openModal();
-            }
-            this.hideLoading();
-        } catch (error) {
-            console.error('Error loading student:', error);
-            this.showNotification('Error loading student', 'error');
-            this.hideLoading();
-        }
-    }
-
-    populateStudentForm(student) {
-        const classId = student.class_id || student.classId;
-        document.getElementById('studentName').value = student.full_name || '';
-        document.getElementById('studentLRN').value = student.lrn || '';
-        document.getElementById('studentClass').value = classId || '';
-        document.getElementById('studentGrade').value = this.getClassById(classId)?.grade || '';
-        document.getElementById('studentLevel').value = this.getClassById(classId)?.level || 'Elementary';
-        document.getElementById('studentStrand').value = student.strand || '';
-        document.getElementById('studentParent').value = student.parent_id || '';
-        
-        const levelEvent = new Event('change');
-        document.getElementById('studentLevel').dispatchEvent(levelEvent);
-        
-        setTimeout(() => {
-            const grade = this.getClassById(classId)?.grade || '';
-            document.getElementById('studentGrade').value = grade.replace('Grade ', '');
-        }, 100);
     }
 
     async viewStudent(studentId) {
@@ -471,8 +499,10 @@ class AdminStudentManagement {
             const modalContent = document.getElementById('studentDetailContent');
             const photoUrl = student.photo_url || student.photoUrl;
             
+            // Use the layout from admin-student-and-id.html which expects injected content
+            // We'll adapt the admin-student-management.js viewStudent layout to fit the modal structure
             modalContent.innerHTML = `
-                <div class="lg:col-span-1 space-y-6">
+                <div class="space-y-6">
                     <!-- Basic Info -->
                     <div class="text-center bg-gray-50 p-6 rounded-lg">
                         <div class="w-32 h-32 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4 overflow-hidden relative group">
@@ -480,9 +510,6 @@ class AdminStudentManagement {
                                 `<img src="${photoUrl}" alt="${student.full_name}" class="w-full h-full object-cover">` :
                                 `<span class="text-blue-600 font-semibold text-3xl">${(student.full_name || 'ST').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
                             }
-                            <button onclick="studentManagement.openPhotoModal()" class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fas fa-camera text-xl"></i>
-                            </button>
                         </div>
                         <h3 class="text-2xl font-bold text-gray-800">${student.full_name || 'Unknown'}</h3>
                         <p class="text-gray-600 font-medium">${this.getClassById(student.class_id || student.classId)?.grade || 'N/A'} • ${this.getClassById(student.class_id || student.classId)?.name || 'N/A'}</p>
@@ -496,19 +523,9 @@ class AdminStudentManagement {
                             </span>
                         </div>
                     </div>
-                    
-                    <!-- ID Card Actions -->
-                    <div class="bg-blue-50 p-6 rounded-lg border border-blue-100">
-                        <h4 class="font-semibold text-blue-900 mb-4 flex items-center">
-                            <i class="fas fa-id-card mr-2"></i> ID Card Management
-                        </h4>
-                        <button onclick="studentManagement.openIDPreview()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
-                            <i class="fas fa-print mr-2"></i> Generate / Print ID
-                        </button>
-                    </div>
                 </div>
 
-                <div class="lg:col-span-1 space-y-6">
+                <div class="space-y-6">
                     <!-- Academic Info -->
                     <div class="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                         <h4 class="font-semibold text-gray-800 mb-4 border-b pb-2">Academic Information</h4>
@@ -524,10 +541,6 @@ class AdminStudentManagement {
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Section</span>
                                 <span class="font-medium">${this.getClassById(student.class_id || student.classId)?.section || 'N/A'}</span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-600">Adviser</span>
-                                <span class="font-medium">--</span>
                             </div>
                         </div>
                     </div>
@@ -551,15 +564,14 @@ class AdminStudentManagement {
                                     </div>
                                 </div>
                                 <div class="flex items-start">
-                                    <i class="fas fa-envelope mt-1 w-6 text-gray-400"></i>
+                                    <i class="fas fa-map-marker-alt mt-1 w-6 text-gray-400"></i>
                                     <div>
-                                        <p class="text-gray-600">${parentInfo.email || 'No email'}</p>
+                                        <p class="text-gray-600">${parentInfo.address || 'No address'}</p>
                                     </div>
                                 </div>
                             </div>
                         ` : `
                             <p class="text-gray-500 italic text-center py-4">No guardian information linked.</p>
-                            <button onclick="studentManagement.editStudent('${student.id}')" class="w-full mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium">Link Guardian</button>
                         `}
                     </div>
                 </div>
@@ -581,85 +593,159 @@ class AdminStudentManagement {
         this.currentViewStudent = null;
     }
 
-    // Photo Management
-    openPhotoModal() {
-        if (!this.currentViewStudent) return;
-        document.getElementById('photoModal').classList.remove('hidden');
-        document.getElementById('photoModal').classList.add('flex');
-    }
+    editStudent(studentId) {
+        const student = this.allStudents.find(s => s.id === studentId);
+        if (!student) return;
 
-    closePhotoModal() {
-        document.getElementById('photoModal').classList.add('hidden');
-        document.getElementById('photoModal').classList.remove('flex');
-        document.getElementById('photoPreview').classList.add('hidden');
-        document.getElementById('photoUpload').value = '';
-    }
-
-    handlePhotoUpload(event) {
-        const file = event.target.files[0];
-        if (file) {
-            if (file.size > 2 * 1024 * 1024) {
-                this.showNotification('File size must be less than 2MB', 'error');
-                return;
-            }
-            if (!file.type.startsWith('image/')) {
-                this.showNotification('Please select an image file', 'error');
-                return;
-            }
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('previewImage').src = e.target.result;
-                document.getElementById('photoPreview').classList.remove('hidden');
-            };
-            reader.readAsDataURL(file);
-        }
-    }
-
-    async savePhoto() {
-        try {
-            const fileInput = document.getElementById('photoUpload');
-            if (!fileInput.files[0]) {
-                this.showNotification('Please select a photo first', 'error');
-                return;
-            }
-            this.showLoading();
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                const photoDataUrl = e.target.result;
-                try {
-                    const { error } = await window.supabaseClient
-                        .from('students')
-                        .update({ photo_url: photoDataUrl })
-                        .eq('id', this.currentViewStudent.id);
-                    
-                    if (error) throw error;
-                    
-                    this.showNotification('Photo updated successfully', 'success');
-                    this.closePhotoModal();
-                    
-                    // Refresh view
-                    await this.viewStudent(this.currentViewStudent.id);
-                    await this.loadStudents(); // Refresh list thumbnails
-                } catch (error) {
-                    console.error('Error updating photo:', error);
-                    this.showNotification('Error updating photo', 'error');
+        this.currentEditingStudent = student;
+        document.getElementById('studentModalTitle').textContent = 'Edit Student';
+        
+        // Populate form
+        document.getElementById('studentName').value = student.full_name || '';
+        document.getElementById('studentLRN').value = student.lrn || '';
+        document.getElementById('studentIdInput').value = student.id || '';
+        
+        const studentClass = this.getClassById(student.class_id || student.classId);
+        if (studentClass) {
+            let level = studentClass.level;
+            if (!level) {
+                const grade = studentClass.grade;
+                if (grade === 'Kindergarten' || /Grade [1-6]$/.test(grade)) {
+                    level = 'Elementary';
+                } else if (/Grade (7|8|9|10)$/.test(grade)) {
+                    level = 'Junior High School';
+                } else if (/Grade (11|12)$/.test(grade)) {
+                    level = 'Senior High School';
+                } else {
+                    level = 'Junior High School'; // Default
                 }
-                this.hideLoading();
-            };
-            reader.readAsDataURL(fileInput.files[0]);
+            }
+             
+             const levelSelect = document.getElementById('studentLevel');
+             levelSelect.value = level;
+             levelSelect.dispatchEvent(new Event('change'));
+             
+             setTimeout(() => {
+                 document.getElementById('studentGrade').value = studentClass.grade.replace('Grade ', '');
+             }, 100);
+             
+             if (student.strand) {
+                 document.getElementById('studentStrand').value = student.strand;
+             }
+             
+             document.getElementById('studentClass').value = studentClass.id;
+        }
+
+        document.getElementById('studentParent').value = student.parent_id || student.parentId || '';
+        document.getElementById('studentParent').dispatchEvent(new Event('change'));
+
+        // Handle Photo Preview
+        const preview = document.getElementById('editStudentPhotoPreview');
+        const placeholder = document.getElementById('editStudentPhotoPlaceholder');
+        if (student.photo_url) {
+            preview.src = student.photo_url;
+            preview.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+        } else {
+            preview.classList.add('hidden');
+            placeholder.classList.remove('hidden');
+        }
+
+        this.openModal();
+    }
+
+    async toggleStudentStatus(studentId) {
+        if (!confirm("Are you sure you want to change this student's status?")) return;
+        
+        try {
+            this.showLoading();
+            const student = this.allStudents.find(s => s.id === studentId);
+            const newStatus = !student.is_active;
+            
+            const { error } = await window.supabaseClient
+                .from('students')
+                .update({ is_active: newStatus })
+                .eq('id', studentId);
+
+            if (error) throw error;
+            
+            this.showNotification(`Student ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
+            this.loadStudents();
         } catch (error) {
-            console.error('Error processing photo:', error);
+            console.error('Error updating status:', error);
+            this.showNotification('Error updating status', 'error');
             this.hideLoading();
         }
     }
 
-    // ID Card Management
-    openIDPreview() {
+    // --- ID Card & Reissue Functions ---
+
+    generateNewStudentId() {
+        const year = new Date().getFullYear();
+        const random = Math.floor(1000 + Math.random() * 9000);
+        return `${year}-${random}`;
+    }
+
+    async reissueID() {
         if (!this.currentViewStudent) return;
         
-        // Generate ID Card HTML
+        if (!confirm('Are you sure you want to reissue this ID? This will generate a new student ID and invalidate the old one.')) return;
+
+        try {
+            this.showLoading();
+            const newStudentId = this.generateNewStudentId();
+            const oldId = this.currentViewStudent.id;
+
+            // Check if new ID exists
+             const { data: existing } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .eq('id', newStudentId)
+                .single();
+             if (existing) {
+                 this.hideLoading();
+                 this.showNotification('Generated ID collision. Please try again.', 'error');
+                 return;
+             }
+
+            const { error } = await window.supabaseClient
+                .from('students')
+                .update({ 
+                    id: newStudentId,
+                    updated_at: new Date()
+                })
+                .eq('id', oldId);
+
+            if (error) throw error;
+
+            // Update local state
+            this.currentViewStudent.id = newStudentId;
+            const index = this.allStudents.findIndex(s => s.id === oldId);
+            if (index !== -1) {
+                this.allStudents[index].id = newStudentId;
+            }
+
+            this.showNotification('ID reissued successfully. New ID: ' + newStudentId, 'success');
+            
+            // Refresh views
+            this.renderIDCard(this.currentViewStudent); 
+            this.renderStudentsTable();
+            
+            // Update detail view if open
+            // We re-call viewStudent to refresh the modal content
+            this.viewStudent(newStudentId);
+            
+        } catch (error) {
+            console.error('Error reissuing ID:', error);
+            this.showNotification('Error reissuing ID: ' + error.message, 'error');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    openIDPreview() {
+        if (!this.currentViewStudent) return;
         this.renderIDCard(this.currentViewStudent);
-        
         document.getElementById('idPreviewModal').classList.remove('hidden');
         document.getElementById('idPreviewModal').classList.add('flex');
     }
@@ -677,38 +763,33 @@ class AdminStudentManagement {
         const grade = this.getClassById(student.class_id || student.classId)?.grade || '';
         const section = this.getClassById(student.class_id || student.classId)?.name || '';
         const parent = student.parentInfo || {};
-        const address = parent.address || 'Address not available';
+        const studentAddress = student.address || parent.address || 'Address not available';
         
         // --- FRONT ---
         frontContainer.innerHTML = `
             <div class="w-full h-full bg-white relative overflow-hidden flex flex-col items-center text-center border border-gray-200">
-                <!-- Header Background -->
-                <div class="absolute top-0 w-full h-24 bg-blue-600 z-0"></div>
-                <div class="absolute top-16 w-full h-12 bg-yellow-400 transform -skew-y-3 z-0"></div>
-                
-                <!-- School Logo/Name -->
-                <div class="relative z-10 mt-4 text-white">
-                    <h1 class="font-bold text-lg tracking-wider">EDUCARE COLLEGES INC</h1>
-                    <p class="text-[10px] uppercase tracking-widest">Purok 4 Irisan Baguio City</p>
+                <!-- School Details -->
+                <div class="mt-4 z-10">
+                    <h1 class="font-bold text-sm tracking-wide text-blue-900 uppercase">Educare Colleges Inc</h1>
+                    <p class="text-[9px] text-gray-600">Purok 4 Irisan Baguio City</p>
                 </div>
                 
                 <!-- Photo -->
-                <div class="relative z-10 mt-3 w-32 h-32 rounded-full border-4 border-white shadow-lg overflow-hidden bg-gray-200">
+                <div class="relative z-10 mt-3 w-24 h-24 rounded-full border-2 border-blue-500 shadow-sm overflow-hidden bg-gray-100">
                     ${photoUrl ? 
                         `<img src="${photoUrl}" class="w-full h-full object-cover">` : 
-                        `<div class="w-full h-full flex items-center justify-center text-gray-400"><i class="fas fa-user text-4xl"></i></div>`
+                        `<div class="w-full h-full flex items-center justify-center text-gray-400"><i class="fas fa-user text-3xl"></i></div>`
                     }
                 </div>
                 
                 <!-- Student Info -->
-                <div class="relative z-10 mt-3 w-full px-4 flex-1 flex flex-col justify-center">
-                    <h2 class="font-bold text-xl text-gray-800 uppercase leading-tight line-clamp-2">${student.full_name || 'STUDENT NAME'}</h2>
-                    <p class="text-blue-600 font-semibold mt-1">${grade} - ${section}</p>
-                    <p class="text-gray-500 text-[10px] mt-2 px-2 line-clamp-2">${address}</p>
+                <div class="relative z-10 mt-2 w-full px-2 flex-1 flex flex-col items-center">
+                    <h2 class="font-bold text-base text-gray-900 uppercase leading-tight line-clamp-2">${student.full_name || 'STUDENT NAME'}</h2>
+                    <p class="text-[10px] text-gray-500 mt-1 px-2 line-clamp-2 leading-tight">${studentAddress}</p>
+                    <div class="mt-auto mb-4 bg-blue-600 text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+                        ${grade} - ${section}
+                    </div>
                 </div>
-                
-                <!-- Footer Strip -->
-                <div class="w-full h-4 bg-blue-600 mt-auto"></div>
             </div>
         `;
 
@@ -719,37 +800,37 @@ class AdminStudentManagement {
         const qr = qrcode(typeNumber, errorCorrectionLevel);
         qr.addData(student.id);
         qr.make();
-        const qrSrc = qr.createImgTag(4).match(/src="([^"]*)"/)[1];
+        const qrSrc = qr.createImgTag(3).match(/src="([^"]*)"/)[1];
 
         backContainer.innerHTML = `
             <div class="w-full h-full bg-white relative overflow-hidden flex flex-col items-center text-center border border-gray-200 p-4">
-                <div class="flex-1 flex flex-col items-center justify-center w-full space-y-4">
+                <div class="flex-1 flex flex-col items-center justify-center w-full space-y-2">
                     <!-- QR Code -->
-                    <div class="border-2 border-gray-800 p-1 rounded">
-                        <img src="${qrSrc}" class="w-32 h-32">
+                    <div class="bg-white p-1 border border-gray-200 rounded">
+                        <img src="${qrSrc}" class="w-24 h-24" alt="QR Code">
                     </div>
                     
-                    <div class="space-y-1">
-                         <p class="text-xs text-gray-500 uppercase">Student ID</p>
-                         <p class="font-bold text-lg tracking-widest font-mono">${student.id}</p>
-                    </div>
-
-                    <div class="w-full border-t border-gray-300 pt-3">
-                        <div class="mb-2">
-                            <p class="text-[10px] text-gray-500 uppercase">Parent / Guardian</p>
-                            <p class="font-bold text-sm">${parent.full_name || parent.name || 'N/A'}</p>
+                    <!-- Student ID -->
+                    <div class="font-mono font-bold text-lg text-gray-800 tracking-widest">${student.id}</div>
+                    
+                    <!-- Guardian Info -->
+                    <div class="w-full text-left mt-2 space-y-1">
+                        <div class="text-[10px] border-b border-gray-100 pb-1">
+                            <span class="text-gray-500 block text-[8px] uppercase">Guardian</span>
+                            <span class="font-semibold text-gray-800 truncate block">${parent.full_name || parent.name || 'N/A'}</span>
                         </div>
-                        <div>
-                            <p class="text-[10px] text-gray-500 uppercase">Emergency Contact</p>
-                            <p class="font-bold text-sm">${parent.phone || 'N/A'}</p>
+                        <div class="text-[10px]">
+                            <span class="text-gray-500 block text-[8px] uppercase">Contact</span>
+                            <span class="font-semibold text-gray-800 font-mono">${parent.phone || 'N/A'}</span>
                         </div>
                     </div>
                 </div>
                 
-                <div class="mt-auto text-[10px] text-gray-500 italic border-t border-gray-200 pt-2 w-full">
-                    If found, please return to:<br>
-                    <strong>Educare Colleges Inc.</strong><br>
-                    Purok 4 Irisan Baguio City
+                <!-- Lost & Found Note -->
+                <div class="mt-auto pt-2 w-full border-t border-gray-100">
+                    <p class="text-[8px] text-gray-500 italic leading-tight">
+                        If this ID is lost, please return to Educare Colleges Inc, Purok 4 Irisan Baguio City.
+                    </p>
                 </div>
             </div>
         `;
@@ -850,8 +931,8 @@ class AdminStudentManagement {
             });
             
             pdf.text("Student ID Card", 0.2, 0.3);
-            pdf.addImage(frontData, 'PNG', 0.2, 0.5, 2.125, 3.375);
-            pdf.addImage(backData, 'PNG', 2.5, 0.5, 2.125, 3.375);
+            pdf.addImage(frontData, 'PNG', 0.2, 0.5, 2, 3);
+            pdf.addImage(backData, 'PNG', 2.3, 0.5, 2, 3);
             
             pdf.save(`ID_${this.currentViewStudent.id}.pdf`);
             this.hideLoading();
@@ -862,61 +943,41 @@ class AdminStudentManagement {
         }
     }
 
-    // Utilities
     showLoading() {
-        const spinner = document.getElementById('loadingSpinner');
-        if (spinner) {
-            spinner.classList.remove('hidden');
-            spinner.classList.add('flex');
-        }
+        document.getElementById('loadingOverlay').classList.remove('hidden');
+        document.getElementById('loadingOverlay').classList.add('flex');
     }
 
     hideLoading() {
-        const spinner = document.getElementById('loadingSpinner');
-        if (spinner) {
-            spinner.classList.add('hidden');
-            spinner.classList.remove('flex');
-        }
+        document.getElementById('loadingOverlay').classList.add('hidden');
+        document.getElementById('loadingOverlay').classList.remove('flex');
     }
 
-    showNotification(message, type = 'success') {
-        const id = type === 'success' ? 'successNotification' : 'errorNotification';
-        const el = document.getElementById(id);
-        const msgEl = type === 'success' ? document.getElementById('successMessage') : document.getElementById('errorMessage');
+    showNotification(message, type = 'info') {
+        const notification = document.getElementById('notification');
+        const title = document.getElementById('notificationTitle');
+        const msg = document.getElementById('notificationMessage');
+        const icon = document.getElementById('notificationIcon');
+
+        title.textContent = type === 'error' ? 'Error' : 'Success';
+        msg.textContent = message;
         
-        if (el && msgEl) {
-            msgEl.textContent = message;
-            el.classList.remove('hidden');
-            setTimeout(() => el.classList.add('hidden'), 3000);
+        if (type === 'error') {
+            icon.className = 'mr-3 text-red-600';
+            icon.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+            notification.querySelector('.border-l-4').className = 'bg-white border-l-4 border-red-600 shadow-lg rounded p-4 flex items-center';
         } else {
-            alert(message);
+            icon.className = 'mr-3 text-green-600';
+            icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+            notification.querySelector('.border-l-4').className = 'bg-white border-l-4 border-green-600 shadow-lg rounded p-4 flex items-center';
         }
-    }
 
-    async toggleStudentStatus(studentId) {
-        try {
-            this.showLoading();
-            const student = this.allStudents.find(s => s.id === studentId);
-            if (!student) return;
-
-            const newStatus = !student.is_active;
-            const { error } = await window.supabaseClient
-                .from('students')
-                .update({ is_active: newStatus })
-                .eq('id', studentId);
-
-            if (error) throw error;
-            
-            this.showNotification(`Student ${newStatus ? 'activated' : 'deactivated'} successfully`, 'success');
-            await this.loadStudents();
-            this.hideLoading();
-        } catch (error) {
-            console.error('Error toggling status:', error);
-            this.showNotification('Error updating status', 'error');
-            this.hideLoading();
-        }
+        notification.classList.remove('translate-y-full');
+        setTimeout(() => {
+            notification.classList.add('translate-y-full');
+        }, 3000);
     }
 }
 
 // Initialize
-const studentManagement = new AdminStudentManagement();
+window.studentManagement = new StudentAndIDManagement();

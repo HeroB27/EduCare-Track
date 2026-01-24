@@ -237,23 +237,7 @@ class UserManagement {
 
         let roleSpecificFields = '';
         if (this.currentRole === 'guard') {
-            roleSpecificFields = `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                         <label class="block text-sm font-medium text-gray-700 mb-1">Shift</label>
-                         <select id="guardShift" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="Morning" ${user?.shift === 'Morning' ? 'selected' : ''}>Morning</option>
-                            <option value="Afternoon" ${user?.shift === 'Afternoon' ? 'selected' : ''}>Afternoon</option>
-                            <option value="Night" ${user?.shift === 'Night' ? 'selected' : ''}>Night</option>
-                         </select>
-                    </div>
-                    <div>
-                         <label class="block text-sm font-medium text-gray-700 mb-1">Assigned Gate</label>
-                         <input type="text" id="guardGate" value="${user?.assignedGate || user?.assigned_gate || ''}" 
-                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                </div>
-            `;
+            roleSpecificFields = '';
         } else if (this.currentRole === 'clinic') {
              roleSpecificFields = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -318,14 +302,14 @@ class UserManagement {
                 
                 <!-- Progress Steps -->
                 <div class="flex justify-between mb-6 max-w-xs mx-auto">
-                    ${[1, 2, 3].map(step => `
+                    ${(isEditing ? [1, 2] : [1, 2, 3]).map(step => `
                         <div class="flex flex-col items-center">
                             <div class="w-8 h-8 rounded-full flex items-center justify-center 
                                 ${this.currentStep >= step ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'}">
                                 ${step}
                             </div>
                             <span class="text-xs mt-1 ${this.currentStep >= step ? 'text-blue-500' : 'text-gray-500'}">
-                                ${step === 1 ? 'Info' : step === 2 ? 'Account' : 'Confirm'}
+                                ${step === 1 ? (isEditing ? 'Details' : 'Info') : (isEditing && step === 2 ? 'Confirm' : (step === 2 ? 'Account' : 'Confirm'))}
                             </span>
                         </div>
                     `).join('')}
@@ -343,21 +327,44 @@ class UserManagement {
                             </div>
                             
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Email${this.currentRole === 'guard' ? '' : ' *'}</label>
                                 <input type="email" id="userEmail" value="${user?.email || ''}" 
-                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       ${this.currentRole === 'guard' ? '' : 'required'}>
                             </div>
                         </div>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
                                 <input type="tel" id="userPhone" value="${user?.phone || ''}" 
-                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       required>
                             </div>
                         </div>
                         
                         ${roleSpecificFields}
+
+                        ${isEditing ? `
+                        <div class="border-t pt-4 mt-4">
+                            <h4 class="font-medium mb-3 text-gray-800">Account Details</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Username *</label>
+                                    <input type="text" id="staffUsername" value="${user?.username || ''}" 
+                                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                                           required>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                    <input type="password" id="staffPassword" 
+                                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <p class="text-xs text-gray-500 mt-1">Leave blank to keep current password</p>
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
                         
                         <div class="flex justify-end mt-6">
                             <button type="button" onclick="userManagement.nextStaffStep(2)" 
@@ -367,7 +374,8 @@ class UserManagement {
                         </div>
                     </div>
 
-                    <!-- Step 2: Account Creation -->
+                    <!-- Step 2: Account Creation (Add Mode Only) -->
+                    ${!isEditing ? `
                     <div id="staffStep2" class="${this.currentStep === 2 ? 'block' : 'hidden'} space-y-4">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
@@ -381,8 +389,7 @@ class UserManagement {
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Password *</label>
                                 <input type="password" id="staffPassword" 
                                        class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                                       ${isEditing ? '' : 'required'}>
-                                ${isEditing ? '<p class="text-xs text-gray-500 mt-1">Leave blank to keep current password</p>' : ''}
+                                       required>
                             </div>
                         </div>
                         
@@ -397,9 +404,10 @@ class UserManagement {
                             </button>
                         </div>
                     </div>
+                    ` : ''}
 
-                    <!-- Step 3: Confirmation -->
-                    <div id="staffStep3" class="${this.currentStep === 3 ? 'block' : 'hidden'} space-y-4">
+                    <!-- Step 3 (or 2 in Edit): Confirmation -->
+                    <div id="staffStep3" class="${(isEditing && this.currentStep === 2) || (!isEditing && this.currentStep === 3) ? 'block' : 'hidden'} space-y-4">
                         <div class="bg-gray-50 p-4 rounded-md mb-4">
                             <h4 class="font-medium mb-3 text-gray-800">Review Information</h4>
                             <div id="staffPreview" class="space-y-2 text-sm">
@@ -408,7 +416,7 @@ class UserManagement {
                         </div>
                         
                         <div class="flex justify-between mt-6">
-                            <button type="button" onclick="userManagement.nextStaffStep(2)" 
+                            <button type="button" onclick="userManagement.nextStaffStep(${isEditing ? 1 : (this.currentStep === 3 ? 2 : 1)})" 
                                     class="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors">
                                 <i class="fas fa-arrow-left mr-2"></i>Back
                             </button>
@@ -429,6 +437,7 @@ class UserManagement {
         }
 
         this.currentStep = step;
+        const isEditing = !!this.currentEditingUser;
         
         // Hide all steps
         document.getElementById('staffStep1')?.classList.add('hidden');
@@ -436,7 +445,12 @@ class UserManagement {
         document.getElementById('staffStep3')?.classList.add('hidden');
         
         // Show current step
-        document.getElementById(`staffStep${step}`)?.classList.remove('hidden');
+        // In edit mode: Step 1 -> staffStep1, Step 2 -> staffStep3
+        if (isEditing && step === 2) {
+             document.getElementById('staffStep3')?.classList.remove('hidden');
+        } else {
+             document.getElementById(`staffStep${step}`)?.classList.remove('hidden');
+        }
         
         // Update progress indicators
         // this.renderUserModal(); // Removed to prevent form data loss
@@ -462,7 +476,8 @@ class UserManagement {
         });
 
         // Generate preview if last step
-        if (step === 3) {
+        // Edit mode: Step 2 is last. Add mode: Step 3 is last.
+        if ((isEditing && step === 2) || (!isEditing && step === 3)) {
             this.generateStaffPreview();
         }
     }
@@ -471,26 +486,45 @@ class UserManagement {
         if (this.currentStep === 1) {
             const name = document.getElementById('userName')?.value;
             const email = document.getElementById('userEmail')?.value;
+            const phone = document.getElementById('userPhone')?.value;
             
             if (!name) {
                 this.showNotification('Please enter name', 'error');
                 return false;
             }
-            if (!email) {
+            
+            if (this.currentRole !== 'guard' && !email) {
                 this.showNotification('Please enter email', 'error');
                 return false;
             }
-        } else if (this.currentStep === 2) {
-            const username = document.getElementById('staffUsername')?.value;
-            const password = document.getElementById('staffPassword')?.value;
-            
-            if (!username) {
-                this.showNotification('Please enter username', 'error');
+
+            if (!phone) {
+                this.showNotification('Please enter phone number', 'error');
                 return false;
             }
-            if (!this.currentEditingUser && !password) {
-                this.showNotification('Please enter password', 'error');
-                return false;
+
+            // If editing, validate username too
+            if (this.currentEditingUser) {
+                const username = document.getElementById('staffUsername')?.value;
+                if (!username) {
+                    this.showNotification('Please enter username', 'error');
+                    return false;
+                }
+            }
+        } else if (this.currentStep === 2) {
+            // Only validate username/password here if NOT editing (Add Mode)
+            if (!this.currentEditingUser) {
+                const username = document.getElementById('staffUsername')?.value;
+                const password = document.getElementById('staffPassword')?.value;
+                
+                if (!username) {
+                    this.showNotification('Please enter username', 'error');
+                    return false;
+                }
+                if (!password) {
+                    this.showNotification('Please enter password', 'error');
+                    return false;
+                }
             }
         }
         return true;
@@ -507,11 +541,9 @@ class UserManagement {
 
         let roleSpecificDetails = '';
         if (role === 'guard') {
-            const shift = document.getElementById('guardShift').value;
-            const gate = document.getElementById('guardGate').value;
             roleSpecificDetails = `
-                <p><strong>Shift:</strong> ${shift}</p>
-                <p><strong>Assigned Gate:</strong> ${gate || 'N/A'}</p>
+                <p><strong>Shift:</strong> Whole Day</p>
+                <p><strong>Assigned Gate:</strong> Main Gate</p>
             `;
         } else if (role === 'clinic') {
             const license = document.getElementById('clinicLicense').value;
@@ -584,16 +616,16 @@ class UserManagement {
                                            required>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
                                     <input type="email" id="teacherEmail" value="${user?.email || ''}" 
-                                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                                 </div>
                             </div>
                             
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Contact Number *</label>
                                 <input type="tel" id="teacherPhone" value="${user?.phone || ''}" 
-                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                       class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                             </div>
 
                             <div class="flex justify-end mt-6">
@@ -1294,6 +1326,7 @@ class UserManagement {
         if (this.currentStep === 1) { // Info
             const name = document.getElementById('teacherName')?.value;
             const email = document.getElementById('teacherEmail')?.value;
+            const phone = document.getElementById('teacherPhone')?.value;
             
             if (!name) {
                 this.showNotification('Please enter teacher name', 'error');
@@ -1301,6 +1334,10 @@ class UserManagement {
             }
             if (!email) {
                 this.showNotification('Please enter teacher email', 'error');
+                return false;
+            }
+            if (!phone) {
+                this.showNotification('Please enter teacher phone number', 'error');
                 return false;
             }
         } else if (this.currentStep === 2) { // Advisory
@@ -1456,7 +1493,7 @@ class UserManagement {
             const username = document.getElementById('teacherUsername').value;
             // Generate a dummy email if not provided, for Auth purposes
             const emailInput = document.getElementById('teacherEmail').value;
-            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
+            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
             
             const password = document.getElementById('teacherPassword').value;
 
@@ -1683,7 +1720,8 @@ class UserManagement {
             const emailInput = document.getElementById('userEmail').value;
             const phone = document.getElementById('userPhone').value;
             const username = document.getElementById('staffUsername').value;
-            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
+            // Generate dummy email for Auth if not provided
+            const authEmail = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
             const password = document.getElementById('staffPassword').value;
 
             // Prepare role-specific data
@@ -1693,8 +1731,8 @@ class UserManagement {
             if (this.currentRole === 'guard') {
                 roleTable = 'guards';
                 roleData = {
-                    shift: document.getElementById('guardShift').value,
-                    assigned_gate: document.getElementById('guardGate').value
+                    shift: document.getElementById('guardShift')?.value || 'Whole Day',
+                    assigned_gate: document.getElementById('guardGate')?.value || 'Main Gate'
                 };
             } else if (this.currentRole === 'clinic') {
                 roleTable = 'clinic_staff';
@@ -1716,7 +1754,7 @@ class UserManagement {
             const profileData = {
                 full_name: name,
                 phone: phone,
-                email: email,
+                email: emailInput || null,
                 role: this.currentRole,
                 is_active: true,
                 username: username
@@ -1749,7 +1787,7 @@ class UserManagement {
                 // Create new user
                 if (!password) throw new Error('Password is required for new users');
 
-                const userId = await this.createAuthUser(email, password, {
+                const userId = await this.createAuthUser(authEmail, password, {
                     full_name: name,
                     role: this.currentRole
                 });
@@ -1800,7 +1838,8 @@ class UserManagement {
             const address = document.getElementById('parentAddress').value || '';
             
             const username = document.getElementById('parentUsername').value;
-            const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.local`;
+            // Generate dummy email for Auth if not provided
+            const authEmail = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
             
             const password = document.getElementById('parentPassword').value;
 
@@ -1812,6 +1851,7 @@ class UserManagement {
             const profileData = {
                 full_name: name,
                 phone: phone,
+                email: emailInput || null,
                 role: 'parent',
                 is_active: true,
                 username: username
@@ -1861,7 +1901,7 @@ class UserManagement {
             } else {
                 if (!password) throw new Error('Password is required for new users');
 
-                const userId = await this.createAuthUser(email, password, {
+                const userId = await this.createAuthUser(authEmail, password, {
                     full_name: name,
                     role: 'parent'
                 });

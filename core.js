@@ -1960,19 +1960,11 @@ const EducareTrack = {
     },
 
     // Get unread notification count - OPTIMIZED VERSION
-    formatTargetUsersFilter(userId) {
-        const raw = String(userId || '');
-        if (!raw) return '{}';
-        const safeId = raw.replace(/"/g, '\\"');
-        const needsQuotes = /[,\s{}]/.test(safeId);
-        return needsQuotes ? `{"${safeId}"}` : `{${safeId}}`;
-    },
-
     async fetchNotificationsSnake(userId, type, limit) {
         let query = window.supabaseClient
             .from('notifications')
             .select('id,read_by,target_users,is_active,created_at,title,message,type,is_urgent,student_id,student_name,related_record')
-            .filter('target_users', 'cs', this.formatTargetUsersFilter(userId))
+            .contains('target_users', [userId])
             .eq('is_active', true);
         if (type) query = query.eq('type', type);
         if (limit) query = query.limit(limit);
@@ -4961,71 +4953,6 @@ const EducareTrack = {
     },
 
     // User management helpers
-    async getUserById(userId) {
-        try {
-            const { data, error } = await window.supabaseClient
-                .from('profiles')
-                .select(`
-                    id, full_name, role, phone, is_active, photo_url, username, password,
-                    teachers ( employee_no, is_homeroom, assigned_subjects, classes ( id, grade, section, strand ) ),
-                    parents ( address, occupation ),
-                    guards ( shift, assigned_gate ),
-                    clinic_staff ( license_no, position ),
-                    admin_staff ( position, permissions )
-                `)
-                .eq('id', userId)
-                .single();
-            
-            if (error || !data) return null;
-
-            // Helper to extract single object from join result
-            const getRoleData = (data) => Array.isArray(data) ? data[0] : data;
-            
-            let roleData = {};
-            let children = [];
-
-            if (data.role === 'teacher') roleData = getRoleData(data.teachers) || {};
-            else if (data.role === 'parent') {
-                roleData = getRoleData(data.parents) || {};
-                // Fetch children for parents
-                const { data: childrenData } = await window.supabaseClient
-                    .from('parent_students')
-                    .select('student_id')
-                    .eq('parent_id', userId);
-                
-                if (childrenData) {
-                    children = childrenData.map(c => c.student_id);
-                }
-            }
-            else if (data.role === 'guard') roleData = getRoleData(data.guards) || {};
-            else if (data.role === 'clinic') roleData = getRoleData(data.clinic_staff) || {};
-            else if (data.role === 'admin') roleData = getRoleData(data.admin_staff) || {};
-
-            return {
-                ...data,
-                ...roleData,
-                name: data.full_name,
-                fullName: data.full_name,
-                children: children, // Add children array
-                // Flatten role specific fields for compatibility
-                assignedSubjects: roleData.assigned_subjects || [],
-                assignedClasses: roleData.classes || [],
-                isHomeroom: roleData.is_homeroom,
-                employeeId: roleData.employee_no,
-                permissions: roleData.permissions,
-                occupation: roleData.occupation,
-                address: roleData.address,
-                shift: roleData.shift,
-                assignedGate: roleData.assigned_gate,
-                licenseNo: roleData.license_no,
-                position: roleData.position
-            };
-        } catch (error) {
-            console.error('Error getting user:', error);
-            return null;
-        }
-    },
-
     async getClassById(classId) {
         try {
             const { data, error } = await window.supabaseClient

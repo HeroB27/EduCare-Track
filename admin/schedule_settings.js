@@ -8,11 +8,14 @@ class AttendanceSettingsManager {
             jhs_in: '07:30', jhs_out: '16:00',
             shs_in: '07:30', shs_out: '16:30'
         };
-        this.defaultCalendarSettings = {
+        this.calendarSettings = {
             enableSaturdayClasses: false,
             enableSundayClasses: false
         };
+        this.currentDate = new Date();
+        this.events = [];
         this.realtimeChannel = null;
+        this.calendarSubscription = null;
         this.init();
     }
 
@@ -37,8 +40,10 @@ class AttendanceSettingsManager {
             
             this.initEventListeners();
             this.populateScheduleForm(this.defaultSchedule);
-            this.populateCalendarForm(this.defaultCalendarSettings);
+            this.populateCalendarForm(this.calendarSettings);
             await this.loadSettings();
+            await this.loadEvents();
+            this.renderCalendar();
             this.setupRealtimeUpdates();
             
             this.hideLoading();
@@ -129,6 +134,40 @@ class AttendanceSettingsManager {
                 this.saveCalendarSettings();
             });
         }
+
+        // Calendar Controls
+        const prevBtn = document.getElementById('prevMonth');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                this.currentDate = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() - 1, 1);
+                this.renderCalendar();
+            });
+        }
+
+        const nextBtn = document.getElementById('nextMonth');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                this.currentDate = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() + 1, 1);
+                this.renderCalendar();
+            });
+        }
+
+        const todayBtn = document.getElementById('todayBtn');
+        if (todayBtn) {
+            todayBtn.addEventListener('click', () => {
+                this.currentDate = new Date();
+                this.renderCalendar();
+            });
+        }
+
+        // Event Form
+        const eventForm = document.getElementById('eventForm');
+        if (eventForm) {
+            eventForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveEvent();
+            });
+        }
     }
 
     async loadSettings() {
@@ -153,16 +192,19 @@ class AttendanceSettingsManager {
                 if (calendarDoc.exists) calendarSettings = calendarDoc.data();
             }
             this.populateScheduleForm(scheduleSettings || this.defaultSchedule);
-            this.populateCalendarForm(calendarSettings || this.defaultCalendarSettings);
+            this.calendarSettings = calendarSettings || this.calendarSettings;
+            this.populateCalendarForm(this.calendarSettings);
         } catch (error) {
             console.error('Error loading settings:', error);
             this.populateScheduleForm(this.defaultSchedule);
-            this.populateCalendarForm(this.defaultCalendarSettings);
+            this.populateCalendarForm(this.calendarSettings);
         }
     }
 
     setupRealtimeUpdates() {
         if (!window.supabaseClient) return;
+        
+        // System Settings Subscription
         if (this.realtimeChannel) {
             this.realtimeChannel.unsubscribe();
         }
@@ -171,6 +213,22 @@ class AttendanceSettingsManager {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, () => {
                 this.loadSettings();
             })
+            .subscribe();
+
+        // Calendar Events Subscription
+        if (this.calendarSubscription) {
+            this.calendarSubscription.unsubscribe();
+        }
+        this.calendarSubscription = window.supabaseClient
+            .channel('calendar_events_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'calendar_events' },
+                (payload) => {
+                    console.log('Real-time update received:', payload);
+                    this.loadEvents(false);
+                }
+            )
             .subscribe();
     }
 
@@ -244,12 +302,216 @@ class AttendanceSettingsManager {
             } else {
                 await window.EducareTrack.db.collection('system_settings').doc('calendar_settings').set(settings);
             }
-            alert('Calendar settings saved successfully!');
+            // Update local settings immediately
+            this.calendarSettings = settings;
+            this.renderCalendar(); // Re-render to reflect changes
             
-            // Notify School Calendar system if possible (optional, relies on reload mostly)
+            alert('Calendar settings saved successfully!');
         } catch (error) {
             console.error('Error saving calendar settings:', error);
             alert('Error saving calendar settings: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async loadEvents(showSpinner = true) {
+        if (showSpinner) this.showLoading();
+        try {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('calendar_events')
+                    .select('*');
+                if (error) throw error;
+                this.events = data || [];
+            } else {
+                this.events = [];
+            }
+        } catch (error) {
+            console.error('Error loading events:', error);
+            this.events = [];
+        }
+        if (showSpinner) this.hideLoading();
+        this.renderCalendar();
+    }
+
+    renderCalendar() {
+        const grid = document.getElementById('calendarGrid');
+        const monthYear = document.getElementById('currentMonthYear');
+        
+        if (!grid || !monthYear) return;
+
+        grid.innerHTML = '';
+        monthYear.textContent = this.currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+        const year = this.currentDate.getFullYear();
+        const month = this.currentDate.getMonth();
+
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        
+        const startDayIndex = firstDay.getDay(); // 0 (Sun) to 6 (Sat)
+        const totalDays = lastDay.getDate();
+
+        // Previous Month Padding
+        const prevMonthLastDay = new Date(year, month, 0).getDate();
+        for (let i = startDayIndex - 1; i >= 0; i--) {
+            const dayDiv = document.createElement('div');
+            dayDiv.className = 'calendar-day other-month';
+            dayDiv.textContent = prevMonthLastDay - i;
+            grid.appendChild(dayDiv);
+        }
+
+        // Current Month Days
+        const today = new Date();
+        for (let day = 1; day <= totalDays; day++) {
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const dayDiv = document.createElement('div');
+            dayDiv.className = 'calendar-day relative group';
+            
+            const currentDayOfWeek = (startDayIndex + day - 1) % 7;
+            const isSaturday = currentDayOfWeek === 6;
+            const isSunday = currentDayOfWeek === 0;
+
+            if (isSaturday && !this.calendarSettings.enableSaturdayClasses) {
+                dayDiv.classList.add('bg-gray-100'); // Visual cue for non-school Saturday
+            } else if (isSunday && !this.calendarSettings.enableSundayClasses) {
+                dayDiv.classList.add('bg-gray-100'); // Visual cue for non-school Sunday
+            }
+
+            if (today.getDate() === day && today.getMonth() === month && today.getFullYear() === year) {
+                dayDiv.classList.add('today');
+            }
+
+            // Date Number
+            const dateNum = document.createElement('div');
+            dateNum.className = 'font-semibold text-gray-700 mb-1';
+            dateNum.textContent = day;
+            dayDiv.appendChild(dateNum);
+
+            // Add Event Button (Visible on Hover)
+            const addBtn = document.createElement('button');
+            addBtn.className = 'absolute top-1 right-1 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity';
+            addBtn.innerHTML = '<i class="fas fa-plus-circle"></i>';
+            addBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.openAddEventModal(dateStr);
+            };
+            dayDiv.appendChild(addBtn);
+
+            // Events for this day
+            const dayEvents = this.events.filter(e => e.date === dateStr);
+            dayEvents.forEach(event => {
+                const chip = document.createElement('div');
+                chip.className = `event-chip ${this.getEventClass(event.type)}`;
+                chip.textContent = event.title;
+                chip.onclick = (e) => {
+                    e.stopPropagation();
+                    this.editEvent(event);
+                };
+                dayDiv.appendChild(chip);
+            });
+
+            grid.appendChild(dayDiv);
+        }
+
+        // Next Month Padding
+        const remainingCells = 42 - (startDayIndex + totalDays); // 6 rows * 7 cols = 42
+        for (let i = 1; i <= remainingCells; i++) {
+            const dayDiv = document.createElement('div');
+            dayDiv.className = 'calendar-day other-month';
+            dayDiv.textContent = i;
+            grid.appendChild(dayDiv);
+        }
+    }
+
+    getEventClass(type) {
+        switch (type) {
+            case 'holiday': return 'event-holiday';
+            case 'suspension': return 'event-suspension';
+            default: return 'event-activity';
+        }
+    }
+
+    openAddEventModal(date = '') {
+        const modalTitle = document.getElementById('modalTitle');
+        const eventForm = document.getElementById('eventForm');
+        const eventId = document.getElementById('eventId');
+        const eventDate = document.getElementById('eventDate');
+        
+        if (modalTitle) modalTitle.textContent = 'Add Event';
+        if (eventForm) eventForm.reset();
+        if (eventId) eventId.value = '';
+        if (eventDate && date) eventDate.value = date;
+        
+        const modal = document.getElementById('eventModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+    }
+
+    editEvent(event) {
+        const modalTitle = document.getElementById('modalTitle');
+        const eventId = document.getElementById('eventId');
+        const eventDate = document.getElementById('eventDate');
+        const eventTitle = document.getElementById('eventTitle');
+        const eventType = document.getElementById('eventType');
+        const eventDescription = document.getElementById('eventDescription');
+
+        if (modalTitle) modalTitle.textContent = 'Edit Event';
+        if (eventId) eventId.value = event.id;
+        if (eventDate) eventDate.value = event.date;
+        if (eventTitle) eventTitle.value = event.title;
+        if (eventType) eventType.value = event.type;
+        if (eventDescription) eventDescription.value = event.description || '';
+        
+        const modal = document.getElementById('eventModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+    }
+
+    closeModal() {
+        const modal = document.getElementById('eventModal');
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+    }
+
+    async saveEvent() {
+        const id = document.getElementById('eventId').value;
+        const eventData = {
+            date: document.getElementById('eventDate').value,
+            title: document.getElementById('eventTitle').value,
+            type: document.getElementById('eventType').value,
+            description: document.getElementById('eventDescription').value,
+            updated_at: new Date().toISOString()
+        };
+
+        this.showLoading();
+        try {
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                if (id) {
+                    const { error } = await window.supabaseClient
+                        .from('calendar_events')
+                        .update(eventData)
+                        .eq('id', id);
+                    if (error) throw error;
+                } else {
+                    const { error } = await window.supabaseClient
+                        .from('calendar_events')
+                        .insert([{ ...eventData, created_at: new Date().toISOString() }]);
+                    if (error) throw error;
+                }
+            }
+            this.closeModal();
+            this.loadEvents();
+        } catch (error) {
+            console.error('Error saving event:', error);
+            alert('Error saving event: ' + error.message);
         } finally {
             this.hideLoading();
         }
