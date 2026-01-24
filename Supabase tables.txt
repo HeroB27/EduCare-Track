@@ -99,11 +99,27 @@ CREATE TABLE public.parent_students (
 CREATE TABLE public.classes (
   id text PRIMARY KEY,
   grade text NOT NULL,
+  level text NOT NULL,
   adviser_id uuid REFERENCES teachers(id),
   strand text,
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
   UNIQUE (grade, section)
+);
+
+-- =========================================
+-- CLASS SCHEDULES
+-- =========================================
+CREATE TABLE public.class_schedules (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  class_id text REFERENCES classes(id) ON DELETE CASCADE,
+  subject text NOT NULL,
+  teacher_id uuid REFERENCES teachers(id),
+  schedule_text text,
+  day_of_week text,
+  start_time time,
+  end_time time,
+  created_at timestamptz DEFAULT now()
 );
 
 -- =========================================
