@@ -30,41 +30,80 @@ class GuardStudentLookup {
 
     async loadAllStudents() {
         try {
-            this.allStudents = await EducareTrack.getStudents(true); // Force refresh
+            // Get all students from Supabase
+            const { data: studentsData, error: studentsError } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, lrn, class_id, current_status')
+                .in('current_status', ['enrolled', 'active', 'present']);
+            
+            if (studentsError) throw studentsError;
+            
+            // Transform data to match expected format
+            this.allStudents = studentsData.map(student => ({
+                id: student.id,
+                first_name: student.full_name.split(' ')[0],
+                last_name: student.full_name.split(' ').slice(1).join(' '),
+                name: student.full_name,
+                lrn: student.lrn,
+                classId: student.class_id,
+                class_id: student.class_id,
+                current_status: student.current_status,
+                currentStatus: student.current_status
+            }));
             
             // Enhance student data with class information and attendance
             this.allStudents = await Promise.all(this.allStudents.map(async (student) => {
                 // Get class information to determine grade
-                if (student.class_id || student.classId) {
+                if (student.class_id) {
                     try {
-                        const classDoc = await window.EducareTrack.db.collection('classes')
-                            .doc(student.class_id || student.classId)
-                            .get();
-                        if (classDoc.exists) {
-                            const classData = classDoc.data();
+                        const { data: classData, error: classError } = await window.supabaseClient
+                        .from('classes')
+                        .select('grade, strand')
+                        .eq('id', student.class_id)
+                        .single();
+                        
+                        if (!classError && classData) {
                             student.grade = classData.grade;
-                            student.className = classData.name;
+                            student.strand = classData.strand;
+                            student.className = `${classData.grade}${classData.strand ? ` - ${classData.strand}` : ''}`;
                         }
                     } catch (error) {
                         console.warn('Error fetching class info for student:', student.id);
                     }
                 }
                 
-                // Get last attendance record
+                // Get last attendance record with status
                 try {
-                    const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
-                        .where('student_id', '==', student.id)
-                        .orderBy('timestamp', 'desc')
-                        .limit(1)
-                        .get();
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
                     
-                    if (!attendanceSnapshot.empty) {
-                        const lastAttendance = attendanceSnapshot.docs[0].data();
-                        student.lastAttendance = lastAttendance.timestamp;
-                        student.currentStatus = lastAttendance.entry_type === 'entry' ? 'in_school' : 'out_school';
+                    const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                        .from('attendance')
+                        .select('timestamp, session, status')
+                        .eq('student_id', student.id)
+                        .gte('timestamp', today.toISOString())
+                        .order('timestamp', { ascending: false })
+                        .limit(1);
+                    
+                    if (!attendanceError && attendanceData.length > 0) {
+                        const lastAttendance = attendanceData[0];
+                        student.lastAttendance = new Date(lastAttendance.timestamp);
+                        
+                        // Use the actual attendance status from the table
+                        student.currentStatus = lastAttendance.status || 'unknown';
+                        student.current_status = lastAttendance.status || 'unknown';
+                        
+                        // Also track session for additional context
+                        student.lastSession = lastAttendance.session;
+                    } else {
+                        // No attendance record today - mark as absent
+                        student.currentStatus = 'absent';
+                        student.current_status = 'absent';
                     }
                 } catch (error) {
                     console.warn('Error fetching last attendance for student:', student.id);
+                    student.currentStatus = 'unknown';
+                    student.current_status = 'unknown';
                 }
                 
                 return student;
@@ -93,7 +132,8 @@ class GuardStudentLookup {
         const statuses = [...new Set(this.allStudents.map(s => s.current_status || s.currentStatus).filter(Boolean))].sort();
         statusFilter.innerHTML = '<option value="">All Statuses</option>';
         statuses.forEach(status => {
-            statusFilter.innerHTML += `<option value="${status}">${status}</option>`;
+            const displayStatus = this.getStatusText(status);
+            statusFilter.innerHTML += `<option value="${status}">${displayStatus}</option>`;
         });
     }
 
@@ -135,12 +175,13 @@ class GuardStudentLookup {
             // Grade filter
             const matchesGrade = !gradeFilter || 
                 (student.grade === gradeFilter) || 
-                (student.level === gradeFilter);
+                (student.className && student.className.includes(gradeFilter)) ||
+                (student.strand && student.strand === gradeFilter);
 
-            // Status filter
+            // Status filter - now using actual attendance status
+            const studentStatus = student.current_status || student.currentStatus;
             const matchesStatus = !statusFilter || 
-                (student.current_status === statusFilter) || 
-                (student.currentStatus === statusFilter);
+                (studentStatus === statusFilter);
 
             return matchesSearch && matchesGrade && matchesStatus;
         });
@@ -173,17 +214,20 @@ class GuardStudentLookup {
     }
 
     renderStudentCard(student) {
-        // Create student name from first_name and last_name or use name field
-        const studentName = student.name || 
+        // Create student name from full_name or first_name/last_name
+        const studentName = student.name || student.full_name || 
             (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
             'Unknown';
             
-        const statusColor = EducareTrack.getStatusColor(student.current_status || student.currentStatus || 'out_school');
-        const statusText = EducareTrack.getStatusText(student.current_status || student.currentStatus || 'out_school');
+        const statusColor = this.getStatusColor(student.current_status || student.currentStatus || 'absent');
+        const statusText = this.getStatusText(student.current_status || student.currentStatus || 'absent');
         const lastAttendance = student.lastAttendance ? 
             (student.lastAttendance.toDate ? 
-                EducareTrack.formatTime(student.lastAttendance.toDate()) : 
-                EducareTrack.formatTime(student.lastAttendance)) : 'No record';
+                student.lastAttendance.toDate().toTimeString().substring(0, 5) : 
+                student.lastAttendance.toTimeString().substring(0, 5)) : 'No record';
+        
+        // Add session info if available
+        const sessionInfo = student.lastSession ? ` (${student.lastSession})` : '';
 
         return `
             <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:border-blue-300 transition duration-200 cursor-pointer student-card"
@@ -199,14 +243,14 @@ class GuardStudentLookup {
                         </div>
                     </div>
                     <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
-                        ${statusText}
+                        ${statusText}${sessionInfo}
                     </span>
                 </div>
                 
                 <div class="space-y-2 text-sm">
                     <div class="flex justify-between">
                         <span class="text-gray-600">Grade:</span>
-                        <span class="font-medium">${student.grade || 'N/A'}</span>
+                        <span class="font-medium">${student.grade || student.level || 'N/A'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">Class:</span>
@@ -245,11 +289,59 @@ class GuardStudentLookup {
 
     async viewStudentDetails(studentId) {
         try {
-            const student = await EducareTrack.getStudentById(studentId);
-            if (!student) {
+            // Get student data from Supabase
+            const { data: studentData, error: studentError } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, lrn, class_id, current_status')
+                .eq('id', studentId)
+                .single();
+            
+            if (studentError || !studentData) {
                 this.showNotification('Student not found', 'error');
                 return;
             }
+            
+            // Get current attendance status
+            let currentAttendanceStatus = 'absent'; // Default to absent
+            let lastAttendanceTime = null;
+            let lastSession = null;
+            
+            try {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                    .from('attendance')
+                    .select('timestamp, session, status')
+                    .eq('student_id', studentId)
+                    .gte('timestamp', today.toISOString())
+                    .order('timestamp', { ascending: false })
+                    .limit(1);
+                
+                if (!attendanceError && attendanceData.length > 0) {
+                    const lastAttendance = attendanceData[0];
+                    currentAttendanceStatus = lastAttendance.status || 'unknown';
+                    lastAttendanceTime = lastAttendance.timestamp;
+                    lastSession = lastAttendance.session;
+                }
+            } catch (error) {
+                console.warn('Error fetching current attendance:', error);
+            }
+            
+            // Transform to expected format
+            const student = {
+                id: studentData.id,
+                first_name: studentData.full_name.split(' ')[0],
+                last_name: studentData.full_name.split(' ').slice(1).join(' '),
+                name: studentData.full_name,
+                lrn: studentData.lrn,
+                classId: studentData.class_id,
+                class_id: studentData.class_id,
+                current_status: currentAttendanceStatus, // Use attendance status
+                currentStatus: currentAttendanceStatus,
+                lastAttendance: lastAttendanceTime,
+                lastSession: lastSession
+            };
 
             await this.loadStudentDetails(student);
         } catch (error) {
@@ -260,16 +352,14 @@ class GuardStudentLookup {
 
     async loadStudentDetails(student) {
         // Load additional data with proper error handling
-        const parentId = student.parent_id || student.parentId;
-        
         const [attendanceHistory, clinicVisits, parentInfo] = await Promise.all([
-            EducareTrack.getAttendanceByStudent(student.id).catch(() => []),
-            EducareTrack.getClinicVisitsByStudent(student.id).catch(() => []),
-            parentId ? EducareTrack.getUserById(parentId).catch(() => null) : Promise.resolve(null)
+            this.getAttendanceByStudent(student.id).catch(() => []),
+            this.getClinicVisitsByStudent(student.id).catch(() => []),
+            this.getParentInfo(student.id).catch(() => null)
         ]);
 
-        // Create student name from first_name and last_name or use name field
-        const studentName = student.name || 
+        // Create student name from full_name or first_name/last_name
+        const studentName = student.name || student.full_name || 
             (student.first_name && student.last_name ? `${student.first_name} ${student.last_name}` : '') ||
             'Unknown';
 
@@ -412,13 +502,47 @@ class GuardStudentLookup {
 
     async recordQuickAttendance(studentId, entryType) {
         try {
-            const student = await EducareTrack.getStudentById(studentId);
-            if (!student) {
+            // Get student data from Supabase
+            const { data: studentData, error: studentError } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, class_id')
+                .eq('id', studentId)
+                .single();
+            
+            if (studentError || !studentData) {
                 this.showNotification('Student not found', 'error');
                 return;
             }
+            
+            const student = {
+                id: studentData.id,
+                name: studentData.full_name,
+                classId: studentData.class_id
+            };
 
-            await EducareTrack.recordGuardAttendance(studentId, student, entryType);
+            // Create timestamp and determine session/status
+            const timestamp = new Date();
+            const hours = timestamp.getHours();
+            const session = hours < 12 ? 'AM' : 'PM';
+            const timeString = timestamp.toTimeString().substring(0, 5);
+            const status = entryType === 'entry' ? 
+                (timeString <= '07:30' ? 'present' : 'late') : 'present';
+
+            // Insert attendance record using Supabase
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .insert({
+                    student_id: studentId,
+                    class_id: student.classId || null,
+                    session: session,
+                    status: status,
+                    method: 'manual',
+                    timestamp: timestamp.toISOString(),
+                    recorded_by: this.currentUser.id
+                });
+            
+            if (error) throw error;
+            
             this.showNotification(`${student.name} ${entryType} recorded successfully`, 'success');
             
             // Refresh data
@@ -444,10 +568,125 @@ class GuardStudentLookup {
         this.updateResultsCount();
     }
 
-    showNotification(message, type = 'info') {
-        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-            window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : 'Info', message, type });
+    // New helper methods for Supabase data fetching
+    async getAttendanceByStudent(studentId) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select('timestamp, session, status, method')
+                .eq('student_id', studentId)
+                .order('timestamp', { ascending: false })
+                .limit(5);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            return (data || []).map(record => ({
+                timestamp: record.timestamp,
+                entryType: record.session === 'AM' ? 'entry' : 'exit',
+                session: record.session,
+                status: record.status,
+                method: record.method
+            }));
+        } catch (error) {
+            console.error('Error getting attendance by student:', error);
+            return [];
         }
+    }
+
+    async getClinicVisitsByStudent(studentId) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('visit_time, reason, notes, outcome')
+                .eq('student_id', studentId)
+                .order('visit_time', { ascending: false })
+                .limit(3);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            return (data || []).map(record => ({
+                timestamp: record.visit_time,
+                visit_time: record.visit_time,
+                reason: record.reason,
+                notes: record.notes,
+                outcome: record.outcome,
+                checkIn: true // All clinic visits are check-ins in new schema
+            }));
+        } catch (error) {
+            console.error('Error getting clinic visits by student:', error);
+            return [];
+        }
+    }
+
+    async getParentInfo(studentId) {
+        try {
+            // Get parent-student relationship first
+            const { data: relationshipData, error: relationshipError } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', studentId)
+                .limit(1);
+            
+            if (relationshipError || !relationshipData || relationshipData.length === 0) {
+                return null;
+            }
+            
+            const parentId = relationshipData[0].parent_id;
+            
+            // Get parent profile info
+            const { data: parentData, error: parentError } = await window.supabaseClient
+                .from('parents')
+                .select(`
+                    id,
+                    profiles!inner(full_name, phone)
+                `)
+                .eq('id', parentId)
+                .single();
+            
+            if (parentError || !parentData) {
+                return null;
+            }
+            
+            return {
+                id: parentData.id,
+                name: parentData.profiles?.full_name || 'Unknown',
+                phone: parentData.profiles?.phone || 'Not provided',
+                emergencyContact: parentData.profiles?.phone || 'Not provided'
+            };
+        } catch (error) {
+            console.error('Error getting parent info:', error);
+            return null;
+        }
+    }
+
+    getStatusColor(status) {
+        const colors = {
+            'present': 'bg-green-100 text-green-800',
+            'late': 'bg-yellow-100 text-yellow-800',
+            'absent': 'bg-red-100 text-red-800',
+            'excused': 'bg-blue-100 text-blue-800',
+            'half_day': 'bg-orange-100 text-orange-800',
+            'in_school': 'bg-green-100 text-green-800',
+            'out_school': 'bg-red-100 text-red-800',
+            'unknown': 'bg-gray-100 text-gray-800'
+        };
+        return colors[status] || colors.unknown;
+    }
+
+    getStatusText(status) {
+        const texts = {
+            'present': 'Present',
+            'late': 'Late',
+            'absent': 'Absent',
+            'excused': 'Excused',
+            'half_day': 'Half Day',
+            'in_school': 'In School',
+            'out_school': 'Out School',
+            'unknown': 'Unknown'
+        };
+        return texts[status] || texts.unknown;
     }
 }
 

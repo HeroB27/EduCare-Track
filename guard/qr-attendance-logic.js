@@ -14,13 +14,15 @@ class AttendanceLogic {
 
     async loadSettings() {
         try {
-            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            const { data } = await window.supabaseClient
+            const { data, error } = await window.supabaseClient
                 .from('system_settings')
                 .select('value')
                 .eq('key', 'attendance_schedule')
                 .single();
-            if (data) this.settings = data.value;
+            
+            if (!error && data) {
+                this.settings = data.value;
+            }
         } catch (e) {
             console.error('Error loading settings', e);
         }
@@ -67,13 +69,29 @@ class AttendanceLogic {
         try {
             // Fetch student data if not provided to determine schedule
             if (!studentData) {
-                if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-                const { data } = await window.supabaseClient
+                // Get student class info first
+                const { data: student, error: studentError } = await window.supabaseClient
                     .from('students')
-                    .select('level,grade')
+                    .select('class_id')
                     .eq('id', studentId)
                     .single();
-                if (data) studentData = data;
+                
+                if (!studentError && student && student.class_id) {
+                    // Get class info for grade/level
+                    const { data: classInfo, error: classError } = await window.supabaseClient
+                        .from('classes')
+                        .select('grade, level')
+                        .eq('id', student.class_id)
+                        .single();
+                    
+                    if (!classError && classInfo) {
+                        studentData = {
+                            class_id: student.class_id,
+                            grade: classInfo.grade,
+                            level: classInfo.level
+                        };
+                    }
+                }
             }
 
             const schedule = this.getScheduleForStudent(studentData?.level, studentData?.grade);
@@ -82,24 +100,25 @@ class AttendanceLogic {
             startOfDay.setHours(0, 0, 0, 0);
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
-            let records = [];
-            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            const { data, error } = await window.supabaseClient
+            
+            const { data: records, error } = await window.supabaseClient
                 .from('attendance')
-                .select('studentId,entryType,timestamp,time,session,status')
-                .eq('studentId', studentId)
+                .select('student_id, session, status, timestamp')
+                .eq('student_id', studentId)
                 .gte('timestamp', startOfDay.toISOString())
                 .lte('timestamp', endOfDay.toISOString())
                 .order('timestamp', { ascending: true });
-            if (error) {
-                throw error;
-            }
-            records = (data || []).map(r => ({
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            const transformedRecords = (records || []).map(r => ({
                 ...r,
-                timestamp: r.timestamp ? new Date(r.timestamp) : null
+                entryType: r.session === 'AM' ? 'entry' : 'exit',
+                time: new Date(r.timestamp).toTimeString().substring(0, 5)
             }));
             
-            return this.analyzeAttendance(records, date, schedule);
+            return this.analyzeAttendance(transformedRecords, date, schedule);
         } catch (error) {
             console.error('Error calculating student status:', error);
             return { status: 'absent', remarks: 'Error calculating status' };
@@ -205,36 +224,41 @@ class AttendanceLogic {
             startOfDay.setHours(0, 0, 0, 0);
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
-            let allStudents = [];
-            let presentStudentIds = new Set();
-            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
-                window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus'),
-                window.supabaseClient.from('attendance')
-                    .select('studentId,entryType,timestamp')
-                    .gte('timestamp', startOfDay.toISOString())
-                    .lte('timestamp', endOfDay.toISOString())
-                    .eq('entryType', 'entry')
-            ]);
+            
+            // Get all enrolled students
+            const { data: students, error: sErr } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, class_id')
+                .in('current_status', ['enrolled', 'active', 'present']);
+            
             if (sErr) throw sErr;
+            
+            // Get today's attendance entries
+            const { data: entries, error: eErr } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id')
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString())
+                .eq('session', 'AM'); // Only check morning entries for presence
+            
             if (eErr) throw eErr;
-            allStudents = (students || []).map(s => ({
+            
+            const allStudents = (students || []).map(s => ({
                 id: s.id,
-                name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-                classId: s.classId,
-                parentId: s.parentId,
-                currentStatus: s.currentStatus
+                name: s.full_name,
+                class_id: s.class_id
             }));
-            presentStudentIds = new Set((entries || []).map(e => e.studentId));
-
+            
+            const presentStudentIds = new Set((entries || []).map(e => e.student_id));
+            
             // Calculate detailed status for each absent student
             const absentStudents = [];
             for (const student of allStudents) {
                 if (!presentStudentIds.has(student.id)) {
-                    const status = await this.calculateStudentStatus(student.id, date);
+                    const status = await this.calculateStudentStatus(student.id, date, student);
                     absentStudents.push({
                         ...student,
-                        attendanceStatus: status
+                        attendance_status: status
                     });
                 }
             }
@@ -249,37 +273,47 @@ class AttendanceLogic {
     // Generate attendance report for a date range
     async generateAttendanceReport(startDate, endDate, studentId = null) {
         try {
-            let records = [];
-            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-            let q = window.supabaseClient
+            let query = window.supabaseClient
                 .from('attendance')
-                .select('id,studentId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
+                .select('id, student_id, session, status, method, timestamp, recorded_by')
                 .gte('timestamp', startDate.toISOString())
                 .lte('timestamp', endDate.toISOString())
                 .order('timestamp', { ascending: false });
+            
             if (studentId) {
-                q = q.eq('studentId', studentId);
+                query = query.eq('student_id', studentId);
             }
-            const { data, error } = await q;
+            
+            const { data, error } = await query;
+            
             if (error) throw error;
-            records = (data || []).map(r => ({
+            
+            // Transform data to match expected format
+            const records = (data || []).map(r => ({
                 id: r.id,
-                ...r,
-                timestamp: r.timestamp ? new Date(r.timestamp) : null
+                student_id: r.student_id,
+                entryType: r.session === 'AM' ? 'entry' : 'exit',
+                entry_type: r.session === 'AM' ? 'entry' : 'exit',
+                timestamp: new Date(r.timestamp),
+                time: new Date(r.timestamp).toTimeString().substring(0, 5),
+                session: r.session,
+                status: r.status,
+                method: r.method,
+                recorded_by: r.recorded_by
             }));
 
             // Group by student and date
             const report = {};
             records.forEach(record => {
-                const dateObj = record.timestamp instanceof Date ? record.timestamp : (record.timestamp?.toDate ? record.timestamp.toDate() : null);
-                const date = (dateObj || new Date()).toDateString();
-                if (!report[record.studentId]) {
-                    report[record.studentId] = {};
+                const dateObj = record.timestamp instanceof Date ? record.timestamp : new Date(record.timestamp);
+                const date = dateObj.toDateString();
+                if (!report[record.student_id]) {
+                    report[record.student_id] = {};
                 }
-                if (!report[record.studentId][date]) {
-                    report[record.studentId][date] = [];
+                if (!report[record.student_id][date]) {
+                    report[record.student_id][date] = [];
                 }
-                report[record.studentId][date].push(record);
+                report[record.student_id][date].push(record);
             });
 
             return report;
@@ -292,34 +326,35 @@ class AttendanceLogic {
     // Mark student as absent manually
     async markStudentAbsent(studentId, date = new Date(), reason = '') {
         try {
-            if (!window.supabaseClient) throw new Error('Supabase client not initialized');
+            // Get student data
             const { data: student, error: sErr } = await window.supabaseClient
                 .from('students')
-                .select('id,firstName,lastName,classId,parentId')
+                .select('id, full_name, class_id')
                 .eq('id', studentId)
                 .single();
+            
             if (sErr || !student) throw new Error('Student not found');
+            
             const timestamp = new Date(date);
             timestamp.setHours(8, 0, 0, 0);
-            const row = {
-                studentId: studentId,
-                classId: student.classId || '',
-                entryType: 'entry',
-                timestamp: timestamp,
-                time: '08:00',
-                session: 'morning',
+            
+            const { error } = await window.supabaseClient.from('attendance').insert({
+                student_id: studentId,
+                class_id: student.class_id || null,
+                session: 'AM',
                 status: 'absent',
-                remarks: reason || 'Marked absent by staff',
-                recordedBy: 'system',
-                recordedByName: 'System',
-                manualEntry: true
-            };
-            const { error } = await window.supabaseClient.from('attendance').insert(row);
+                method: 'manual',
+                timestamp: timestamp.toISOString(),
+                recorded_by: 'system'
+            });
+            
             if (error) throw error;
+            
             await this.sendAbsenceNotification({
                 id: student.id,
-                name: `${student.firstName || ''} ${student.lastName || ''}`.trim(),
-                parentId: student.parentId
+                first_name: student.full_name.split(' ')[0],
+                last_name: student.full_name.split(' ').slice(1).join(' '),
+                full_name: student.full_name
             }, reason);
 
             return true;
@@ -331,32 +366,37 @@ class AttendanceLogic {
 
     async sendAbsenceNotification(student, reason) {
         try {
+            // Get parent-student relationship
+            const { data: relationshipData, error: relationshipError } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id)
+                .limit(1);
+            
+            let targetUsers = [];
+            if (!relationshipError && relationshipData && relationshipData.length > 0) {
+                targetUsers = [relationshipData[0].parent_id];
+            }
+            
+            if (targetUsers.length === 0) {
+                console.warn('No parent found for absence notification');
+                return;
+            }
+
             const notificationData = {
-                type: 'attendance',
+                target_users: targetUsers,
                 title: 'Student Absence Reported',
-                message: `${student.name} was marked absent. ${reason ? `Reason: ${reason}` : ''}`,
-                targetUsers: [student.parentId],
-                studentId: student.id,
-                studentName: student.name,
-                isUrgent: true
+                message: `${student.full_name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} was marked absent. ${reason ? `Reason: ${reason}` : ''}`,
+                type: 'attendance',
+                student_id: student.id
             };
-            if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
-                await window.EducareTrack.createNotification(notificationData);
-            } else {
-                const payload = {
-                    type: notificationData.type,
-                    title: notificationData.title,
-                    message: notificationData.message,
-                    target_users: notificationData.targetUsers,
-                    student_id: notificationData.studentId,
-                    student_name: notificationData.studentName,
-                    is_urgent: notificationData.isUrgent,
-                    is_active: true,
-                    created_at: new Date().toISOString(),
-                    read_by: []
-                };
-                if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-                await window.supabaseClient.from('notifications').insert(payload);
+            
+            const { error } = await window.supabaseClient
+                .from('notifications')
+                .insert(notificationData);
+            
+            if (error) {
+                console.error('Error creating notification:', error);
             }
         } catch (error) {
             console.error('Error sending absence notification:', error);
@@ -364,72 +404,21 @@ class AttendanceLogic {
     }
 
     getCurrentSession() {
-    const now = new Date();
-    const currentTime = now.getHours() + ':' + now.getMinutes().toString().padStart(2, '0');
-    
-    if (currentTime >= '7:30' && currentTime < '12:00') {
-        return 'morning';
-    } else if (currentTime >= '13:00' && currentTime < '16:00') {
-        return 'afternoon';
-    }
-    
-    return 'general';
-}
-
-isLate(time) {
-    return time > '7:30';
-}
-
-// Enhanced method to get basic absent students (compatible with QR scanner)
-async getAbsentStudents(date = new Date()) {
-    try {
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
-        let allStudents = [];
-        let presentStudentIds = new Set();
-        if (!window.supabaseClient) throw new Error('Supabase client not initialized');
-        const [{ data: students, error: sErr }, { data: entries, error: eErr }] = await Promise.all([
-            window.supabaseClient.from('students').select('id,name,firstName,lastName,classId,parentId,currentStatus,grade,level'),
-            window.supabaseClient.from('attendance')
-                .select('studentId,entryType,timestamp')
-                .gte('timestamp', startOfDay.toISOString())
-                .lte('timestamp', endOfDay.toISOString())
-                .eq('entryType', 'entry')
-        ]);
-        if (sErr) throw sErr;
-        if (eErr) throw eErr;
-        allStudents = (students || []).map(s => ({
-            id: s.id,
-            name: s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-            classId: s.classId,
-            parentId: s.parentId,
-            currentStatus: s.currentStatus,
-            grade: s.grade,
-            level: s.level
-        }));
-        presentStudentIds = new Set((entries || []).map(e => e.studentId));
-
-        // Calculate detailed status for each absent student
-        const absentStudents = [];
-        for (const student of allStudents) {
-            if (!presentStudentIds.has(student.id)) {
-                const status = await this.calculateStudentStatus(student.id, date, student);
-                absentStudents.push({
-                    ...student,
-                    attendanceStatus: status
-                });
-            }
+        const now = new Date();
+        const currentTime = now.getHours() + ':' + now.getMinutes().toString().padStart(2, '0');
+        
+        if (currentTime >= '7:30' && currentTime < '12:00') {
+            return 'morning';
+        } else if (currentTime >= '13:00' && currentTime < '16:00') {
+            return 'afternoon';
         }
-
-        return absentStudents;
-    } catch (error) {
-        console.error('Error getting absent students:', error);
-        return [];
+        
+        return 'general';
     }
-}
 
+    isLate(time) {
+        return time > '7:30';
+    }
 }
 
 // Make available globally

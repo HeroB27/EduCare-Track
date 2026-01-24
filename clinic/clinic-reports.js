@@ -40,18 +40,40 @@ class ClinicReports {
 
     async loadVisits() {
         try {
-            const { data, error } = await window.supabaseClient
-                .from('clinic_visits')
-                .select('id,studentId,classId,checkIn,timestamp,reason,notes')
-                .order('timestamp', { ascending: false });
-            if (error) {
-                throw error;
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data, error } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                    .order('visit_time', { ascending: false });
+                if (error) {
+                    throw error;
+                }
+                this.visits = (data || []).map(v => ({
+                    id: v.id,
+                    studentId: v.student_id,
+                    studentName: '', // Will be loaded separately if needed
+                    classId: '', // Will be loaded separately if needed
+                    checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
+                    ...v,
+                    timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
+                }));
+            } else {
+                const db = window.EducareTrack ? window.EducareTrack.db : null;
+                if (!db) {
+                    throw new Error('Database not available');
+                }
+                const snapshot = await db.collection('clinicVisits')
+                    .orderBy('timestamp', 'desc')
+                    .get();
+                this.visits = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        ...data,
+                        timestamp: data.timestamp?.toDate() || new Date()
+                    };
+                });
             }
-            this.visits = (data || []).map(v => ({
-                id: v.id,
-                ...v,
-                timestamp: v.timestamp ? new Date(v.timestamp) : new Date()
-            }));
         } catch (error) {
             console.error('Error loading visits:', error);
             this.showError('Failed to load clinic visits');
@@ -105,11 +127,13 @@ class ClinicReports {
         // Find top reason
         const reasonCounts = {};
         visits.forEach(visit => {
-            reasonCounts[visit.reason] = (reasonCounts[visit.reason] || 0) + 1;
+            if (visit.reason) { // Only count non-empty reasons
+                reasonCounts[visit.reason] = (reasonCounts[visit.reason] || 0) + 1;
+            }
         });
-        const topReason = Object.keys(reasonCounts).reduce((a, b) => 
-            reasonCounts[a] > reasonCounts[b] ? a : 'N/A'
-        );
+        const topReason = Object.keys(reasonCounts).length > 0 
+            ? Object.keys(reasonCounts).reduce((a, b) => reasonCounts[a] > reasonCounts[b] ? a : b)
+            : 'N/A';
 
         document.getElementById('totalVisitsStat').textContent = totalVisits;
         document.getElementById('uniqueStudentsStat').textContent = uniqueStudents;

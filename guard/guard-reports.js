@@ -63,15 +63,15 @@ class GuardReports {
 
             switch (reportType) {
                 case 'attendance':
-                    reportData = await EducareTrack.getAttendanceReport(start, end, 'all');
+                    reportData = await this.getAttendanceReport(start, end);
                     reportTitle = 'Attendance Report';
                     break;
                 case 'late':
-                    reportData = await EducareTrack.getLateArrivalsReport(start, end, 'all');
+                    reportData = await this.getLateArrivalsReport(start, end);
                     reportTitle = 'Late Arrivals Report';
                     break;
                 case 'clinic':
-                    reportData = await EducareTrack.getClinicReport(start, end, 'all');
+                    reportData = await this.getClinicReport(start, end);
                     reportTitle = 'Clinic Visits Report';
                     break;
                 case 'summary':
@@ -99,14 +99,14 @@ class GuardReports {
 
     async generateSummaryReport(startDate, endDate) {
         // Get attendance data for the period
-        const attendanceData = await EducareTrack.getAttendanceReport(startDate, endDate, 2000);
+        const attendanceData = await this.getAttendanceReport(startDate, endDate);
         
         // Group by date and calculate statistics
         const dateGroups = {};
         
         attendanceData.forEach(record => {
             if (record.timestamp) {
-                const date = record.timestamp.toDate().toDateString();
+                const date = new Date(record.timestamp).toDateString();
                 if (!dateGroups[date]) {
                     dateGroups[date] = {
                         date: date,
@@ -120,18 +120,24 @@ class GuardReports {
                     };
                 }
                 
-                if (record.entryType === 'entry') {
+                if (record.session === 'AM') {
                     dateGroups[date].entries.push(record);
                     if (record.status === 'present') dateGroups[date].present++;
                     if (record.status === 'late') dateGroups[date].late++;
-                } else if (record.entryType === 'exit') {
+                } else if (record.session === 'PM') {
                     dateGroups[date].exits.push(record);
                 }
             }
         });
 
-        // Get total number of enrolled students (excluding withdrawn/transferred)
-        const totalStudents = await EducareTrack.getCollectionCount('students', [['current_status', 'not-in', ['withdrawn', 'transferred', 'graduated']]]);
+        // Get total number of enrolled students
+        const { data: totalStudentsData, error: totalError } = await window.supabaseClient
+            .from('students')
+            .select('id')
+            .in('current_status', ['enrolled', 'active', 'present']);
+        
+        if (totalError) throw totalError;
+        const totalStudents = totalStudentsData?.length || 0;
         
         // Fill missing dates in range
         const filled = {};
@@ -209,37 +215,35 @@ class GuardReports {
                         <tr>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
-                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Session</th>
-                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recorded By</th>
+                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         ${data.map(record => {
-                            const date = EducareTrack.formatDate(record.timestamp);
-                            const time = EducareTrack.formatTime(record.timestamp);
-                            const statusColor = EducareTrack.getStatusColor(record.status);
-                            const statusText = EducareTrack.getStatusText(record.status);
+                            const date = new Date(record.timestamp).toLocaleDateString();
+                            const time = new Date(record.timestamp).toTimeString().substring(0, 5);
+                            const statusColor = this.getStatusColor(record.status);
+                            const statusText = this.getStatusText(record.status);
                             
                             return `
                                 <tr>
                                     <td class="px-6 py-4 whitespace-nowrap">
-                                        <div class="text-sm font-medium text-gray-900">${record.studentName}</div>
+                                        <div class="text-sm font-medium text-gray-900">${record.studentName || 'Unknown'}</div>
                                         <div class="text-sm text-gray-500">${record.studentId}</div>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <div class="text-sm text-gray-900">${date}</div>
                                         <div class="text-sm text-gray-500">${time}</div>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.entryType}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.session || 'N/A'}</td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusColor}">
                                             ${statusText}
                                         </span>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.session || 'N/A'}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.recordedByName || 'System'}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">${record.method || 'qr'}</td>
                                 </tr>
                             `;
                         }).join('')}
@@ -261,32 +265,29 @@ class GuardReports {
                         <tr>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
-                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
                             <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
-                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Staff</th>
+                            <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outcome</th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         ${data.map(record => {
-                            const date = EducareTrack.formatDate(record.timestamp);
-                            const time = EducareTrack.formatTime(record.timestamp);
-                            const type = record.checkIn ? 'Check-in' : 'Check-out';
+                            const date = new Date(record.visit_time).toLocaleDateString();
+                            const time = new Date(record.visit_time).toTimeString().substring(0, 5);
                             
                             return `
                                 <tr>
                                     <td class="px-6 py-4 whitespace-nowrap">
-                                        <div class="text-sm font-medium text-gray-900">${record.studentName}</div>
+                                        <div class="text-sm font-medium text-gray-900">${record.studentName || 'Unknown'}</div>
                                         <div class="text-sm text-gray-500">${record.studentId}</div>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <div class="text-sm text-gray-900">${date}</div>
                                         <div class="text-sm text-gray-500">${time}</div>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${type}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.reason || 'Not specified'}</td>
                                     <td class="px-6 py-4 text-sm text-gray-900">${record.notes || 'None'}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.staffName || 'Unknown'}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${record.outcome || 'Unknown'}</td>
                                 </tr>
                             `;
                         }).join('')}
@@ -518,9 +519,9 @@ class GuardReports {
         switch (type) {
             case 'attendance':
             case 'late':
-                return ['Student Name', 'Student ID', 'Date', 'Time', 'Type', 'Status', 'Session', 'Recorded By'];
+                return ['Student Name', 'Student ID', 'Date', 'Time', 'Session', 'Status', 'Method'];
             case 'clinic':
-                return ['Student Name', 'Student ID', 'Date', 'Time', 'Type', 'Reason', 'Notes', 'Staff'];
+                return ['Student Name', 'Student ID', 'Date', 'Time', 'Reason', 'Notes', 'Outcome'];
             case 'summary':
                 return ['Date', 'Present', 'Late', 'Absent', 'Attendance Rate', 'Entries', 'Exits'];
             default:
@@ -532,31 +533,28 @@ class GuardReports {
         switch (type) {
             case 'attendance':
             case 'late':
-                const date = EducareTrack.formatDate(record.timestamp);
-                const time = EducareTrack.formatTime(record.timestamp);
+                const date = new Date(record.timestamp).toLocaleDateString();
+                const time = new Date(record.timestamp).toTimeString().substring(0, 5);
                 return [
-                    `"${record.studentName}"`,
+                    `"${record.studentName || 'Unknown'}"`,
                     `"${record.studentId}"`,
                     `"${date}"`,
                     `"${time}"`,
-                    `"${record.entryType}"`,
-                    `"${record.status}"`,
                     `"${record.session || ''}"`,
-                    `"${record.recordedByName || ''}"`
+                    `"${record.status}"`,
+                    `"${record.method || 'qr'}"`
                 ];
             case 'clinic':
-                const clinicDate = EducareTrack.formatDate(record.timestamp);
-                const clinicTime = EducareTrack.formatTime(record.timestamp);
-                const clinicType = record.checkIn ? 'Check-in' : 'Check-out';
+                const clinicDate = new Date(record.visit_time).toLocaleDateString();
+                const clinicTime = new Date(record.visit_time).toTimeString().substring(0, 5);
                 return [
-                    `"${record.studentName}"`,
+                    `"${record.studentName || 'Unknown'}"`,
                     `"${record.studentId}"`,
                     `"${clinicDate}"`,
                     `"${clinicTime}"`,
-                    `"${clinicType}"`,
                     `"${record.reason || ''}"`,
                     `"${record.notes || ''}"`,
-                    `"${record.staffName || ''}"`
+                    `"${record.outcome || ''}"`
                 ];
             case 'summary':
                 return [
@@ -571,6 +569,151 @@ class GuardReports {
             default:
                 return [];
         }
+    }
+
+    // New helper methods for Supabase data fetching
+    async getAttendanceReport(startDate, endDate) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select(`
+                    id,
+                    student_id,
+                    class_id,
+                    session,
+                    status,
+                    method,
+                    timestamp,
+                    recorded_by,
+                    students!inner(full_name)
+                `)
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false })
+                .limit(1000);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            return (data || []).map(record => ({
+                id: record.id,
+                studentId: record.student_id,
+                studentName: record.students?.full_name || 'Unknown',
+                classId: record.class_id,
+                session: record.session,
+                status: record.status,
+                method: record.method,
+                timestamp: record.timestamp,
+                recordedBy: record.recorded_by
+            }));
+        } catch (error) {
+            console.error('Error getting attendance report:', error);
+            return [];
+        }
+    }
+
+    async getLateArrivalsReport(startDate, endDate) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .select(`
+                    id,
+                    student_id,
+                    class_id,
+                    session,
+                    status,
+                    method,
+                    timestamp,
+                    recorded_by,
+                    students!inner(full_name)
+                `)
+                .eq('status', 'late')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .order('timestamp', { ascending: false })
+                .limit(1000);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            return (data || []).map(record => ({
+                id: record.id,
+                studentId: record.student_id,
+                studentName: record.students?.full_name || 'Unknown',
+                classId: record.class_id,
+                session: record.session,
+                status: record.status,
+                method: record.method,
+                timestamp: record.timestamp,
+                recordedBy: record.recorded_by
+            }));
+        } catch (error) {
+            console.error('Error getting late arrivals report:', error);
+            return [];
+        }
+    }
+
+    async getClinicReport(startDate, endDate) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select(`
+                    id,
+                    student_id,
+                    reason,
+                    notes,
+                    outcome,
+                    visit_time,
+                    treated_by,
+                    students!inner(full_name)
+                `)
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString())
+                .order('visit_time', { ascending: false })
+                .limit(1000);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            return (data || []).map(record => ({
+                id: record.id,
+                studentId: record.student_id,
+                studentName: record.students?.full_name || 'Unknown',
+                reason: record.reason,
+                notes: record.notes,
+                outcome: record.outcome,
+                visit_time: record.visit_time,
+                timestamp: record.visit_time, // For compatibility
+                treatedBy: record.treated_by
+            }));
+        } catch (error) {
+            console.error('Error getting clinic report:', error);
+            return [];
+        }
+    }
+
+    getStatusColor(status) {
+        const colors = {
+            'present': 'bg-green-100 text-green-800',
+            'late': 'bg-yellow-100 text-yellow-800',
+            'absent': 'bg-red-100 text-red-800',
+            'excused': 'bg-blue-100 text-blue-800',
+            'half_day': 'bg-orange-100 text-orange-800',
+            'unknown': 'bg-gray-100 text-gray-800'
+        };
+        return colors[status] || colors.unknown;
+    }
+
+    getStatusText(status) {
+        const texts = {
+            'present': 'Present',
+            'late': 'Late',
+            'absent': 'Absent',
+            'excused': 'Excused',
+            'half_day': 'Half Day',
+            'unknown': 'Unknown'
+        };
+        return texts[status] || texts.unknown;
     }
 
     showNotification(message, type = 'info') {

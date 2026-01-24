@@ -2043,33 +2043,30 @@ const EducareTrack = {
             }
             const createdAtValue = notificationData.created_at || notificationData.createdAt || new Date();
             const normalizedCreatedAt = createdAtValue instanceof Date ? createdAtValue.toISOString() : createdAtValue;
+            
+            // Only use fields that exist in NEW schema
             const row = {
                 target_users: targetUsers,
                 title: notificationData.title,
                 message: notificationData.message,
                 type: notificationData.type,
-                is_active: true,
                 created_at: normalizedCreatedAt,
-                read_by: notificationData.read_by || notificationData.readBy || [],
-                student_id: notificationData.student_id || notificationData.studentId || null,
-                student_name: notificationData.student_name || notificationData.studentName || null,
-                related_record: notificationData.related_record || notificationData.relatedRecord || null,
-                is_urgent: notificationData.is_urgent ?? notificationData.isUrgent ?? false
+                read_by: notificationData.read_by || notificationData.readBy || []
             };
+            
             const { data, error } = await window.supabaseClient.from('notifications').insert(row).select('id').single();
             if (error) {
                 throw error;
             }
+            
             this.handleNewNotifications([{
                 id: data.id,
                 ...row,
                 readBy: row.read_by,
                 createdAt: row.created_at,
-                studentId: row.student_id,
-                studentName: row.student_name,
-                relatedRecord: row.related_record,
-                isUrgent: row.is_urgent
+                targetUsers: row.target_users
             }]);
+            
             return data.id;
         } catch (error) {
             console.error('Error creating notification:', error);
@@ -2134,9 +2131,8 @@ const EducareTrack = {
     async fetchNotificationsSnake(userId, type, limit) {
         let query = window.supabaseClient
             .from('notifications')
-            .select('id,read_by,target_users,is_active,created_at,title,message,type,is_urgent,student_id,student_name,related_record')
-            .contains('target_users', [userId])
-            .eq('is_active', true);
+            .select('id,target_users,title,message,type,read_by,created_at')
+            .contains('target_users', [userId]);
         if (type) query = query.eq('type', type);
         if (limit) query = query.limit(limit);
         return query;
@@ -2145,9 +2141,8 @@ const EducareTrack = {
     async fetchNotificationsCamel(userId, type, limit) {
         let query = window.supabaseClient
             .from('notifications')
-            .select('id,readBy,targetUsers,isActive,createdAt,title,message,type,isUrgent,studentId,studentName,relatedRecord')
-            .contains('targetUsers', [userId])
-            .eq('isActive', true);
+            .select('id,target_users,title,message,type,read_by,created_at')
+            .contains('target_users', [userId]);
         if (type) query = query.eq('type', type);
         if (limit) query = query.limit(limit);
         return query;
@@ -2203,15 +2198,15 @@ const EducareTrack = {
             }
             if (error || !data) throw error || new Error('Failed to load notifications');
             let notifications = data.map(n => {
-                const createdAt = n.created_at || n.createdAt;
+                const createdAt = n.created_at;
                 return {
-                    ...n,
-                    readBy: n.read_by || n.readBy,
+                    id: n.id,
+                    targetUsers: n.target_users,
+                    title: n.title,
+                    message: n.message,
+                    type: n.type,
+                    readBy: n.read_by,
                     createdAt: createdAt,
-                    isUrgent: n.is_urgent ?? n.isUrgent,
-                    studentId: n.student_id || n.studentId,
-                    studentName: n.student_name || n.studentName,
-                    relatedRecord: n.related_record || n.relatedRecord,
                     formattedDate: this.formatDate(createdAt),
                     formattedTime: this.formatTime(createdAt)
                 };
@@ -2237,29 +2232,29 @@ const EducareTrack = {
             }
             if (error || !data) return [];
             return data.map(n => {
-                const createdAt = n.created_at || n.createdAt;
+                const createdAt = n.created_at;
                 return {
-                    ...n,
-                    readBy: n.read_by || n.readBy,
+                    id: n.id,
+                    targetUsers: n.target_users,
+                    title: n.title,
+                    message: n.message,
+                    type: n.type,
+                    readBy: n.read_by,
                     createdAt: createdAt,
-                    isUrgent: n.is_urgent ?? n.isUrgent,
-                    studentId: n.student_id || n.studentId,
-                    studentName: n.student_name || n.studentName,
-                    relatedRecord: n.related_record || n.relatedRecord,
                     formattedDate: this.formatDate(createdAt),
                     formattedTime: this.formatTime(createdAt)
                 };
             });
         } catch (error) {
             console.error('Error getting notifications by type:', error);
-            return [];
+            throw error;
         }
     },
 
     // Get urgent notifications
     async getUrgentNotifications(userId, limit = 10) {
         try {
-            // Supabase notifications table does not have isUrgent column; return latest notifications
+            // Since NEW schema doesn't have is_urgent column, return latest notifications
             let { data, error } = await this.fetchNotificationsSnake(userId, null, limit);
             if (error || !data) {
                 const fallback = await this.fetchNotificationsCamel(userId, null, limit);
@@ -2268,15 +2263,15 @@ const EducareTrack = {
             }
             if (error || !data) return [];
             return data.map(n => {
-                const createdAt = n.created_at || n.createdAt;
+                const createdAt = n.created_at;
                 return {
-                    ...n,
-                    readBy: n.read_by || n.readBy,
+                    id: n.id,
+                    targetUsers: n.target_users,
+                    title: n.title,
+                    message: n.message,
+                    type: n.type,
+                    readBy: n.read_by,
                     createdAt: createdAt,
-                    isUrgent: n.is_urgent ?? n.isUrgent,
-                    studentId: n.student_id || n.studentId,
-                    studentName: n.student_name || n.studentName,
-                    relatedRecord: n.related_record || n.relatedRecord,
                     formattedDate: this.formatDate(createdAt),
                     formattedTime: this.formatTime(createdAt)
                 };
@@ -2292,11 +2287,11 @@ const EducareTrack = {
         try {
             if (!this.currentUser) throw new Error('No user logged in');
 
-            const { error } = await window.supabaseClient.from('notifications').update({
-                is_active: false,
-                // deletedAt: new Date().toISOString(), // Supabase doesn't usually use serverTimestamp in client calls
-                // deletedBy: this.currentUser.id
-            }).eq('id', notificationId);
+            // NEW schema doesn't have is_active column, so we'll actually delete the record
+            const { error } = await window.supabaseClient
+                .from('notifications')
+                .delete()
+                .eq('id', notificationId);
             
             if (error) throw error;
 
@@ -3248,22 +3243,22 @@ const EducareTrack = {
             if (studentErr || !student) {
                 throw new Error('Student not found');
             }
-            const timeString = new Date().toTimeString().split(' ')[0].substring(0, 5);
+            
+            // Use NEW schema fields
             const row = {
                 student_id: studentId,
-                class_id: student.class_id || '',
-                check_in: !!check_in,
-                timestamp: new Date(),
                 reason: reason || '',
                 notes: notes || '',
-                staff_id: this.currentUser.id,
-                staff_name: this.currentUser.name,
-                time: timeString
+                treated_by: this.currentUser.id, // UUID as required by NEW schema
+                outcome: check_in ? 'checked_in' : 'checked_out',
+                visit_time: new Date()
             };
+            
             const { data: inserted, error } = await window.supabaseClient.from('clinic_visits').insert(row).select('id').single();
             if (error) {
                 throw error;
             }
+            
             const newStatus = check_in ? 'in_clinic' : 'in_school';
             const { error: upErr } = await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
             if (upErr) {

@@ -63,32 +63,37 @@ class GuardDashboard {
             today.setHours(0, 0, 0, 0);
             
             // Get total students (excluding withdrawn/transferred)
-            const totalStudentsSnapshot = await window.EducareTrack.db.collection('students')
-                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
-                .get();
-            const totalStudents = totalStudentsSnapshot.size;
+            const { data: totalStudentsData, error: totalError } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .in('current_status', ['enrolled', 'active', 'present']);
+            
+            if (totalError) throw totalError;
+            const totalStudents = totalStudentsData?.length || 0;
             
             // Get today's attendance entries
-            const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', today)
-                .where('entry_type', '==', 'entry')
-                .get();
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id, status')
+                .gte('timestamp', today.toISOString())
+                .eq('method', 'qr'); // Both entry types use QR method
+            
+            if (attendanceError) throw attendanceError;
             
             let presentToday = 0;
             let lateToday = 0;
             const uniqueStudentIds = new Set();
             
-            attendanceSnapshot.forEach(doc => {
-                const data = doc.data();
-                const studentId = data.student_id;
+            attendanceData.forEach(record => {
+                const studentId = record.student_id;
                 
                 // Count each student only once per day
                 if (!uniqueStudentIds.has(studentId)) {
                     uniqueStudentIds.add(studentId);
                     
-                    if (data.status === 'present' || data.status === 'ontime') {
+                    if (record.status === 'present') {
                         presentToday++;
-                    } else if (data.status === 'late') {
+                    } else if (record.status === 'late') {
                         presentToday++; // Late students are still present
                         lateToday++;
                     }
@@ -115,25 +120,30 @@ class GuardDashboard {
             const container = document.getElementById('recentActivity');
             container.innerHTML = ''; // Clear existing content
             
-            const snapshot = await window.EducareTrack.db.collection('attendance')
-                .orderBy('timestamp', 'desc')
-                .limit(10)
-                .get();
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id, timestamp, status, session, remarks, method')
+                .order('timestamp', { ascending: false })
+                .limit(10);
             
-            const docs = snapshot.docs;
+            if (attendanceError) throw attendanceError;
+            
             // Process in reverse order to show newest first
-            for (let i = docs.length - 1; i >= 0; i--) {
-                const doc = docs[i];
-                const data = doc.data();
-                let studentName = data.student_name || data.studentName;
+            for (let i = attendanceData.length - 1; i >= 0; i--) {
+                const record = attendanceData[i];
+                let studentName = null;
                 
-                // If no student name in attendance record, fetch from student collection
-                if (!studentName && data.student_id) {
+                // Fetch student name from students table
+                if (record.student_id) {
                     try {
-                        const studentDoc = await window.EducareTrack.db.collection('students').doc(data.student_id).get();
-                        if (studentDoc.exists) {
-                            const studentData = studentDoc.data();
-                            studentName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim() || 'Unknown Student';
+                        const { data: studentData, error: studentError } = await window.supabaseClient
+                            .from('students')
+                            .select('full_name')
+                            .eq('id', record.student_id)
+                            .single();
+                        
+                        if (!studentError && studentData) {
+                            studentName = studentData.full_name;
                         }
                     } catch (error) {
                         console.error('Error fetching student name:', error);
@@ -141,11 +151,20 @@ class GuardDashboard {
                     }
                 }
                 
+                // Determine entry type based on remarks (for both manual and QR entries)
+                let entryType;
+                if (record.remarks && (record.remarks.startsWith('manual_') || record.remarks.startsWith('qr_'))) {
+                    entryType = record.remarks.replace(/^(manual|qr)_/, '');
+                } else {
+                    // Fallback to session-based logic for backward compatibility
+                    entryType = record.session === 'AM' ? 'entry' : 'exit';
+                }
+                
                 this.addRecentActivityItem({
                     studentName: studentName || 'Unknown Student',
-                    time: data.time,
-                    entryType: data.entry_type || data.entryType || 'Unknown',
-                    status: data.status || 'unknown'
+                    time: new Date(record.timestamp).toTimeString().substring(0, 5),
+                    entryType: entryType,
+                    status: record.status || 'unknown'
                 });
             }
         } catch (error) {
@@ -218,22 +237,31 @@ class GuardDashboard {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            // Get all active students (excluding withdrawn/transferred)
-            const studentsSnapshot = await window.EducareTrack.db.collection('students')
-                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
-                .get();
-            const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Get all active students
+            const { data: studentsData, error: studentsError } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .in('current_status', ['enrolled', 'active', 'present']);
+            
+            if (studentsError) throw studentsError;
             
             // Get today's attendance records
-            const attendanceSnapshot = await window.EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', today)
-                .get();
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id, timestamp, session')
+                .gte('timestamp', today.toISOString())
+                .order('timestamp', { ascending: false });
+            
+            if (attendanceError) throw attendanceError;
             
             // Get today's clinic visits
-            const clinicSnapshot = await window.EducareTrack.db.collection('clinicVisits')
-                .where('timestamp', '>=', today)
-                .where('check_in', '==', true)
-                .get();
+            const { data: clinicData, error: clinicError } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('student_id, visit_time')
+                .gte('visit_time', today.toISOString())
+                .order('visit_time', { ascending: false });
+            
+            if (clinicError) throw clinicError;
             
             const statusCounts = {
                 in_school: 0,
@@ -245,24 +273,22 @@ class GuardDashboard {
             const studentStatuses = new Map();
             
             // Process attendance records to determine in/out status
-            attendanceSnapshot.forEach(doc => {
-                const data = doc.data();
-                const studentId = data.student_id;
-                const timestamp = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+            attendanceData.forEach(record => {
+                const studentId = record.student_id;
+                const timestamp = new Date(record.timestamp);
                 
                 if (!studentStatuses.has(studentId) || timestamp > studentStatuses.get(studentId).timestamp) {
                     studentStatuses.set(studentId, {
-                        status: data.entry_type === 'entry' ? 'in_school' : 'out_school',
+                        status: record.session === 'AM' ? 'in_school' : 'out_school',
                         timestamp: timestamp
                     });
                 }
             });
             
             // Process clinic visits (clinic visits override attendance status)
-            clinicSnapshot.forEach(doc => {
-                const data = doc.data();
-                const studentId = data.student_id;
-                const timestamp = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+            clinicData.forEach(record => {
+                const studentId = record.student_id;
+                const timestamp = new Date(record.visit_time);
                 
                 // If student is in clinic, mark them as such
                 studentStatuses.set(studentId, {
@@ -272,7 +298,7 @@ class GuardDashboard {
             });
             
             // Count statuses for all active students
-            allStudents.forEach(student => {
+            studentsData.forEach(student => {
                 const status = studentStatuses.get(student.id)?.status || 'out_school'; // Default to out if no record today
                 statusCounts[status] = (statusCounts[status] || 0) + 1;
             });
@@ -327,14 +353,25 @@ class GuardDashboard {
         }
 
         try {
-            const students = await EducareTrack.getStudents();
-            const filteredStudents = students.filter(student => 
-                `${student.first_name || ''} ${student.last_name || ''}`.trim().toLowerCase().includes(searchTerm.toLowerCase()) ||
-                student.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (student.lrn && student.lrn.includes(searchTerm))
-            ).slice(0, 5); // Limit to 5 results
+            const { data: students, error } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, lrn, class_id')
+                .or(`full_name.ilike.%${searchTerm}%,id.ilike.%${searchTerm}%,lrn.ilike.%${searchTerm}%`)
+                .limit(5);
+            
+            if (error) throw error;
+            
+            // Transform data to match expected format
+            const transformedStudents = students.map(student => ({
+                id: student.id,
+                first_name: student.full_name.split(' ')[0],
+                last_name: student.full_name.split(' ').slice(1).join(' '),
+                name: student.full_name,
+                lrn: student.lrn,
+                classId: student.class_id
+            }));
 
-            this.displayStudentResults(filteredStudents);
+            this.displayStudentResults(transformedStudents);
         } catch (error) {
             console.error('Error searching students:', error);
         }
@@ -395,10 +432,28 @@ class GuardDashboard {
             const [hours, minutes] = timeValue.split(':');
             now.setHours(parseInt(hours), parseInt(minutes), 0, 0);
 
-            // Use core.js to record attendance with custom time
-            await EducareTrack.recordGuardAttendance(this.selectedStudent.id, this.selectedStudent, entryType, now);
+            // Determine session and status
+            const session = parseInt(hours) < 12 ? 'AM' : 'PM';
+            const status = entryType === 'entry' ? 
+                (timeValue <= '07:30' ? 'present' : 'late') : 'present';
+
+            // Insert attendance record using Supabase
+            const { data, error } = await window.supabaseClient
+                .from('attendance')
+                .insert({
+                    student_id: this.selectedStudent.id,
+                    class_id: this.selectedStudent.classId || null,
+                    session: session,
+                    status: status,
+                    method: 'manual',
+                    timestamp: now.toISOString(),
+                    recorded_by: this.currentUser.id,
+                    remarks: `manual_${entryType}` // Store entry type in remarks
+                });
             
-            this.showNotification(`${`${(this.selectedStudent.first_name || '')} ${(this.selectedStudent.last_name || '')}`.trim()} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
+            if (error) throw error;
+            
+            this.showNotification(`${this.selectedStudent.name || `${this.selectedStudent.first_name || ''} ${this.selectedStudent.last_name || ''}`.trim()} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
             this.closeManualEntry();
             
             // Reload dashboard data
@@ -425,33 +480,12 @@ class GuardDashboard {
     }
 
     startRealTimeUpdates() {
-        // Listen for new attendance records
-        this.unsubscribeAttendance = EducareTrack.db.collection('attendance')
-            .orderBy('timestamp', 'desc')
-            .limit(1)
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        // Only update stats and add single new item instead of reloading everything
-                        this.updateTodayStats();
-                        this.addNewAttendanceItem(change.doc.data());
-                    }
-                });
-            });
-
-        // Listen for student status changes (excluding withdrawn/transferred students)
-        this.unsubscribeStudents = EducareTrack.db.collection('students')
-            .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
-            .onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'modified') {
-                        this.loadSchoolStatus(); // Refresh status counts
-                    }
-                    if (change.type === 'added' || change.type === 'removed') {
-                        this.updateTodayStats(); // Only update stats, don't reload recent activity
-                    }
-                });
-            });
+        // For Supabase, we'll use polling instead of real-time listeners for simplicity
+        // In a production environment, you might want to implement Supabase real-time subscriptions
+        this.realTimeInterval = setInterval(() => {
+            this.updateTodayStats();
+            this.loadRecentActivity();
+        }, 30000); // Update every 30 seconds
     }
 
     async updateTodayStats() {
@@ -465,15 +499,19 @@ class GuardDashboard {
 
     async addNewAttendanceItem(attendanceData) {
         try {
-            let studentName = attendanceData.student_name || attendanceData.studentName;
+            let studentName = null;
             
-            // If no student name in attendance record, fetch from student collection
-            if (!studentName && attendanceData.student_id) {
+            // Fetch student name from students table
+            if (attendanceData.student_id) {
                 try {
-                    const studentDoc = await window.EducareTrack.db.collection('students').doc(attendanceData.student_id).get();
-                    if (studentDoc.exists) {
-                        const studentData = studentDoc.data();
-                        studentName = `${studentData.first_name || ''} ${studentData.last_name || ''}`.trim() || 'Unknown Student';
+                    const { data: studentData, error: studentError } = await window.supabaseClient
+                        .from('students')
+                        .select('full_name')
+                        .eq('id', attendanceData.student_id)
+                        .single();
+                    
+                    if (!studentError && studentData) {
+                        studentName = studentData.full_name;
                     }
                 } catch (error) {
                     console.error('Error fetching student name:', error);
@@ -481,10 +519,19 @@ class GuardDashboard {
                 }
             }
             
+            // Determine entry type based on remarks (for both manual and QR entries)
+            let entryType;
+            if (attendanceData.remarks && (attendanceData.remarks.startsWith('manual_') || attendanceData.remarks.startsWith('qr_'))) {
+                entryType = attendanceData.remarks.replace(/^(manual|qr)_/, '');
+            } else {
+                // Fallback to session-based logic for backward compatibility
+                entryType = attendanceData.session === 'AM' ? 'entry' : 'exit';
+            }
+            
             this.addRecentActivityItem({
                 studentName: studentName || 'Unknown Student',
-                time: attendanceData.time,
-                entryType: attendanceData.entry_type || attendanceData.entryType || 'Unknown',
+                time: new Date(attendanceData.timestamp).toTimeString().substring(0, 5),
+                entryType: entryType,
                 status: attendanceData.status || 'unknown'
             });
         } catch (error) {
@@ -579,8 +626,9 @@ class GuardDashboard {
     }
 
     destroy() {
-        if (this.unsubscribeAttendance) this.unsubscribeAttendance();
-        if (this.unsubscribeStudents) this.unsubscribeStudents();
+        if (this.realTimeInterval) {
+            clearInterval(this.realTimeInterval);
+        }
     }
 }
 
