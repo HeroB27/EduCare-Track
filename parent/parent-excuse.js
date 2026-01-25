@@ -159,19 +159,18 @@ async loadChildren() {
                     .from('excuse_letters')
                     .select('*')
                     .in('student_id', studentIds)
-                    .order('submitted_at', { ascending: false });
+                    .order('created_at', { ascending: false });
 
                 if (error) throw error;
 
                 this.excuseLetters = data.map(letter => ({
                     ...letter,
                     studentId: letter.student_id,
-                    submittedAt: letter.submitted_at ? { toDate: () => new Date(letter.submitted_at) } : null,
-                    absenceDate: letter.absence_date ? { toDate: () => new Date(letter.absence_date) } : null,
+                    submittedAt: letter.created_at ? { toDate: () => new Date(letter.created_at) } : null,
+                    absenceDate: letter.dates && letter.dates.length > 0 ? { toDate: () => new Date(letter.dates[0]) } : null,
                     reviewedBy: letter.reviewed_by,
-                    reviewedByName: letter.reviewed_by_name,
-                    reviewedAt: letter.reviewed_at ? { toDate: () => new Date(letter.reviewed_at) } : null,
-                    reviewerNotes: letter.reviewer_notes
+                    reviewedByName: null, // Will be fetched if needed
+                    reviewedAt: letter.reviewed_at ? { toDate: () => new Date(letter.reviewed_at) } : null
                 }));
             } else {
                 this.excuseLetters = [];
@@ -187,15 +186,13 @@ async loadChildren() {
 
     async getChildExcuseLetters(childId) {
         try {
-            const snapshot = await EducareTrack.db.collection('excuse_letters')
-                .where('studentId', '==', childId)
-                .orderBy('submittedAt', 'desc')
-                .get();
+            const { data } = await window.supabaseClient
+                .from('excuse_letters')
+                .select('*')
+                .eq('student_id', childId)
+                .order('created_at', { ascending: false });
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            return data || [];
         } catch (error) {
             console.error(`Error getting excuse letters for child ${childId}:`, error);
             return [];
@@ -764,10 +761,12 @@ async loadChildren() {
         if (!ok) return;
 
         try {
-            await EducareTrack.db.collection('excuse_letters').doc(excuseId).update({
-                status: 'cancelled',
-                cancelledAt: new Date().toISOString()
-            });
+            await window.supabaseClient
+                .from('excuse_letters')
+                .update({
+                    status: 'cancelled'
+                })
+                .eq('id', excuseId);
 
             this.showNotification('Excuse letter cancelled successfully', 'success');
             await this.loadExcuseLetters();

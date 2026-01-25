@@ -113,7 +113,7 @@ class ParentChildren {
                         <div>
                             <h3 class="font-semibold text-lg text-gray-800">${child.name}</h3>
                             <p class="text-sm text-gray-600">${child.grade} • ${child.level}</p>
-                            <p class="text-xs text-gray-500">Student ID: ${child.studentId || 'N/A'}</p>
+                            <p class="text-xs text-gray-500">Student ID: ${child.id || 'N/A'}</p>
                         </div>
                     </div>
                     <span class="px-3 py-1 rounded-full text-sm font-medium ${EducareTrack.getStatusColor(child.currentStatus)}">
@@ -174,7 +174,7 @@ class ParentChildren {
                         </div>
                         <div>
                             <div class="font-medium text-gray-900">${child.name}</div>
-                            <div class="text-sm text-gray-500">${child.studentId || 'N/A'}</div>
+                            <div class="text-sm text-gray-500">${child.id || 'N/A'}</div>
                         </div>
                     </div>
                 </td>
@@ -232,17 +232,18 @@ class ParentChildren {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
             
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('studentId', '==', child.id)
-                .where('timestamp', '>=', thirtyDaysAgo)
-                .where('entryType', '==', 'entry')
-                .get();
+            const { data: attendanceData } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('student_id', child.id)
+                .gte('timestamp', thirtyDaysAgo.toISOString())
+                .eq('session', 'AM');
 
             const uniqueDays = new Set();
-            attendanceSnapshot.forEach(doc => {
-                const ts = doc.data().timestamp;
-                if (ts && ts.toDate) {
-                    uniqueDays.add(ts.toDate().toDateString());
+            attendanceData.forEach(record => {
+                const ts = record.timestamp;
+                if (ts) {
+                    uniqueDays.add(new Date(ts).toDateString());
                 }
             });
 
@@ -422,25 +423,27 @@ class ParentChildren {
             // Get today's attendance
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('studentId', '==', childId)
-                .where('timestamp', '>=', today)
-                .orderBy('timestamp', 'desc')
-                .get();
+            const { data: attendanceData } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('student_id', childId)
+                .gte('timestamp', today.toISOString())
+                .order('timestamp', { ascending: false });
 
-            const todayRecords = attendanceSnapshot.docs.map(doc => doc.data());
+            const todayRecords = attendanceData;
 
             // Get recent clinic visits (last 7 days)
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-            const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
-                .where('studentId', '==', childId)
-                .where('timestamp', '>=', sevenDaysAgo)
-                .orderBy('timestamp', 'desc')
-                .limit(5)
-                .get();
+            const { data: clinicData } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('student_id', childId)
+                .gte('visit_time', sevenDaysAgo.toISOString())
+                .order('visit_time', { ascending: false })
+                .limit(5);
 
-            const clinicVisits = clinicSnapshot.docs.map(doc => doc.data());
+            const clinicVisits = clinicData;
 
             content.innerHTML = `
                 <div class="space-y-6">
@@ -462,7 +465,7 @@ class ParentChildren {
                         </div>
                         <div class="text-right">
                             <p class="text-sm text-gray-500">Student ID</p>
-                            <p class="font-mono font-bold text-gray-700">${child.studentId || 'N/A'}</p>
+                            <p class="font-mono font-bold text-gray-700">${child.id || 'N/A'}</p>
                         </div>
                     </div>
 

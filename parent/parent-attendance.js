@@ -19,6 +19,12 @@ class ParentAttendance {
                 return;
             }
 
+            // Wait for Supabase client to be ready
+            if (!window.supabaseClient) {
+                setTimeout(() => this.init(), 100);
+                return;
+            }
+
             // Check if user is logged in
             const savedUser = localStorage.getItem('educareTrack_user');
             if (!savedUser) {
@@ -157,14 +163,14 @@ class ParentAttendance {
     generateAttendanceCSV() {
         const headers = ['Date', 'Child', 'LRN', 'Time', 'Session', 'Status', 'Entry Type', 'Recorded By'];
         const rows = this.filteredRecords.map(record => {
-            const child = this.children.find(c => c.id === record.studentId);
-            const date = record.timestamp?.toDate ? record.timestamp.toDate().toISOString().split('T')[0] : 'N/A';
-            const name = child ? child.name : 'Unknown';
+            const child = this.children.find(c => c.id === record.student_id);
+            const date = record.timestamp ? new Date(record.timestamp).toISOString().split('T')[0] : 'N/A';
+            const name = child ? child.full_name || child.name : 'Unknown';
             const lrn = child && child.lrn ? child.lrn : 'N/A';
-            const time = record.time || 'N/A';
+            const time = record.timestamp ? new Date(record.timestamp).toLocaleTimeString() : 'N/A';
             const session = record.session || 'N/A';
             const status = record.status || 'N/A';
-            const entryType = record.entryType || 'N/A';
+            const entryType = record.session || 'N/A';
             const recordedBy = record.recordedByName || 'System';
             return [date, name, lrn, time, session, status, entryType, recordedBy];
         });
@@ -234,32 +240,18 @@ class ParentAttendance {
 
     async getChildAttendance(childId, startDate, endDate) {
         try {
-            const col = EducareTrack.db.collection('attendance');
             let records = [];
             try {
-                const snapshot = await col
-                    .where('studentId', '==', childId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .orderBy('timestamp', 'desc')
-                    .get();
-                records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const { data } = await window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .eq('student_id', childId)
+                    .gte('timestamp', startDate.toISOString())
+                    .lte('timestamp', endDate.toISOString())
+                    .order('timestamp', { ascending: false });
+                records = data || [];
             } catch (err) {
-                console.warn('Attendance timestamp query failed, falling back to date field:', err);
-            }
-
-            if (!records || records.length === 0) {
-                try {
-                    const fallback = await col
-                        .where('studentId', '==', childId)
-                        .where('date', '>=', startDate)
-                        .where('date', '<=', endDate)
-                        .orderBy('date', 'desc')
-                        .get();
-                    records = fallback.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                } catch (err2) {
-                    console.warn('Attendance date query failed:', err2);
-                }
+                console.warn('Attendance timestamp query failed:', err);
             }
 
             return records;
@@ -271,11 +263,11 @@ class ParentAttendance {
 
     updateStatistics() {
         const presentCount = this.filteredRecords.filter(record => 
-            record.status === 'present' && record.entryType === 'entry'
+            record.status === 'present'
         ).length;
 
         const lateCount = this.filteredRecords.filter(record => 
-            record.status === 'late' && record.entryType === 'entry'
+            record.status === 'late'
         ).length;
 
         const absentCount = this.filteredRecords.filter(record => 
@@ -342,8 +334,8 @@ class ParentAttendance {
         }
 
         container.innerHTML = this.filteredRecords.map(record => {
-            const child = this.children.find(c => c.id === record.studentId);
-            const recordDate = record.timestamp?.toDate();
+            const child = this.children.find(c => c.id === record.student_id);
+            const recordDate = record.timestamp ? new Date(record.timestamp) : new Date();
             
             return `
                 <tr class="hover:bg-gray-50">
@@ -353,13 +345,13 @@ class ParentAttendance {
                     <td class="px-6 py-4 whitespace-nowrap">
                         <div class="flex items-center">
                             <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mr-3">
-                                <span class="text-green-600 font-semibold text-xs">${child ? child.name.split(' ').map(n => n[0]).join('').substring(0, 2) : '??'}</span>
+                                <span class="text-green-600 font-semibold text-xs">${child ? (child.full_name || child.name || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2) : '??'}</span>
                             </div>
-                            <div class="text-sm font-medium text-gray-900">${child ? child.name : 'Unknown'}</div>
+                            <div class="text-sm font-medium text-gray-900">${child ? child.full_name || child.name : 'Unknown'}</div>
                         </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        ${record.time || 'N/A'}
+                        ${record.timestamp ? new Date(record.timestamp).toLocaleTimeString() : 'N/A'}
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
                         ${record.session || 'N/A'}
@@ -390,8 +382,8 @@ class ParentAttendance {
         // Group records by date
         const dateGroups = {};
         this.attendanceRecords.forEach(record => {
-            if (record.timestamp && record.entryType === 'entry') {
-                const date = record.timestamp.toDate().toDateString();
+            if (record.timestamp && record.session === 'AM') {
+                const date = new Date(record.timestamp).toDateString();
                 if (!dateGroups[date]) {
                     dateGroups[date] = { present: 0, late: 0, absent: 0 };
                 }
@@ -469,19 +461,22 @@ class ParentAttendance {
         const monthlyData = {};
         
         this.attendanceRecords.forEach(record => {
-            if (record.timestamp && record.entryType === 'entry') {
-                const date = record.timestamp.toDate();
+            if (record.timestamp && record.session === 'AM') {
+                const date = new Date(record.timestamp);
                 const monthYear = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
                 const monthName = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
                 
                 if (!monthlyData[monthYear]) {
                     monthlyData[monthYear] = {
-                        name: monthName,
+                        month: monthName,
+                        present: 0,
+                        late: 0,
+                        absent: 0,
                         children: {}
                     };
                 }
                 
-                const childId = record.studentId;
+                const childId = record.student_id;
                 if (!monthlyData[monthYear].children[childId]) {
                     const child = this.children.find(c => c.id === childId);
                     monthlyData[monthYear].children[childId] = {

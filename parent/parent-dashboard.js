@@ -122,26 +122,26 @@ class ParentDashboard {
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center">
                         <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mr-3">
-                            <span class="text-green-600 font-semibold">${child.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                            <span class="text-green-600 font-semibold">${(child.full_name || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
                         </div>
                         <div>
-                            <h3 class="font-semibold text-gray-800">${child.name}</h3>
-                            <p class="text-sm text-gray-600">${child.grade} • ${child.level}</p>
+                            <h3 class="font-semibold text-gray-800">${child.full_name || 'Unknown'}</h3>
+                            <p class="text-sm text-gray-600">${child.grade || 'N/A'} • ${child.level || 'N/A'}</p>
                         </div>
                     </div>
-                    <span class="px-2 py-1 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(child.currentStatus)}">
-                        ${EducareTrack.getStatusText(child.currentStatus)}
+                    <span class="px-2 py-1 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(child.current_status)}">
+                        ${EducareTrack.getStatusText(child.current_status)}
                     </span>
                 </div>
                 
                 <div class="space-y-2 text-sm text-gray-600">
                     <div class="flex justify-between">
                         <span>Class:</span>
-                        <span class="font-medium">${child.classId || 'Not assigned'}</span>
+                        <span class="font-medium">${child.class_id || 'Not assigned'}</span>
                     </div>
                     <div class="flex justify-between">
                         <span>Last Update:</span>
-                        <span class="font-medium">${EducareTrack.formatTime(child.lastAttendance)}</span>
+                        <span class="font-medium">${child.lastAttendance ? EducareTrack.formatTime(child.lastAttendance) : 'No attendance records'}</span>
                     </div>
                 </div>
                 
@@ -169,25 +169,25 @@ class ParentDashboard {
             let clinicVisits = 0;
 
             for (const child of this.children) {
-                const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                    .where('studentId', '==', child.id)
-                    .where('timestamp', '>=', today)
-                    .where('entryType', '==', 'entry')
-                    .get();
+                const { data: attendanceData } = await window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .eq('student_id', child.id)
+                    .gte('timestamp', today.toISOString())
+                    .eq('session', 'AM');
 
-                attendanceSnapshot.forEach(doc => {
-                    const record = doc.data();
+                attendanceData.forEach(record => {
                     if (record.status === 'present') presentStudents.add(child.id);
                     if (record.status === 'late') lateStudents.add(child.id);
                 });
 
-                const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
-                    .where('studentId', '==', child.id)
-                    .where('timestamp', '>=', today)
-                    .where('checkIn', '==', true)
-                    .get();
+                const { data: clinicData } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('*')
+                    .eq('student_id', child.id)
+                    .gte('visit_time', today.toISOString());
 
-                clinicVisits += clinicSnapshot.size;
+                clinicVisits += clinicData.length;
             }
 
             document.getElementById('presentToday').textContent = presentStudents.size;
@@ -225,7 +225,7 @@ class ParentDashboard {
                             <p class="text-xs text-gray-500">${item.message}</p>
                         </div>
                     </div>
-                    <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                    <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                 </div>
             `).join('');
         } catch (error) {
@@ -330,16 +330,17 @@ class ParentDashboard {
             // Get today's attendance
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                .where('studentId', '==', childId)
-                .where('timestamp', '>=', today)
-                .orderBy('timestamp', 'desc')
-                .limit(1)
-                .get();
+            const { data: attendanceData } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('student_id', childId)
+                .gte('timestamp', today.toISOString())
+                .order('timestamp', { ascending: false })
+                .limit(1);
 
             let todayAttendance = null;
-            if (!attendanceSnapshot.empty) {
-                todayAttendance = attendanceSnapshot.docs[0].data();
+            if (attendanceData.length > 0) {
+                todayAttendance = attendanceData[0];
             }
 
             const isSchoolDay = window.EducareTrack.isSchoolDay(today, child.level);
@@ -358,10 +359,10 @@ class ParentDashboard {
                     <div class="md:col-span-1">
                         <div class="bg-gray-100 rounded-lg p-4 text-center">
                             <div class="w-20 h-20 rounded-full bg-green-200 flex items-center justify-center mx-auto mb-3">
-                                <span class="text-green-600 font-bold text-xl">${child.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                                <span class="text-green-600 font-bold text-xl">${(child.full_name || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
                             </div>
-                            <h3 class="font-semibold text-lg">${child.name}</h3>
-                            <p class="text-gray-600">${child.grade} • ${child.level}</p>
+                            <h3 class="font-semibold text-lg">${child.full_name || 'Unknown'}</h3>
+                            <p class="text-gray-600">${child.grade || 'N/A'} • ${child.level || 'N/A'}</p>
                             <div class="mt-2">
                                 <span class="px-3 py-1 rounded-full text-sm font-medium ${displayColor}">
                                     ${displayStatus}
@@ -377,7 +378,7 @@ class ParentDashboard {
                                 <div class="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span class="text-gray-600">Student ID:</span>
-                                        <p class="font-medium">${child.studentId || 'N/A'}</p>
+                                        <p class="font-medium">${child.id || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <span class="text-gray-600">LRN:</span>
@@ -385,7 +386,7 @@ class ParentDashboard {
                                     </div>
                                     <div>
                                         <span class="text-gray-600">Class:</span>
-                                        <p class="font-medium">${classInfo ? classInfo.name : 'Not assigned'}</p>
+                                        <p class="font-medium">${child.class_id || 'Not assigned'}</p>
                                     </div>
                                     <div>
                                         <span class="text-gray-600">Strand:</span>
@@ -399,13 +400,13 @@ class ParentDashboard {
                                 ${todayAttendance ? `
                                     <div class="bg-gray-50 rounded-lg p-3">
                                         <div class="flex justify-between items-center">
-                                            <span class="font-medium">${todayAttendance.entryType === 'entry' ? 'Arrival' : 'Departure'}</span>
+                                            <span class="font-medium">Attendance</span>
                                             <span class="px-2 py-1 rounded text-xs ${EducareTrack.getStatusColor(todayAttendance.status)}">
                                                 ${todayAttendance.status}
                                             </span>
                                         </div>
                                         <div class="text-sm text-gray-600 mt-1">
-                                            Time: ${todayAttendance.time} • Session: ${todayAttendance.session}
+                                            Time: ${new Date(todayAttendance.timestamp).toLocaleTimeString()} • Session: ${todayAttendance.session}
                                         </div>
                                     </div>
                                 ` : `

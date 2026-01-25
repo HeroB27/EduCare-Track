@@ -150,15 +150,13 @@ class ParentClinic {
 
             // Apply visit type filter
             if (visitType === 'checkin') {
-                clinicData = clinicData.filter(visit => visit.checkIn);
+                clinicData = clinicData.filter(visit => visit.visit_time && !visit.check_out);
             } else if (visitType === 'checkout') {
-                clinicData = clinicData.filter(visit => !visit.checkIn);
+                clinicData = clinicData.filter(visit => visit.check_out);
             } else if (visitType === 'urgent') {
                 clinicData = clinicData.filter(visit => 
-                    visit.recommendations && 
-                    (visit.recommendations === 'fetch_child' || 
-                     visit.recommendations === 'immediate_pickup' || 
-                     visit.recommendations === 'medical_attention')
+                    visit.reason && 
+                    visit.reason.toLowerCase().includes('urgent')
                 );
             }
 
@@ -185,24 +183,24 @@ class ParentClinic {
                 .from('clinic_visits')
                 .select('*')
                 .eq('student_id', childId)
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .order('timestamp', { ascending: false });
-
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString())
+                .order('visit_time', { ascending: false });
+            
             if (error) throw error;
             
             return (visits || []).map(v => ({
                 id: v.id,
                 studentId: v.student_id,
-                studentName: v.student_name,
+                studentName: null, // Will be fetched from students table
                 classId: v.class_id,
-                checkIn: !!v.check_in,
-                timestamp: v.timestamp ? new Date(v.timestamp) : new Date(),
+                checkIn: !v.check_out, // If no check_out, it's a check-in
+                timestamp: new Date(v.visit_time),
                 reason: v.reason || '',
                 notes: v.notes || '',
-                staffName: v.treated_by || '',
-                recommendations: v.outcome || '',
-                additionalNotes: v.notes || ''
+                treatment: v.outcome || '',
+                recommendations: '', // Not in new schema
+                urgency: v.reason && v.reason.toLowerCase().includes('urgent') ? 'urgent' : 'normal'
             }));
         } catch (error) {
             console.error('Error getting child clinic visits:', error);
@@ -217,11 +215,11 @@ class ParentClinic {
         const activeCases = this.filteredVisits.filter(visit => {
             if (!visit.checkIn) return false;
             
-            const visitDate = this.getVisitDate(visit)?.toDateString();
+            const visitDate = visit.timestamp.toDateString();
             const hasCheckout = this.filteredVisits.some(v => 
                 v.studentId === visit.studentId &&
                 !v.checkIn &&
-                this.getVisitDate(v)?.toDateString() === visitDate
+                v.timestamp.toDateString() === visitDate
             );
             
             return !hasCheckout;
@@ -246,10 +244,8 @@ class ParentClinic {
 
         // Count urgent visits
         const urgentVisits = this.filteredVisits.filter(visit => 
-            visit.recommendations && 
-            (visit.recommendations === 'fetch_child' || 
-             visit.recommendations === 'immediate_pickup' || 
-             visit.recommendations === 'medical_attention')
+            visit.urgency === 'urgent' || 
+            (visit.reason && visit.reason.toLowerCase().includes('urgent'))
         ).length;
 
         document.getElementById('totalVisits').textContent = totalVisits;
@@ -278,13 +274,11 @@ class ParentClinic {
 
         container.innerHTML = this.filteredVisits.map(visit => {
             const child = this.children.find(c => c.id === visit.studentId);
-            const visitDate = this.getVisitDate(visit);
+            const visitDate = visit.timestamp;
             
             // Check if urgent
-            const isUrgent = visit.recommendations && 
-                (visit.recommendations === 'fetch_child' || 
-                 visit.recommendations === 'immediate_pickup' || 
-                 visit.recommendations === 'medical_attention');
+            const isUrgent = visit.urgency === 'urgent' || 
+                           (visit.reason && visit.reason.toLowerCase().includes('urgent'));
             
             const urgentBadge = isUrgent ? 
                 '<span class="ml-2 px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full">URGENT</span>' : '';

@@ -740,6 +740,12 @@ const EducareTrack = {
 
     // Only initialize essential real-time listeners
     initEssentialListeners() {
+        // Only initialize if supabaseClient is available
+        if (!window.supabaseClient) {
+            console.warn('Supabase client not available, skipping real-time listeners');
+            return;
+        }
+
         if (!this.currentUser) return;
 
         // Notification listener
@@ -1903,12 +1909,63 @@ const EducareTrack = {
 
             if (studError) throw studError;
 
-            return (students || []).map(s => ({
-                id: s.id,
-                ...s,
-                classId: s.class_id,
-                // parentId removed
-            }));
+            // 3. Fetch class information separately
+            const classIds = (students || []).map(s => s.class_id).filter(Boolean);
+            let classesMap = new Map();
+            
+            if (classIds.length > 0) {
+                const { data: classes, error: classError } = await window.supabaseClient
+                    .from('classes')
+                    .select('*')
+                    .in('id', classIds);
+                
+                if (!classError && classes) {
+                    classesMap = new Map(classes.map(c => [c.id, c]));
+                }
+            }
+
+            // 4. Fetch recent attendance for each student
+            const attendanceMap = new Map();
+            for (const studentId of studentIds) {
+                const { data: attendance } = await window.supabaseClient
+                    .from('attendance')
+                    .select('*')
+                    .eq('student_id', studentId)
+                    .order('timestamp', { ascending: false })
+                    .limit(1);
+                
+                if (attendance && attendance.length > 0) {
+                    attendanceMap.set(studentId, attendance[0]);
+                }
+            }
+
+            // 5. Combine all data
+            return (students || []).map(s => {
+                const classInfo = classesMap.get(s.class_id);
+                const recentAttendance = attendanceMap.get(s.id);
+                
+                return {
+                    id: s.id,
+                    full_name: s.full_name,
+                    lrn: s.lrn,
+                    gender: s.gender,
+                    birth_date: s.birth_date,
+                    address: s.address,
+                    class_id: s.class_id,
+                    strand: s.strand || classInfo?.strand,
+                    current_status: s.current_status || 'active',
+                    photo_url: s.photo_url,
+                    // Class information
+                    grade: classInfo?.grade || 'N/A',
+                    level: classInfo?.level || 'N/A',
+                    classId: s.class_id,
+                    // Attendance info
+                    lastAttendance: recentAttendance?.timestamp || null,
+                    // Backward compatibility
+                    name: s.full_name,
+                    currentStatus: s.current_status || 'active'
+                };
+            });
         } catch (error) {
             console.error('Error getting students by parent:', error);
             return [];
@@ -1930,7 +1987,7 @@ const EducareTrack = {
                 window.supabaseClient
                     .from('notifications')
                     .select('*')
-                    .in('student_id', childIds)
+                    .contains('target_users', [parentId])
                     .order('created_at', { ascending: false })
                     .limit(20),
                 window.supabaseClient
@@ -1944,20 +2001,22 @@ const EducareTrack = {
             const notifications = (notificationsRes.data || []).map(n => ({
                 type: 'notification',
                 id: n.id,
-                title: n.title,
-                message: n.message,
+                title: n.title || 'Notification',
+                message: n.message || 'No message',
                 timestamp: new Date(n.created_at),
-                studentId: n.student_id,
-                isRead: n.is_read
+                studentId: null, // Notifications don't have student_id in new schema
+                isRead: n.read_by && n.read_by.includes(parentId)
             }));
 
             const attendance = (attendanceRes.data || []).map(a => ({
                 type: 'attendance',
                 id: a.id,
-                status: a.status,
+                status: a.status || 'unknown',
                 timestamp: new Date(a.timestamp || a.created_at),
                 studentId: a.student_id,
-                entryType: a.entry_type
+                entryType: a.session || 'AM',
+                title: 'Attendance Record',
+                message: `Marked as ${a.status || 'unknown'} for ${a.session || 'AM'} session`
             }));
 
             // Combine and sort
