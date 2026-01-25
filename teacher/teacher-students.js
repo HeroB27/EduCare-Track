@@ -36,6 +36,24 @@ class TeacherStudents {
             // Pre-fetch calendar data
             await EducareTrack.fetchCalendarData();
 
+            // Load assigned class information from classes table where adviser_id = teacher id
+            const { data: classData, error: classError } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('adviser_id', this.currentUser.id)
+                .eq('is_active', true)
+                .single();
+            
+            if (!classError && classData) {
+                this.currentClass = classData;
+                // Set classId for backward compatibility
+                this.currentUser.classId = classData.id;
+                this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
+                console.log('Loaded assigned class:', classData);
+            } else {
+                console.log('No assigned class found for teacher');
+            }
+
             this.updateUI();
 
             if (!this.currentUser.classId) {
@@ -145,7 +163,7 @@ class TeacherStudents {
                         classId: s.class_id,
                         parentId: s.parent_id,
                         emergencyContact: s.emergency_contact,
-                        grade: s.level
+                        grade: s.level || s.grade
                     }));
                     console.log('Loaded students via direct query (Supabase):', students);
                 } catch (error) {
@@ -553,7 +571,7 @@ class TeacherStudents {
                 .select('*')
                 .eq('student_id', studentId)
                 .order('timestamp', { ascending: false })
-                .limit(100); // Increased limit for better stats
+                .limit(100);
 
             if (error) throw error;
 
@@ -563,7 +581,9 @@ class TeacherStudents {
                 studentId: record.student_id,
                 entryType: record.entry_type,
                 classId: record.class_id,
-                timestamp: new Date(record.timestamp)
+                timestamp: new Date(record.timestamp),
+                recordedBy: record.recorded_by,
+                recordedByName: record.recorded_by_name
             }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);
@@ -588,7 +608,8 @@ class TeacherStudents {
                 studentId: record.student_id,
                 checkIn: record.check_in,
                 checkOut: record.check_out,
-                timestamp: new Date(record.timestamp)
+                timestamp: new Date(record.timestamp),
+                treatedBy: record.treated_by
             }));
         } catch (error) {
             console.error('Error getting clinic visits by student:', error);

@@ -148,7 +148,7 @@ class TeacherDashboard {
                 .from('clinic_visits')
                 .select('student_id')
                 .eq('check_in', true)
-                .eq('class_id', this.currentUser.classId);
+                .is('check_out', null);
 
             if (clinicError) throw clinicError;
 
@@ -212,18 +212,25 @@ class TeacherDashboard {
                     .eq('class_id', classId)
                     .order('timestamp', { ascending: false })
                     .limit(10),
-                window.supabaseClient.from('clinic_visits')
-                    .select('id,student_id,class_id,check_in,timestamp,reason,notes')
-                    .eq('class_id', classId)
-                    .order('timestamp', { ascending: false })
-                    .limit(10),
                 window.supabaseClient.from('students')
                     .select('id,full_name')
                     .eq('class_id', classId)
             ]);
             
+            // Get clinic visits for the students in this class
+            const studentIds = (students || []).map(s => s.id);
+            let clinicData = [];
+            if (studentIds.length > 0) {
+                const { data: clinic, error: cErr } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('id,student_id,check_in,check_out,timestamp,reason,notes')
+                    .in('student_id', studentIds)
+                    .order('timestamp', { ascending: false })
+                    .limit(10);
+                clinicData = clinic || [];
+            }
+            
             if (aErr) throw aErr;
-            if (cErr) throw cErr;
             if (sErr) throw sErr;
             
             const nameById = new Map((students || []).map(s => [s.id, s.full_name || s.name]));
@@ -242,12 +249,12 @@ class TeacherDashboard {
                 studentName: nameById.get(r.student_id) || 'Student'
             }));
             
-            clinicActivities = (clinic || []).map(r => ({
+            clinicActivities = (clinicData || []).map(r => ({
                 id: r.id,
                 type: 'clinic',
                 studentId: r.student_id,
-                classId: r.class_id,
                 checkIn: r.check_in,
+                checkOut: r.check_out,
                 timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
                 reason: r.reason,
                 notes: r.notes,
@@ -651,12 +658,26 @@ class TeacherDashboard {
             const container = document.getElementById('clinicValidations');
             if (!container || !this.currentUser?.classId) return;
 
+            // Get students in this class first
+            const { data: students, error: studentsError } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .eq('class_id', this.currentUser.classId);
+            
+            if (studentsError) throw studentsError;
+            
+            const studentIds = (students || []).map(s => s.id);
+            if (studentIds.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-sm">No students in class</div>';
+                return;
+            }
+
             const { data: itemsData, error } = await window.supabaseClient
                 .from('clinic_visits')
                 .select('*')
-                .eq('class_id', this.currentUser.classId)
+                .in('student_id', studentIds)
                 .eq('check_in', true)
-                .eq('teacherValidationStatus', 'pending')
+                .is('teacher_decision', null)
                 .order('timestamp', { ascending: false })
                 .limit(10);
 

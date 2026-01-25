@@ -426,6 +426,8 @@
 
                 if (this.currentUser.classId) {
                     document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.classId;
+                } else {
+                    document.getElementById('assignedClass').textContent = 'No assigned class';
                 }
 
                 this.updateCurrentTime();
@@ -450,9 +452,19 @@
                         return;
                     }
 
-                    // Load assigned class information
-                    if (this.currentUser.classId) {
-                        this.assignedClass = await EducareTrack.getClassById(this.currentUser.classId);
+                    // Load assigned class information from classes table where adviser_id = teacher id
+                    const { data: classData, error: classError } = await window.supabaseClient
+                        .from('classes')
+                        .select('*')
+                        .eq('adviser_id', this.currentUser.id)
+                        .eq('is_active', true)
+                        .single();
+                    
+                    if (!classError && classData) {
+                        this.assignedClass = classData;
+                        // Set classId for backward compatibility
+                        this.currentUser.classId = classData.id;
+                        this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
                     }
 
                     // Load class students
@@ -474,48 +486,69 @@
 
             async loadClassStudents() {
                 try {
+                    if (!this.currentUser.classId) {
+                        console.warn('Teacher has no assigned class');
+                        this.classStudents = [];
+                        return;
+                    }
                     this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
                     this.updateStudentStatus();
                 } catch (error) {
                     console.error('Error loading class students:', error);
+                    this.classStudents = [];
                 }
             }
 
             async loadDashboardStats() {
                 try {
+                    if (!this.currentUser.classId) {
+                        console.warn('No class assigned, skipping dashboard stats');
+                        return;
+                    }
+                    
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
 
-                    // Get today's attendance
-                    const attendanceSnapshot = await EducareTrack.db.collection('attendance')
-                        .where('timestamp', '>=', today)
-                        .where('classId', '==', this.currentUser.classId)
-                        .get();
+                    // Get today's attendance using Supabase
+                    const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                        .from('attendance')
+                        .select('*')
+                        .eq('class_id', this.currentUser.classId)
+                        .gte('timestamp', today.toISOString());
+
+                    if (attendanceError) throw attendanceError;
 
                     const presentStudents = new Set();
                     const lateStudents = new Set();
                     const clinicStudents = new Set();
 
-                    attendanceSnapshot.forEach(doc => {
-                        const record = doc.data();
-                        if (record.entryType === 'entry') {
-                            if (record.status === 'late') {
-                                lateStudents.add(record.studentId);
-                            } else if (record.status === 'present') {
-                                presentStudents.add(record.studentId);
-                            }
+                    (attendanceData || []).forEach(record => {
+                        // In new schema, all attendance records are entries (no entry_type field)
+                        if (record.status === 'late') {
+                            lateStudents.add(record.student_id);
+                        } else if (record.status === 'present') {
+                            presentStudents.add(record.student_id);
                         }
                     });
 
-                    // Get current clinic visits
-                    const clinicSnapshot = await EducareTrack.db.collection('clinic_visits')
-                        .where('checkIn', '==', true)
-                        .where('classId', '==', this.currentUser.classId)
-                        .get();
+                    // Get current clinic visits using Supabase
+                    // In new schema, we need to check if there are any recent clinic visits without checkout
+                    const classStudentIds = this.classStudents.map(s => s.id);
+                    const { data: clinicData, error: clinicError } = await window.supabaseClient
+                        .from('clinic_visits')
+                        .select('student_id,visit_time')
+                        .in('student_id', classStudentIds)
+                        .order('visit_time', { ascending: false });
 
-                    clinicSnapshot.forEach(doc => {
-                        const visit = doc.data();
-                        clinicStudents.add(visit.studentId);
+                    if (clinicError) throw clinicError;
+
+                    // Since there's no check_in/check_out, we'll consider visits in the last 4 hours as "in clinic"
+                    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+                    (clinicData || []).forEach(visit => {
+                        const visitTime = new Date(visit.visit_time);
+                        if (visitTime > fourHoursAgo) {
+                            clinicStudents.add(visit.student_id);
+                        }
                     });
 
                     // Update UI
@@ -546,14 +579,77 @@
 
             async loadRecentActivity() {
                 try {
-                    const activity = await EducareTrack.getRecentActivity(10);
-                    const classActivity = activity.filter(item => 
-                        item.classId === this.currentUser.classId
-                    );
+                    if (!this.currentUser.classId) {
+                        console.warn('No class assigned, skipping recent activity');
+                        return;
+                    }
+                    
+                    let attendanceActivities = [];
+                    let clinicActivities = [];
+                    
+                    const classId = this.currentUser.classId;
+                    
+                    // Get attendance records
+                    const { data: attendance, error: aErr } = await window.supabaseClient
+                        .from('attendance')
+                        .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by')
+                        .eq('class_id', classId)
+                        .order('timestamp', { ascending: false })
+                        .limit(10);
+                    
+                    if (aErr) throw aErr;
+                    
+                    // Get clinic visits for students in this class
+                    const studentIds = this.classStudents.map(s => s.id);
+                    let clinicData = [];
+                    if (studentIds.length > 0) {
+                        const { data: clinic, error: cErr } = await window.supabaseClient
+                            .from('clinic_visits')
+                            .select('id,student_id,visit_time,reason,notes,treated_by')
+                            .in('student_id', studentIds)
+                            .order('visit_time', { ascending: false })
+                            .limit(10);
+                        clinicData = clinic || [];
+                    }
+                    
+                    const nameById = new Map(this.classStudents.map(s => [s.id, s.name || s.full_name]));
+                    
+                    attendanceActivities = (attendance || []).map(r => ({
+                        id: r.id,
+                        type: 'attendance',
+                        studentId: r.student_id,
+                        classId: r.class_id,
+                        entryType: 'entry', // Default to entry since field doesn't exist in new schema
+                        timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+                        time: r.timestamp ? new Date(r.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '',
+                        session: r.session,
+                        status: r.status,
+                        remarks: r.remarks,
+                        recordedBy: r.recorded_by,
+                        studentName: nameById.get(r.student_id) || 'Student'
+                    }));
+                    
+                    clinicActivities = (clinicData || []).map(r => ({
+                        id: r.id,
+                        type: 'clinic',
+                        studentId: r.student_id,
+                        checkIn: true, // Default to true since field doesn't exist
+                        checkOut: false, // Default to false since field doesn't exist
+                        timestamp: r.visit_time ? new Date(r.visit_time) : new Date(),
+                        reason: r.reason,
+                        notes: r.notes,
+                        treatedBy: r.treated_by,
+                        studentName: nameById.get(r.student_id) || 'Student'
+                    }));
+
+                    // Combine and sort by timestamp
+                    const allActivities = [...attendanceActivities, ...clinicActivities]
+                        .sort((a, b) => b.timestamp - a.timestamp)
+                        .slice(0, 5);
 
                     const container = document.getElementById('recentActivity');
                     
-                    if (classActivity.length === 0) {
+                    if (allActivities.length === 0) {
                         container.innerHTML = `
                             <div class="text-center py-4 text-gray-500">
                                 <i class="fas fa-inbox text-2xl mb-2"></i>
@@ -563,7 +659,7 @@
                         return;
                     }
 
-                    container.innerHTML = classActivity.slice(0, 5).map(item => `
+                    container.innerHTML = allActivities.map(item => `
                         <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                             <div class="flex items-center">
                                 <div class="w-8 h-8 ${this.getActivityColor(item.entryType, item.status)} rounded-full flex items-center justify-center mr-3">
@@ -574,7 +670,7 @@
                                     <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
                                 </div>
                             </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp?.toDate())}</span>
+                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
                         </div>
                     `).join('');
                 } catch (error) {
@@ -606,6 +702,17 @@
                 } catch (error) {
                     console.error('Error loading notifications:', error);
                 }
+            }
+
+            formatTime(timestamp) {
+                if (!timestamp) return 'Unknown time';
+                const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+                return date.toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
             }
 
             getActivityColor(entryType, status) {

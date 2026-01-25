@@ -29,6 +29,24 @@ class TeacherAnnouncements {
             }
 
             this.updateUI();
+
+            // Load assigned class information from classes table where adviser_id = teacher id
+            const { data: classData, error: classError } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('adviser_id', this.currentUser.id)
+                .eq('is_active', true)
+                .single();
+            
+            if (!classError && classData) {
+                // Set classId for backward compatibility
+                this.currentUser.classId = classData.id;
+                this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
+                console.log('Loaded assigned class:', classData);
+            } else {
+                console.log('No assigned class found for teacher');
+            }
+
             await this.loadClassStudents();
             await this.loadAnnouncements();
             this.initEventListeners();
@@ -82,8 +100,8 @@ class TeacherAnnouncements {
         try {
             const { data, error } = await window.supabaseClient
                 .from('announcements')
-                .select('id,title,message,audience,priority,class_id,class_name,created_by,created_by_name,created_at,is_active,is_urgent,expiry_date')
-                .eq('class_id', this.currentUser.classId)
+                .select('id,title,message,audience,priority,created_by,created_at,is_active')
+                .contains('audience', [this.currentUser.classId, 'all'])
                 .eq('is_active', true)
                 .order('created_at', { ascending: false })
                 .limit(20);
@@ -93,14 +111,9 @@ class TeacherAnnouncements {
             this.announcements = (data || []).map(a => ({
                 id: a.id,
                 ...a,
-                classId: a.class_id,
-                className: a.class_name,
                 createdBy: a.created_by,
-                createdByName: a.created_by_name,
                 createdAt: a.created_at,
-                isActive: a.is_active,
-                isUrgent: a.is_urgent,
-                expiryDate: a.expiry_date
+                isActive: a.is_active
             }));
             this.renderAnnouncements();
         } catch (error) {
@@ -320,15 +333,11 @@ class TeacherAnnouncements {
             const announcementRow = {
                 title,
                 message,
-                audience,
+                audience: [this.currentUser.classId],
                 priority,
-                class_id: this.currentUser.classId || null,
-                class_name: this.currentUser.className || null,
                 created_by: this.currentUser.id,
-                created_by_name: this.currentUser.name,
                 created_at: new Date().toISOString(),
-                is_active: true,
-                is_urgent: priority === 'urgent'
+                is_active: true
             };
 
             const { data, error } = await window.supabaseClient
@@ -380,10 +389,7 @@ class TeacherAnnouncements {
                     message: announcementData.message.substring(0, 100) + (announcementData.message.length > 100 ? '...' : ''),
                     target_users: targetUsers,
                     related_record: announcementId,
-                    is_urgent: announcementData.priority === 'urgent',
-                    is_active: true,
-                    created_at: new Date().toISOString(),
-                    read_by: []
+                    created_at: new Date().toISOString()
                 });
             }
         } catch (error) {

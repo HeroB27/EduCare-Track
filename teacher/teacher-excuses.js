@@ -30,6 +30,24 @@ class TeacherExcuses {
             }
 
             this.updateUI();
+
+            // Load assigned class information from classes table where adviser_id = teacher id
+            const { data: classData, error: classError } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('adviser_id', this.currentUser.id)
+                .eq('is_active', true)
+                .single();
+            
+            if (!classError && classData) {
+                // Set classId for backward compatibility
+                this.currentUser.classId = classData.id;
+                this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
+                console.log('Loaded assigned class:', classData);
+            } else {
+                console.log('No assigned class found for teacher');
+            }
+
             await this.loadClassStudents();
             await this.loadNotificationCount();
             await this.loadExcuseLetters();
@@ -104,15 +122,35 @@ async loadNotificationCount() {
 
     async loadExcuseLetters() {
         try {
+            // Get student IDs from class students
+            const studentIds = this.classStudents.map(s => s.id);
+            if (studentIds.length === 0) {
+                this.excuseLetters = [];
+                this.filteredExcuses = [];
+                this.updateStats();
+                this.renderExcuseLetters();
+                return;
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('excuse_letters')
                 .select('*')
-                .eq('class_id', this.currentUser.classId)
-                .order('submitted_at', { ascending: false });
+                .in('student_id', studentIds)
+                .order('created_at', { ascending: false });
 
             if (error) throw error;
 
-            this.excuseLetters = data || [];
+            this.excuseLetters = (data || []).map(excuse => ({
+                id: excuse.id,
+                ...excuse,
+                studentId: excuse.student_id,
+                parentId: excuse.parent_id,
+                submittedAt: excuse.created_at,
+                reviewedAt: excuse.reviewed_at,
+                reviewedBy: excuse.reviewed_by,
+                reviewedByName: excuse.reviewed_by_name,
+                reviewerNotes: excuse.reviewer_notes
+            }));
             this.filteredExcuses = [...this.excuseLetters];
             this.updateStats();
             this.renderExcuseLetters();
@@ -464,8 +502,7 @@ async loadNotificationCount() {
                 .update({
                     status: 'approved',
                     reviewed_at: new Date().toISOString(),
-                    reviewed_by: this.currentUser.id,
-                    reviewed_by_name: this.currentUser.name
+                    reviewed_by: this.currentUser.id
                 })
                 .eq('id', excuseId);
 
@@ -563,7 +600,6 @@ async loadNotificationCount() {
                             status: 'rejected',
                             reviewed_at: new Date().toISOString(),
                             reviewed_by: this.currentUser.id,
-                            reviewed_by_name: this.currentUser.name,
                             reviewer_notes: reviewerNotes
                         })
                         .eq('id', excuseId);

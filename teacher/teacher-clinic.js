@@ -116,12 +116,14 @@ class TeacherClinicDashboard {
                 return;
             }
 
-            // Load active clinic visits
+            // Load active clinic visits (visits in the last 4 hours since there's no check_in/check_out)
+            const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
             const { data: activeVisits, error: activeError } = await window.supabaseClient
                 .from('clinic_visits')
                 .select('*')
                 .in('student_id', studentIds)
-                .eq('check_in', true);
+                .gte('visit_time', fourHoursAgo.toISOString())
+                .order('visit_time', { ascending: false });
 
             if (activeError) throw activeError;
                 
@@ -135,9 +137,9 @@ class TeacherClinicDashboard {
                 .from('clinic_visits')
                 .select('*')
                 .in('student_id', studentIds)
-                .gte('timestamp', thirtyDaysAgo.toISOString())
-                .order('timestamp', { ascending: false })
-                .limit(20);
+                .gte('visit_time', thirtyDaysAgo.toISOString())
+                .order('visit_time', { ascending: false })
+                .limit(50);
                 
             if (historyError) throw historyError;
 
@@ -157,15 +159,15 @@ class TeacherClinicDashboard {
         return {
             id: visit.id,
             ...visit,
-            studentId: visit.student_id || visit.studentId,
-            checkIn: visit.check_in !== undefined ? visit.check_in : visit.checkIn,
-            checkOut: visit.check_out !== undefined ? visit.check_out : visit.checkOut,
-            teacherDecision: visit.teacher_decision || visit.teacherDecision,
-            teacherNotes: visit.teacher_notes || visit.teacherNotes,
-            isUrgent: visit.is_urgent || visit.isUrgent,
-            nurseRecommendation: visit.nurse_recommendation || visit.nurseRecommendation,
-            staffId: visit.staff_id || visit.staffId,
-            timestamp: visit.timestamp
+            studentId: visit.student_id,
+            checkIn: true, // Default since field doesn't exist
+            checkOut: false, // Default since field doesn't exist
+            teacherDecision: visit.teacher_decision,
+            teacherNotes: visit.teacher_notes,
+            isUrgent: visit.is_urgent,
+            nurseRecommendation: visit.nurse_recommendation,
+            staffId: visit.treated_by,
+            timestamp: new Date(visit.visit_time)
         };
     }
 
@@ -189,8 +191,7 @@ class TeacherClinicDashboard {
                     teacher_decision: decision.value,
                     teacher_notes: teacherNotes,
                     teacher_decision_at: new Date().toISOString(),
-                    teacher_id: this.teacher.id,
-                    teacher_name: this.teacher.name
+                    teacher_id: this.teacher.id
                 })
                 .eq('id', visitId);
 
@@ -205,11 +206,10 @@ class TeacherClinicDashboard {
                     type: 'clinic_decision',
                     title: 'Teacher Authorization Received',
                     message: `${this.teacher.name} has authorized ${student ? student.name : 'student'} to be ${decision.value === 'send_home' ? 'sent home' : 'kept in clinic'}`,
-                    target_users: [visit.staffId], // Clinic staff who checked in the student
+                    target_users: [visit.staffId],
                     student_id: visit.studentId,
                     student_name: student ? student.name : 'Unknown',
                     related_record: visitId,
-                    is_urgent: false,
                     created_at: new Date().toISOString()
                 }]);
 
@@ -299,7 +299,7 @@ class TeacherClinicDashboard {
         
         tbody.innerHTML = this.clinicHistory.map(visit => {
             const student = this.students.find(s => s.id === visit.studentId);
-            const visitDate = visit.timestamp.toDate();
+            const visitDate = visit.timestamp; // Already a Date object from mapVisitData
             const timeString = visitDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             const dateString = visitDate.toLocaleDateString();
             

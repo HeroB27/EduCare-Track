@@ -47,6 +47,23 @@ class TeacherAttendance {
 
             this.updateUI();
 
+            // Load assigned class information from classes table where adviser_id = teacher id
+            const { data: classData, error: classError } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('adviser_id', this.currentUser.id)
+                .eq('is_active', true)
+                .single();
+            
+            if (!classError && classData) {
+                // Set classId for backward compatibility
+                this.currentUser.classId = classData.id;
+                this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
+                console.log('Loaded assigned class:', classData);
+            } else {
+                console.log('No assigned class found for teacher');
+            }
+
             // Ensure teacher has an assigned class
             if (!this.currentUser.classId) {
                 this.classStudents = [];
@@ -124,24 +141,23 @@ class TeacherAttendance {
             today.setHours(0, 0, 0, 0);
             const todayStr = today.toISOString();
             
-            const { data, error } = await window.supabaseClient
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
                 .from('attendance')
                 .select('*')
-                .gte('timestamp', todayStr)
-                .eq('class_id', this.currentUser.classId);
+                .eq('class_id', this.currentUser.classId)
+                .gte('timestamp', today.toISOString())
+                .order('timestamp', { ascending: false });
 
-            if (error) throw error;
+            if (attendanceError) throw attendanceError;
 
-            this.todayAttendance = (data || []).map(record => ({
+            this.todayAttendance = (attendanceData || []).map(record => ({
                 id: record.id,
                 ...record,
-                studentId: record.student_id, // Map snake_case to camelCase
+                studentId: record.student_id,
                 entryType: record.entry_type,
                 classId: record.class_id,
                 timestamp: new Date(record.timestamp)
-            })).sort((a, b) => {
-                return b.timestamp - a.timestamp;
-            });
+            }));
             
             this.renderAttendanceTable();
             this.updateAttendanceStats();
@@ -348,17 +364,22 @@ class TeacherAttendance {
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
                 
-                const attendanceQuery = await EducareTrack.db.collection('attendance')
-                    .where('studentId', '==', studentId)
-                    .where('timestamp', '>=', today)
-                    .where('entryType', '==', 'entry')
-                    .get();
+                const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                    .from('attendance')
+                    .select('id')
+                    .eq('student_id', studentId)
+                    .gte('timestamp', today.toISOString())
+                    .limit(1);
 
-                if (!attendanceQuery.empty) {
-                    const recordId = attendanceQuery.docs[0].id;
-                    await EducareTrack.db.collection('attendance').doc(recordId).update({
-                        status: 'late'
-                    });
+                if (attendanceError) throw attendanceError;
+                
+                if (attendanceData && attendanceData.length > 0) {
+                    const { error: updateError } = await window.supabaseClient
+                        .from('attendance')
+                        .update({ status: 'late' })
+                        .eq('id', attendanceData[0].id);
+                    
+                    if (updateError) throw updateError;
                 }
             }
 
@@ -433,18 +454,28 @@ class TeacherAttendance {
             const end = new Date(endDate);
             end.setHours(23, 59, 59, 999);
 
-            const snapshot = await EducareTrack.db.collection('attendance')
-                .where('timestamp', '>=', start)
-                .where('timestamp', '<=', end)
-                .where('classId', '==', this.currentUser.classId)
-                .get();
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
+                .eq('class_id', this.currentUser.classId)
+                .gte('timestamp', start.toISOString())
+                .lte('timestamp', end.toISOString())
+                .order('timestamp', { ascending: false });
 
-            this.attendanceHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-                .sort((a, b) => {
-                    const bt = b.timestamp && b.timestamp.toDate ? b.timestamp.toDate() : b.timestamp;
-                    const at = a.timestamp && a.timestamp.toDate ? a.timestamp.toDate() : a.timestamp;
-                    return new Date(bt) - new Date(at);
-                });
+            if (attendanceError) throw attendanceError;
+            
+            this.attendanceHistory = (attendanceData || []).map(record => ({
+                id: record.id,
+                ...record,
+                studentId: record.student_id,
+                classId: record.class_id,
+                entryType: 'entry', // Default since field doesn't exist in new schema
+                timestamp: new Date(record.timestamp),
+                time: new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                recordedBy: record.recorded_by,
+                recordedByName: null // Field doesn't exist in new schema
+            }));
+            
             this.renderAttendanceHistory();
             
             this.hideLoading();

@@ -1864,7 +1864,7 @@ const EducareTrack = {
             }
             const { data, error } = await window.supabaseClient
                 .from('students')
-                .select('id,full_name,lrn,class_id,parent_id,strand,current_status,created_at,level,grade')
+                .select('id,full_name,lrn,class_id,strand,current_status,photo_url,created_at,updated_at')
                 .eq('class_id', classId);
             if (error || !data) return [];
             return data.map(s => ({
@@ -1872,12 +1872,15 @@ const EducareTrack = {
                 name: s.full_name,
                 lrn: s.lrn,
                 class_id: s.class_id,
-                parent_id: s.parent_id,
                 strand: s.strand,
                 current_status: s.current_status,
+                photo_url: s.photo_url,
                 created_at: s.created_at,
-                level: s.level,
-                grade: s.grade
+                updated_at: s.updated_at,
+                // Add backward compatibility fields
+                parent_id: null, // Field doesn't exist in new schema
+                level: null, // Field doesn't exist in new schema  
+                grade: null // Field doesn't exist in new schema
             }));
         } catch (error) {
             console.error('Error getting students by class:', error);

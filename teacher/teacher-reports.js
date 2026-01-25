@@ -38,6 +38,24 @@ class TeacherReports {
             }
 
             this.updateUI();
+
+            // Load assigned class information from classes table where adviser_id = teacher id
+            const { data: classData, error: classError } = await window.supabaseClient
+                .from('classes')
+                .select('*')
+                .eq('adviser_id', this.currentUser.id)
+                .eq('is_active', true)
+                .single();
+            
+            if (!classError && classData) {
+                // Set classId for backward compatibility
+                this.currentUser.classId = classData.id;
+                this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
+                console.log('Loaded assigned class:', classData);
+            } else {
+                console.log('No assigned class found for teacher');
+            }
+
             await this.loadClassStudents();
             await window.EducareTrack.fetchCalendarData();
             this.initEventListeners();
@@ -144,14 +162,14 @@ class TeacherReports {
                         break;
                     }
 
-                    const { data, error } = await window.supabaseClient
-                        .from('attendance')
-                        .select('id,studentId,classId,entryType,timestamp,time,session,status,remarks,recordedBy,recordedByName,manualEntry')
-                        .eq('classId', this.currentUser.classId)
-                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
-                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
-                        .order('timestamp', { ascending: false })
-                        .range(from, from + currentBatchSize - 1);
+                const { data, error } = await window.supabaseClient
+                    .from('attendance')
+                    .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
+                    .eq('class_id', this.currentUser.classId)
+                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                    .order('timestamp', { ascending: false })
+                    .range(from, from + currentBatchSize - 1);
 
                     if (error) {
                         console.error('Error fetching attendance batch:', error);
@@ -169,16 +187,17 @@ class TeacherReports {
                         more = false;
                     }
                 }
-                return allData;
-            } else {
-                let query = EducareTrack.db.collection('attendance')
-                    .where('classId', '==', this.currentUser.classId)
-                    .where('timestamp', '>=', startDate)
-                    .where('timestamp', '<=', endDate)
-                    .orderBy('timestamp', 'desc')
-                    .limit(limit);
-                const snapshot = await query.get();
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                return allData.map(record => ({
+                    id: record.id,
+                    ...record,
+                    studentId: record.student_id,
+                    classId: record.class_id,
+                    entryType: 'entry', // Default since field doesn't exist in new schema
+                    timestamp: new Date(record.timestamp),
+                    time: new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                    recordedBy: record.recorded_by,
+                    recordedByName: null // Field doesn't exist in new schema
+                }));
             }
         } catch (error) {
             console.error('Error getting attendance report:', error);
