@@ -370,16 +370,42 @@ class AttendanceLogic {
             const { data: relationshipData, error: relationshipError } = await window.supabaseClient
                 .from('parent_students')
                 .select('parent_id')
-                .eq('student_id', student.id)
-                .limit(1);
+                .eq('student_id', student.id);
             
             let targetUsers = [];
             if (!relationshipError && relationshipData && relationshipData.length > 0) {
-                targetUsers = [relationshipData[0].parent_id];
+                targetUsers = relationshipData.map(r => r.parent_id);
+            }
+
+            // Get homeroom teacher
+            if (student.class_id) {
+                const { data: classData, error: classError } = await window.supabaseClient
+                    .from('classes')
+                    .select('adviser_id')
+                    .eq('id', student.class_id)
+                    .single();
+                
+                if (!classError && classData && classData.adviser_id) {
+                    targetUsers.push(classData.adviser_id);
+                }
+            }
+
+            // Get admins
+            const { data: adminData, error: adminError } = await window.supabaseClient
+                .from('profiles')
+                .select('id')
+                .eq('role', 'admin');
+            
+            if (!adminError && adminData) {
+                const adminIds = adminData.map(a => a.id);
+                targetUsers = [...targetUsers, ...adminIds];
             }
             
+            // Deduplicate
+            targetUsers = [...new Set(targetUsers)].filter(id => id);
+            
             if (targetUsers.length === 0) {
-                console.warn('No parent found for absence notification');
+                console.warn('No target users found for absence notification');
                 return;
             }
 

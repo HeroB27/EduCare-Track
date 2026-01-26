@@ -192,6 +192,70 @@ class TeacherClinicDashboard {
         }
     }
 
+    async saveDecision(visitId) {
+        try {
+            const modal = document.getElementById('decisionModal');
+            if (!modal) return;
+            
+            const dispositionInput = modal.querySelector('input[name="disposition"]:checked');
+            if (!dispositionInput) {
+                this.showToast('Please select a disposition', 'error');
+                return;
+            }
+            const disposition = dispositionInput.value;
+            const notes = modal.querySelector('#teacherNotes').value;
+            
+            this.showToast('Submitting decision...', 'info');
+            
+            const visit = this.activeVisits.find(v => v.id === visitId);
+            if (!visit) throw new Error('Visit not found');
+
+            // Update clinic visit
+            const { error: updateError } = await window.supabaseClient
+                .from('clinic_visits')
+                .update({
+                    outcome: disposition,
+                    remarks: notes,
+                    teacher_decision_time: new Date().toISOString()
+                })
+                .eq('id', visitId);
+
+            if (updateError) throw updateError;
+
+            // Update student status based on decision
+            let newStatus = 'in_clinic'; // Default
+            if (disposition === 'return_to_class') {
+                newStatus = 'in_school';
+            } else if (disposition === 'send_home') {
+                newStatus = 'out_school';
+            }
+
+            if (newStatus !== 'in_clinic') {
+                const { error: statusError } = await window.supabaseClient
+                    .from('students')
+                    .update({ current_status: newStatus })
+                    .eq('id', visit.studentId);
+                
+                if (statusError) console.error('Error updating student status:', statusError);
+            }
+
+            // Notify Clinic Staff
+            await this.notifyClinicStaff(visit, disposition);
+            
+            // Notify Parents
+            const student = this.students.find(s => s.id === visit.studentId);
+            await this.notifyParents(visit.studentId, disposition, student ? student.name : 'Student', notes);
+
+            this.showToast('Decision submitted successfully', 'success');
+            this.closeDecisionModal();
+            this.loadInitialData(); // Refresh list
+
+        } catch (error) {
+            console.error('Error saving decision:', error);
+            this.showToast('Error submitting decision', 'error');
+        }
+    }
+
     closeDecisionModal() {
         // Since there is no modal in the HTML provided, we might be using an inline panel or a modal that needs to be created.
         // Looking at the debris, it seems there might have been a 'clearDecisionPanel' or similar.

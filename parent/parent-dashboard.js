@@ -2,6 +2,7 @@ class ParentDashboard {
     constructor() {
         this.currentUser = null;
         this.children = [];
+        this.realtimeChannel = null;
         this.init();
     }
 
@@ -9,13 +10,11 @@ class ParentDashboard {
         try {
             this.showLoading();
             
-            // Wait for EducareTrack to be ready
             if (!window.EducareTrack) {
                 setTimeout(() => this.init(), 100);
                 return;
             }
 
-            // Check if user is logged in
             const savedUser = localStorage.getItem('educareTrack_user');
             if (!savedUser) {
                 window.location.href = '../index.html';
@@ -24,17 +23,14 @@ class ParentDashboard {
 
             this.currentUser = JSON.parse(savedUser);
             
-            // Verify user is a parent
             if (this.currentUser.role !== 'parent') {
-                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-                    window.EducareTrack.showNormalNotification({ title: 'Access Denied', message: 'Parent role required.', type: 'error' });
-                }
                 window.location.href = '../index.html';
                 return;
             }
 
             this.updateUI();
             await this.loadDashboardData();
+            this.setupRealtimeSubscription();
             this.initEventListeners();
             
             this.hideLoading();
@@ -71,15 +67,9 @@ class ParentDashboard {
 
     async loadDashboardData() {
         try {
-            // Load children data
             await this.loadChildren();
-            
-            // Load recent activity
             await this.loadRecentActivity();
-            
-            // Load notification count
             await this.loadNotificationCount();
-
         } catch (error) {
             console.error('Error loading dashboard data:', error);
         }
@@ -88,50 +78,66 @@ class ParentDashboard {
     async loadChildren() {
         try {
             this.children = await EducareTrack.getStudentsByParent(this.currentUser.id);
-            
-            // Update children count
             document.getElementById('totalChildren').textContent = this.children.length;
-            
-            // Update children overview
-            this.updateChildrenOverview();
-            
-            // Calculate today's stats
+            await this.updateChildrenOverview();
             await this.calculateTodayStats();
-
         } catch (error) {
             console.error('Error loading children:', error);
         }
     }
 
-    updateChildrenOverview() {
+    async updateChildrenOverview() {
         const container = document.getElementById('childrenOverview');
-        
+        if (!container) return;
+
         if (this.children.length === 0) {
-            container.innerHTML = `
-                <div class="col-span-3 text-center py-8 bg-white rounded-lg shadow-md">
-                    <i class="fas fa-user-graduate text-4xl text-gray-300 mb-4"></i>
-                    <h3 class="text-lg font-medium text-gray-600 mb-2">No Children Found</h3>
-                    <p class="text-gray-500">Contact school administration to add your children.</p>
-                </div>
-            `;
+            container.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500">No children linked to your account.</div>';
             return;
         }
 
-        container.innerHTML = this.children.map(child => `
-            <div class="bg-white rounded-lg shadow-md p-6 card-hover">
+        container.innerHTML = '';
+        
+        for (const child of this.children) {
+            const status = await this.getChildStatus(child.id);
+            
+            const div = document.createElement('div');
+            div.className = 'bg-white rounded-lg shadow-md p-6 card-hover';
+            
+            let statusBadge = '';
+            let statusColor = 'bg-gray-100 text-gray-800';
+            let statusText = 'Unknown';
+
+            if (status.status === 'in_clinic') {
+                statusColor = 'bg-blue-100 text-blue-800';
+                statusText = 'In Clinic';
+            } else if (status.status === 'out_school') {
+                statusColor = 'bg-gray-100 text-gray-800';
+                statusText = 'Left School';
+            } else if (status.status === 'present') {
+                statusColor = 'bg-green-100 text-green-800';
+                statusText = 'Present';
+            } else if (status.status === 'late') {
+                statusColor = 'bg-yellow-100 text-yellow-800';
+                statusText = 'Late';
+            } else if (status.status === 'absent') {
+                statusColor = 'bg-red-100 text-red-800';
+                statusText = 'Absent';
+            }
+
+            statusBadge = `<span class="px-2 py-1 rounded-full text-xs font-medium ${statusColor}">${statusText}</span>`;
+
+            div.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center">
                         <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mr-3">
-                            <span class="text-green-600 font-semibold">${(child.full_name || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
+                            <span class="text-green-600 font-semibold">${(child.full_name || '?').charAt(0)}</span>
                         </div>
                         <div>
-                            <h3 class="font-semibold text-gray-800">${child.full_name || 'Unknown'}</h3>
-                            <p class="text-sm text-gray-600">${child.grade || 'N/A'} • ${child.level || 'N/A'}</p>
+                            <h3 class="font-semibold text-gray-800">${child.full_name}</h3>
+                            <p class="text-sm text-gray-600">${child.grade || 'N/A'} - ${child.section || 'N/A'}</p>
                         </div>
                     </div>
-                    <span class="px-2 py-1 rounded-full text-xs font-medium ${EducareTrack.getStatusColor(child.current_status)}">
-                        ${EducareTrack.getStatusText(child.current_status)}
-                    </span>
+                    ${statusBadge}
                 </div>
                 
                 <div class="space-y-2 text-sm text-gray-600">
@@ -141,22 +147,67 @@ class ParentDashboard {
                     </div>
                     <div class="flex justify-between">
                         <span>Last Update:</span>
-                        <span class="font-medium">${child.lastAttendance ? EducareTrack.formatTime(child.lastAttendance) : 'No attendance records'}</span>
+                        <span class="font-medium">${status.time ? new Date(status.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'N/A'}</span>
                     </div>
                 </div>
                 
                 <div class="mt-4 flex space-x-2">
-                    <button onclick="parentDashboard.viewChildDetails('${child.id}')" 
+                    <button onclick="window.location.href='parent-attendance.html?studentId=${child.id}'" 
                             class="flex-1 bg-green-600 text-white py-2 px-3 rounded-md text-sm hover:bg-green-700 transition-colors">
-                        <i class="fas fa-eye mr-1"></i> Details
+                        <i class="fas fa-calendar-alt mr-1"></i> History
                     </button>
-                    <button onclick="parentDashboard.viewChildAttendance('${child.id}')" 
+                    <button onclick="window.location.href='parent-clinic.html?studentId=${child.id}'" 
                             class="flex-1 bg-blue-600 text-white py-2 px-3 rounded-md text-sm hover:bg-blue-700 transition-colors">
-                        <i class="fas fa-clipboard-check mr-1"></i> Attendance
+                        <i class="fas fa-notes-medical mr-1"></i> Clinic
                     </button>
                 </div>
-            </div>
-        `).join('');
+            `;
+            container.appendChild(div);
+        }
+    }
+
+    async getChildStatus(studentId) {
+        // Check authoritative status from students table first
+        const { data: student } = await window.supabaseClient
+            .from('students')
+            .select('current_status')
+            .eq('id', studentId)
+            .single();
+            
+        if (student && student.current_status === 'in_clinic') {
+            // Fetch latest visit time for display
+            const { data: visit } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('visit_time')
+                .eq('student_id', studentId)
+                .order('visit_time', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            return { status: 'in_clinic', time: visit ? visit.visit_time : new Date().toISOString() };
+        }
+
+        // Check attendance for today
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await window.supabaseClient
+            .from('attendance')
+            .select('*')
+            .eq('student_id', studentId)
+            .gte('timestamp', today)
+            .order('timestamp', { ascending: false })
+            .limit(1);
+
+        if (error || !data || data.length === 0) {
+            // If no attendance record, fallback to student current_status (e.g. 'absent', 'inactive')
+            return { status: student ? student.current_status : 'unknown' };
+        }
+        
+        const lastRecord = data[0];
+        // Infer "Left School" from remarks or manual entry
+        if (lastRecord.remarks && (lastRecord.remarks.toLowerCase().includes('out') || lastRecord.remarks.toLowerCase().includes('departure'))) {
+             return { status: 'out_school', time: lastRecord.timestamp };
+        }
+        
+        return { status: lastRecord.status, time: lastRecord.timestamp };
     }
 
     async calculateTodayStats() {
@@ -164,35 +215,39 @@ class ParentDashboard {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            const presentStudents = new Set();
-            const lateStudents = new Set();
-            let clinicVisits = 0;
+            let presentCount = 0;
+            let lateCount = 0;
+            let clinicCount = 0;
 
             for (const child of this.children) {
+                // Attendance stats
                 const { data: attendanceData } = await window.supabaseClient
                     .from('attendance')
                     .select('*')
                     .eq('student_id', child.id)
-                    .gte('timestamp', today.toISOString())
-                    .eq('session', 'AM');
+                    .gte('timestamp', today.toISOString());
 
-                attendanceData.forEach(record => {
-                    if (record.status === 'present') presentStudents.add(child.id);
-                    if (record.status === 'late') lateStudents.add(child.id);
-                });
+                // Check if ANY record is present/late
+                if (attendanceData) {
+                    const hasPresent = attendanceData.some(r => r.status === 'present');
+                    const hasLate = attendanceData.some(r => r.status === 'late');
+                    if (hasPresent) presentCount++;
+                    if (hasLate) lateCount++;
+                }
 
-                const { data: clinicData } = await window.supabaseClient
+                // Clinic stats
+                const { count } = await window.supabaseClient
                     .from('clinic_visits')
-                    .select('*')
+                    .select('*', { count: 'exact', head: true })
                     .eq('student_id', child.id)
                     .gte('visit_time', today.toISOString());
-
-                clinicVisits += clinicData.length;
+                
+                if (count) clinicCount += count;
             }
 
-            document.getElementById('presentToday').textContent = presentStudents.size;
-            document.getElementById('lateToday').textContent = lateStudents.size;
-            document.getElementById('clinicVisits').textContent = clinicVisits;
+            document.getElementById('presentToday').textContent = presentCount;
+            document.getElementById('lateToday').textContent = lateCount;
+            document.getElementById('clinicVisits').textContent = clinicCount;
 
         } catch (error) {
             console.error('Error calculating today stats:', error);
@@ -200,285 +255,113 @@ class ParentDashboard {
     }
 
     async loadRecentActivity() {
-        try {
-            const activity = await EducareTrack.getRecentActivityForParent(this.currentUser.id);
-            const container = document.getElementById('recentActivity');
-            
-            if (activity.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center py-4 text-gray-500">
-                        <i class="fas fa-inbox text-2xl mb-2"></i>
-                        <p>No recent activity</p>
-                    </div>
-                `;
-                return;
-            }
+         const container = document.getElementById('recentActivity');
+         if (!container) return;
+         
+         const studentIds = this.children.map(c => c.id);
+         if (studentIds.length === 0) return;
 
-            container.innerHTML = activity.map(item => `
-                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div class="flex items-center">
-                        <div class="w-8 h-8 ${this.getActivityColor(item.type)} rounded-full flex items-center justify-center mr-3">
-                            <i class="${this.getActivityIcon(item.type)} text-sm"></i>
-                        </div>
-                        <div>
-                            <p class="text-sm font-medium">${item.title}</p>
-                            <p class="text-xs text-gray-500">${item.message}</p>
-                        </div>
+         const { data: logs, error } = await window.supabaseClient
+            .from('attendance')
+            .select('*, students(full_name)')
+            .in('student_id', studentIds)
+            .order('timestamp', { ascending: false })
+            .limit(10);
+
+         if (error) {
+             console.error('Error fetching logs:', error);
+             return;
+         }
+
+         container.innerHTML = logs.map(log => {
+             const studentName = log.students ? log.students.full_name : 'Unknown Student';
+             const time = new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+             const isOut = log.remarks && (log.remarks.includes('out') || log.remarks.includes('departure'));
+             const statusText = isOut ? 'Left School' : (log.status === 'late' ? 'Arrived Late' : 'Arrived On Time');
+             const icon = isOut ? 'fa-sign-out-alt text-red-500' : 'fa-sign-in-alt text-green-500';
+
+             return `
+                <div class="flex items-start pb-4 border-b border-gray-100 last:border-0 last:pb-0 mb-4 last:mb-0">
+                    <div class="bg-gray-100 p-2 rounded-lg mr-3">
+                        <i class="fas ${icon}"></i>
                     </div>
-                    <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
+                    <div>
+                        <p class="text-sm font-medium text-gray-800">${studentName} - ${statusText}</p>
+                        <p class="text-xs text-gray-500">${time}</p>
+                    </div>
                 </div>
-            `).join('');
-        } catch (error) {
-            console.error('Error loading recent activity:', error);
-        }
+             `;
+         }).join('');
     }
 
     async loadNotificationCount() {
-        try {
-            const count = await EducareTrack.getUnreadNotificationCount(this.currentUser.id);
-            const badge = document.getElementById('notificationBadge');
-            
+        const count = await EducareTrack.getUnreadNotificationCount(this.currentUser.id);
+        const badge = document.getElementById('notificationBadge');
+        if (badge) {
             if (count > 0) {
                 badge.textContent = count;
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
             }
-        } catch (error) {
-            console.error('Error loading notification count:', error);
         }
     }
 
-    getActivityColor(type) {
-        const colors = {
-            'attendance': 'bg-blue-100 text-blue-600',
-            'notification': 'bg-yellow-100 text-yellow-600',
-            'clinic': 'bg-red-100 text-red-600'
-        };
-        return colors[type] || 'bg-gray-100 text-gray-600';
-    }
+    setupRealtimeSubscription() {
+        if (this.realtimeChannel) return;
 
-    getActivityIcon(type) {
-        const icons = {
-            'attendance': 'fas fa-clipboard-check',
-            'notification': 'fas fa-bell',
-            'clinic': 'fas fa-heartbeat'
-        };
-        return icons[type] || 'fas fa-info-circle';
-    }
-
-    formatTime(date) {
-        if (!date) return 'N/A';
-        return new Date(date).toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        this.realtimeChannel = window.supabaseClient.channel('parent-dashboard')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
+                this.loadDashboardData();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'clinic_visits' }, () => {
+                this.loadDashboardData();
+            })
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'students' }, (payload) => {
+                // Check if the updated student is one of our children
+                const isMyChild = this.children.some(child => child.id === payload.new.id);
+                if (isMyChild) {
+                    this.loadDashboardData();
+                }
+            })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+                if (payload.new.target_users && payload.new.target_users.includes(this.currentUser.id)) {
+                    this.loadNotificationCount();
+                    // Optionally show toast
+                }
+            })
+            .subscribe();
     }
 
     initEventListeners() {
-        // Sidebar toggle
-        document.getElementById('sidebarToggle').addEventListener('click', () => {
-            this.toggleSidebar();
-        });
-
-        // Logout
-        document.getElementById('logoutBtn').addEventListener('click', async () => {
-            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-                ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
-                : true;
-            if (ok) {
-                EducareTrack.logout();
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                localStorage.removeItem('educareTrack_user');
                 window.location.href = '../index.html';
-            }
-        });
-
-        // Close modals on outside click
-        document.getElementById('childDetailsModal').addEventListener('click', (e) => {
-            if (e.target.id === 'childDetailsModal') {
-                this.closeChildDetailsModal();
-            }
-        });
-
-        // Escape key to close modal
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.closeChildDetailsModal();
-            }
-        });
-
-        // Listen for new notifications
-        window.addEventListener('educareTrack:newNotifications', () => {
-            this.loadNotificationCount();
-        });
-
-        window.addEventListener('educareTrack:clinicNotification', () => {
-            this.calculateTodayStats();
-        });
-    }
-
-    async viewChildDetails(childId) {
-        try {
-            const child = this.children.find(c => c.id === childId);
-            if (!child) return;
-
-            const modal = document.getElementById('childDetailsModal');
-            const content = document.getElementById('childDetailsContent');
-
-            // Get child's class info
-            const classInfo = child.classId ? await EducareTrack.getClassById(child.classId) : null;
-
-            // Get today's attendance
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const { data: attendanceData } = await window.supabaseClient
-                .from('attendance')
-                .select('*')
-                .eq('student_id', childId)
-                .gte('timestamp', today.toISOString())
-                .order('timestamp', { ascending: false })
-                .limit(1);
-
-            let todayAttendance = null;
-            if (attendanceData.length > 0) {
-                todayAttendance = attendanceData[0];
-            }
-
-            const isSchoolDay = window.EducareTrack.isSchoolDay(today, child.level);
-            
-            // Determine display status
-            let displayStatus = EducareTrack.getStatusText(child.currentStatus);
-            let displayColor = EducareTrack.getStatusColor(child.currentStatus);
-            
-            if (!isSchoolDay && (child.currentStatus === 'out_school' || child.currentStatus === 'absent')) {
-                displayStatus = 'No Class';
-                displayColor = 'bg-gray-100 text-gray-600';
-            }
-
-            content.innerHTML = `
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="md:col-span-1">
-                        <div class="bg-gray-100 rounded-lg p-4 text-center">
-                            <div class="w-20 h-20 rounded-full bg-green-200 flex items-center justify-center mx-auto mb-3">
-                                <span class="text-green-600 font-bold text-xl">${(child.full_name || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>
-                            </div>
-                            <h3 class="font-semibold text-lg">${child.full_name || 'Unknown'}</h3>
-                            <p class="text-gray-600">${child.grade || 'N/A'} • ${child.level || 'N/A'}</p>
-                            <div class="mt-2">
-                                <span class="px-3 py-1 rounded-full text-sm font-medium ${displayColor}">
-                                    ${displayStatus}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="md:col-span-2">
-                        <div class="space-y-4">
-                            <div>
-                                <h4 class="font-semibold text-gray-700 mb-2">Basic Information</h4>
-                                <div class="grid grid-cols-2 gap-4 text-sm">
-                                    <div>
-                                        <span class="text-gray-600">Student ID:</span>
-                                        <p class="font-medium">${child.id || 'N/A'}</p>
-                                    </div>
-                                    <div>
-                                        <span class="text-gray-600">LRN:</span>
-                                        <p class="font-medium">${child.lrn || 'N/A'}</p>
-                                    </div>
-                                    <div>
-                                        <span class="text-gray-600">Class:</span>
-                                        <p class="font-medium">${child.class_id || 'Not assigned'}</p>
-                                    </div>
-                                    <div>
-                                        <span class="text-gray-600">Strand:</span>
-                                        <p class="font-medium">${child.strand || 'N/A'}</p>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <h4 class="font-semibold text-gray-700 mb-2">Today's Status</h4>
-                                ${todayAttendance ? `
-                                    <div class="bg-gray-50 rounded-lg p-3">
-                                        <div class="flex justify-between items-center">
-                                            <span class="font-medium">Attendance</span>
-                                            <span class="px-2 py-1 rounded text-xs ${EducareTrack.getStatusColor(todayAttendance.status)}">
-                                                ${todayAttendance.status}
-                                            </span>
-                                        </div>
-                                        <div class="text-sm text-gray-600 mt-1">
-                                            Time: ${new Date(todayAttendance.timestamp).toLocaleTimeString()} • Session: ${todayAttendance.session}
-                                        </div>
-                                    </div>
-                                ` : `
-                                    <div class="bg-gray-50 rounded-lg p-3 text-center text-gray-500">
-                                        ${isSchoolDay ? 'No attendance recorded today' : 'No Class Today'}
-                                    </div>
-                                `}
-                            </div>
-                            
-                            <div>
-                                <h4 class="font-semibold text-gray-700 mb-2">Subjects</h4>
-                                <div class="flex flex-wrap gap-2">
-                                    ${child.subjects && child.subjects.length > 0 ? 
-                                        child.subjects.map(subject => `
-                                            <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">${subject}</span>
-                                        `).join('') : 
-                                        '<span class="text-gray-500 text-sm">No subjects assigned</span>'
-                                    }
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            modal.classList.remove('hidden');
-        } catch (error) {
-            console.error('Error loading child details:', error);
-            this.showNotification('Error loading child details', 'error');
+            });
         }
-    }
 
-    viewChildAttendance(childId) {
-        // Redirect to attendance page with child filter
-        window.location.href = `parent-attendance.html?child=${childId}`;
-    }
-
-    closeChildDetailsModal() {
-        document.getElementById('childDetailsModal').classList.add('hidden');
-    }
-
-    toggleSidebar() {
+        // Mobile sidebar toggle
+        const toggleBtn = document.getElementById('sidebarToggle');
         const sidebar = document.querySelector('.sidebar');
-        const mainContent = document.querySelector('.main-content');
-        
-        if (sidebar.classList.contains('collapsed')) {
-            sidebar.classList.remove('collapsed');
-            mainContent.classList.remove('ml-16');
-            mainContent.classList.add('ml-64');
-        } else {
-            sidebar.classList.add('collapsed');
-            mainContent.classList.remove('ml-64');
-            mainContent.classList.add('ml-16');
+        if (toggleBtn && sidebar) {
+            toggleBtn.addEventListener('click', () => {
+                sidebar.classList.toggle('-translate-x-full');
+            });
         }
     }
 
     showLoading() {
-        document.getElementById('loadingSpinner').classList.remove('hidden');
+        // Implementation dependent on UI
     }
 
     hideLoading() {
-        document.getElementById('loadingSpinner').classList.add('hidden');
-    }
-
-    showNotification(message, type = 'info') {
-        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-            window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : 'Info', message, type });
-        }
+        // Implementation dependent on UI
     }
 }
 
-// Initialize dashboard when page loads
-document.addEventListener('DOMContentLoaded', function() {
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
     window.parentDashboard = new ParentDashboard();
 });

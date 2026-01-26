@@ -944,6 +944,16 @@
                 }
             }
 
+            startRealTimeUpdates() {
+                // Poll every 60 seconds to keep stats fresh
+                if (this.pollInterval) clearInterval(this.pollInterval);
+                this.pollInterval = setInterval(() => {
+                    console.log('Refreshing admin dashboard data...');
+                    this.updateActiveUsers();
+                    this.loadRealAttendanceData(); 
+                }, 60000);
+            }
+
             async updateActiveUsers() {
                 try {
                     const users = await EducareTrack.getUsers();

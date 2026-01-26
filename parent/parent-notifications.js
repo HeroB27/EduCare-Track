@@ -4,6 +4,13 @@ class ParentNotifications {
         this.notifications = [];
         this.filteredNotifications = [];
         this.currentFilter = 'all';
+        this.settings = {
+            attendance: true,
+            clinic: true,
+            announcement: true,
+            excuse: true,
+            email: false
+        };
         this.page = 0;
         this.pageSize = 20;
         this.hasMore = true;
@@ -28,6 +35,9 @@ class ParentNotifications {
             }
 
             this.currentUser = JSON.parse(savedUser);
+            
+            // Load settings
+            this.loadSettings();
             
             // Verify user is a parent
             if (this.currentUser.role !== 'parent') {
@@ -122,19 +132,31 @@ class ParentNotifications {
     }
 
     applyFilter() {
+        let tempNotifications = this.notifications;
+
+        // First, filter by settings (type)
+        tempNotifications = tempNotifications.filter(notification => {
+            if (notification.type === 'attendance' && !this.settings.attendance) return false;
+            if (notification.type === 'clinic' && !this.settings.clinic) return false;
+            if (notification.type === 'announcement' && !this.settings.announcement) return false;
+            if (notification.type === 'excuse' && !this.settings.excuse) return false;
+            return true;
+        });
+
+        // Then apply tab filters
         switch (this.currentFilter) {
             case 'unread':
-                this.filteredNotifications = this.notifications.filter(notification => 
+                this.filteredNotifications = tempNotifications.filter(notification => 
                     !notification.readBy || !notification.readBy.includes(this.currentUser.id)
                 );
                 break;
             case 'urgent':
-                this.filteredNotifications = this.notifications.filter(notification => 
+                this.filteredNotifications = tempNotifications.filter(notification => 
                     notification.isUrgent === true
                 );
                 break;
             default:
-                this.filteredNotifications = this.notifications;
+                this.filteredNotifications = tempNotifications;
         }
 
         this.renderNotifications();
@@ -337,7 +359,64 @@ class ParentNotifications {
         this.applyFilter();
     }
 
+    loadSettings() {
+        const savedSettings = localStorage.getItem(`educareTrack_notification_settings_${this.currentUser.id}`);
+        if (savedSettings) {
+            try {
+                const parsed = JSON.parse(savedSettings);
+                this.settings = { ...this.settings, ...parsed };
+            } catch (e) {
+                console.error('Error parsing notification settings', e);
+            }
+        }
+    }
+
+    saveSettings() {
+        // Get values from checkboxes
+        this.settings.attendance = document.getElementById('settingAttendance').checked;
+        this.settings.clinic = document.getElementById('settingClinic').checked;
+        this.settings.announcement = document.getElementById('settingAnnouncements').checked;
+        this.settings.excuse = document.getElementById('settingExcuse').checked;
+        this.settings.email = document.getElementById('settingEmail').checked;
+
+        // Save to localStorage
+        localStorage.setItem(`educareTrack_notification_settings_${this.currentUser.id}`, JSON.stringify(this.settings));
+
+        // Close modal
+        this.closeSettingsModal();
+
+        // Re-apply filters
+        this.applyFilter();
+        
+        this.showNotification('Settings saved successfully', 'success');
+    }
+
+    openSettingsModal() {
+        // Set checkbox states based on current settings
+        document.getElementById('settingAttendance').checked = this.settings.attendance;
+        document.getElementById('settingClinic').checked = this.settings.clinic;
+        document.getElementById('settingAnnouncements').checked = this.settings.announcement;
+        document.getElementById('settingExcuse').checked = this.settings.excuse;
+        document.getElementById('settingEmail').checked = this.settings.email;
+
+        const modal = document.getElementById('notificationSettingsModal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    closeSettingsModal() {
+        const modal = document.getElementById('notificationSettingsModal');
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+
     initEventListeners() {
+        // Settings button
+        const settingsBtn = document.getElementById('notificationSettingsBtn');
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', () => this.openSettingsModal());
+        }
+
         // Sidebar toggle
         document.getElementById('sidebarToggle').addEventListener('click', () => {
             this.toggleSidebar();

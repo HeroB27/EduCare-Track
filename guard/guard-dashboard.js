@@ -453,6 +453,16 @@ class GuardDashboard {
             
             if (error) throw error;
             
+            // Send notification
+            await this.sendManualEntryNotification(
+                this.selectedStudent,
+                entryType,
+                timeValue,
+                status,
+                `manual_${entryType}`,
+                data[0].id
+            );
+            
             this.showNotification(`${this.selectedStudent.name || `${this.selectedStudent.first_name || ''} ${this.selectedStudent.last_name || ''}`.trim()} ${entryType === 'entry' ? 'arrival' : 'departure'} recorded successfully`, 'success');
             this.closeManualEntry();
             
@@ -472,15 +482,40 @@ class GuardDashboard {
                 .select('parent_id')
                 .eq('student_id', student.id);
             
-            if (relationshipError) {
-                console.error('Error fetching parent relationships:', relationshipError);
-                return;
+            let targetUsers = [];
+            if (!relationshipError && relationshipData && relationshipData.length > 0) {
+                targetUsers = relationshipData.map(r => r.parent_id);
             }
 
-            const targetUsers = relationshipData ? relationshipData.map(r => r.parent_id).filter(Boolean) : [];
+            // Get homeroom teacher
+            if (student.classId) {
+                const { data: classData, error: classError } = await window.supabaseClient
+                    .from('classes')
+                    .select('adviser_id')
+                    .eq('id', student.classId)
+                    .single();
+                
+                if (!classError && classData && classData.adviser_id) {
+                    targetUsers.push(classData.adviser_id);
+                }
+            }
+
+            // Add admins
+            const { data: adminData, error: adminError } = await window.supabaseClient
+                .from('profiles')
+                .select('id')
+                .eq('role', 'admin');
+            
+            if (!adminError && adminData) {
+                const adminIds = adminData.map(a => a.id);
+                targetUsers = [...targetUsers, ...adminIds];
+            }
+            
+            // Deduplicate and filter
+            targetUsers = [...new Set(targetUsers)].filter(id => id && id !== '');
             
             if (targetUsers.length === 0) {
-                console.log('No parents found for notification');
+                console.log('No target users found for notification');
                 return;
             }
 
@@ -488,7 +523,7 @@ class GuardDashboard {
             const notificationTitle = entryType === 'entry' ? 'Student Arrival (Manual Entry)' : 'Student Departure (Manual Entry)';
             
             // Create detailed message
-            let message = `${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} has ${actionType} at ${timeString}`;
+            let message = `${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} has ${actionType} at ${timeString} (Manual Entry)`;
             if (status === 'late') {
                 message += ' - LATE ARRIVAL';
             }
@@ -500,8 +535,12 @@ class GuardDashboard {
                 message: message,
                 type: 'attendance',
                 student_id: student.id,
-                related_record: attendanceId,
-                created_at: new Date().toISOString()
+                metadata: {
+                    attendance_id: attendanceId,
+                    entry_type: entryType,
+                    status: status,
+                    remarks: remarks
+                }
             };
 
             const { error } = await window.supabaseClient
@@ -511,11 +550,11 @@ class GuardDashboard {
             if (error) {
                 console.error('Error creating notification:', error);
             } else {
-                console.log(`Notification sent to ${targetUsers.length} parents`);
+                console.log(`Manual entry notification sent to ${targetUsers.length} users`);
             }
             
         } catch (error) {
-            console.error('Error sending manual entry notifications:', error);
+            console.error('Error sending manual entry notification:', error);
         }
     }
 
@@ -535,12 +574,50 @@ class GuardDashboard {
     }
 
     startRealTimeUpdates() {
-        // For Supabase, we'll use polling instead of real-time listeners for simplicity
-        // In a production environment, you might want to implement Supabase real-time subscriptions
+        // Keep polling as a backup and for clock updates
         this.realTimeInterval = setInterval(() => {
             this.updateTodayStats();
             this.loadRecentActivity();
-        }, 30000); // Update every 30 seconds
+        }, 60000); // 1 minute fallback
+
+        if (!window.supabaseClient) return;
+
+        // Clean up existing subscription
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('guard_dashboard_realtime');
+
+        // Listen for Attendance Inserts (New entries/exits)
+        this.realtimeChannel.on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'attendance'
+        }, (payload) => {
+            console.log('Realtime attendance insert received:', payload.new);
+            this.updateTodayStats();
+            this.addNewAttendanceItem(payload.new);
+        });
+        
+        // Listen for Notifications
+        this.realtimeChannel.on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications'
+        }, (payload) => {
+            const notif = payload.new;
+            if (notif && notif.target_users && notif.target_users.includes(this.currentUser.id)) {
+                this.loadNotificationCount();
+                this.showNotification(notif.title, 'info');
+            }
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Guard dashboard connected to realtime updates');
+            }
+        });
     }
 
     async updateTodayStats() {

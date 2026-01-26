@@ -541,6 +541,11 @@ class TeacherDashboard {
 
             if (error) throw error;
 
+            // Update student status
+            await window.supabaseClient.from('students')
+                .update({ current_status: 'in_clinic' })
+                .eq('id', studentId);
+
             // Notify Nurse
             const studentName = this.getStudentName(studentId);
             const { data: nurses } = await window.supabaseClient
@@ -819,20 +824,24 @@ class TeacherDashboard {
                 }
             });
 
-            // Listen for Clinic Visit Updates
+            // Listen for Clinic Visit Changes (INSERT and UPDATE)
             this.realtimeChannel.on('postgres_changes', {
-                event: 'UPDATE',
+                event: '*',
                 schema: 'public',
                 table: 'clinic_visits'
             }, (payload) => {
                 const record = payload.new;
                 if (record && record.class_id == this.currentUser.classId) {
+                    console.log('Realtime clinic update received:', record);
                     this.refreshDashboardStats();
                     this.loadRecentActivity();
                     
-                    const studentName = this.getStudentName(record.student_id);
-                    if (record.status !== 'in_clinic') {
-                            this.showNotification(`Clinic Update: ${studentName} - ${record.outcome}`, 'info');
+                    if (payload.eventType === 'INSERT') {
+                         const studentName = this.getStudentName(record.student_id);
+                         this.showNotification(`New Clinic Visit: ${studentName} - ${record.reason}`, 'info');
+                    } else if (payload.eventType === 'UPDATE' && record.status !== 'in_clinic') {
+                         const studentName = this.getStudentName(record.student_id);
+                         this.showNotification(`Clinic Update: ${studentName} - ${record.outcome}`, 'info');
                     }
                 }
             });

@@ -48,6 +48,7 @@ class ParentAttendance {
             await this.loadAttendanceData();
             this.initEventListeners();
             this.initTabs();
+            this.initRealtimeSubscription();
             
             this.hideLoading();
         } catch (error) {
@@ -241,17 +242,46 @@ class ParentAttendance {
     async getChildAttendance(childId, startDate, endDate) {
         try {
             let records = [];
+            
             try {
-                const { data } = await window.supabaseClient
-                    .from('attendance')
-                    .select('*')
-                    .eq('student_id', childId)
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .order('timestamp', { ascending: false });
-                records = data || [];
+                // Fetch attendance and clinic visits in parallel
+                const [attendanceRes, clinicRes] = await Promise.all([
+                    window.supabaseClient
+                        .from('attendance')
+                        .select('*')
+                        .eq('student_id', childId)
+                        .gte('timestamp', startDate.toISOString())
+                        .lte('timestamp', endDate.toISOString())
+                        .order('timestamp', { ascending: false }),
+                    
+                    window.supabaseClient
+                        .from('clinic_visits')
+                        .select('*')
+                        .eq('student_id', childId)
+                        .gte('visit_time', startDate.toISOString())
+                        .lte('visit_time', endDate.toISOString())
+                        .order('visit_time', { ascending: false })
+                ]);
+
+                const attendanceRecords = attendanceRes.data || [];
+                
+                const clinicRecords = (clinicRes.data || []).map(visit => ({
+                    id: visit.id,
+                    student_id: visit.student_id,
+                    timestamp: visit.visit_time,
+                    status: 'in_clinic',
+                    session: new Date(visit.visit_time).getHours() < 12 ? 'AM' : 'PM',
+                    remarks: visit.reason + (visit.notes ? `: ${visit.notes}` : ''),
+                    recordedByName: 'Clinic'
+                }));
+
+                records = [...attendanceRecords, ...clinicRecords];
+                
+                // Sort by timestamp descending
+                records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
             } catch (err) {
-                console.warn('Attendance timestamp query failed:', err);
+                console.warn('Attendance/Clinic query failed:', err);
             }
 
             return records;
@@ -514,40 +544,211 @@ class ParentAttendance {
                     <div class="divide-y divide-gray-200">
             `;
             
-            Object.values(month.children).forEach(child => {
-                const totalDays = child.present + child.late + child.absent;
-                const attendanceRate = totalDays > 0 ? Math.round((child.present / totalDays) * 100) : 0;
-                
+            Object.values(month.children).forEach(childData => {
                 summaryHTML += `
-                    <div class="px-4 py-3">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="font-medium text-gray-800">${child.name}</span>
-                            <span class="text-sm font-semibold ${attendanceRate >= 90 ? 'text-green-600' : attendanceRate >= 75 ? 'text-yellow-600' : 'text-red-600'}">
-                                ${attendanceRate}% Attendance
-                            </span>
-                        </div>
-                        <div class="grid grid-cols-3 gap-4 text-sm">
-                            <div class="text-center">
-                                <div class="text-green-600 font-bold">${child.present}</div>
-                                <div class="text-gray-500">Present</div>
-                            </div>
-                            <div class="text-center">
-                                <div class="text-yellow-600 font-bold">${child.late}</div>
-                                <div class="text-gray-500">Late</div>
-                            </div>
-                            <div class="text-center">
-                                <div class="text-red-600 font-bold">${child.absent}</div>
-                                <div class="text-gray-500">Absent</div>
-                            </div>
+                    <div class="px-4 py-3 flex justify-between items-center">
+                        <span class="font-medium text-gray-700">${childData.name}</span>
+                        <div class="flex space-x-4 text-sm">
+                            <span class="text-green-600"><span class="font-bold">${childData.present}</span> Present</span>
+                            <span class="text-yellow-600"><span class="font-bold">${childData.late}</span> Late</span>
+                            <span class="text-red-600"><span class="font-bold">${childData.absent}</span> Absent</span>
                         </div>
                     </div>
                 `;
             });
             
-            summaryHTML += `</div></div>`;
+            summaryHTML += `
+                    </div>
+                </div>
+            `;
         });
-
+        
         container.innerHTML = summaryHTML;
+    }
+
+    async updateCalendarTab() {
+        if (this.currentTab !== 'calendar') return;
+
+        const year = this.currentCalendarDate.getFullYear();
+        const month = this.currentCalendarDate.getMonth();
+        
+        // Update header
+        const monthNames = ["January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ];
+        document.getElementById('calendarMonthYear').textContent = `${monthNames[month]} ${year}`;
+
+        await this.fetchCalendarData(year, month);
+        this.renderCalendar(year, month);
+    }
+
+    async fetchCalendarData(year, month) {
+        try {
+            this.showLoading();
+            const startDate = new Date(year, month, 1);
+            const endDate = new Date(year, month + 1, 0); // Last day of month
+            endDate.setHours(23, 59, 59, 999);
+
+            const childId = document.getElementById('childFilter').value;
+            let records = [];
+
+            if (childId === 'all') {
+                for (const child of this.children) {
+                    const childRecords = await this.getChildAttendance(child.id, startDate, endDate);
+                    records = records.concat(childRecords);
+                }
+            } else {
+                records = await this.getChildAttendance(childId, startDate, endDate);
+            }
+
+            this.calendarRecords = records;
+            this.hideLoading();
+        } catch (error) {
+            console.error('Error fetching calendar data:', error);
+            this.hideLoading();
+        }
+    }
+
+    changeMonth(delta) {
+        this.currentCalendarDate.setMonth(this.currentCalendarDate.getMonth() + delta);
+        this.updateCalendarTab();
+    }
+
+    renderCalendar(year, month) {
+        const grid = document.getElementById('calendarGrid');
+        grid.innerHTML = '';
+
+        const firstDay = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const today = new Date();
+
+        // Empty cells for days before start of month
+        for (let i = 0; i < firstDay; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'bg-gray-50 h-24 rounded-lg border border-gray-100';
+            grid.appendChild(cell);
+        }
+
+        // Day cells
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const cellDate = new Date(year, month, day);
+            
+            const cell = document.createElement('div');
+            cell.className = 'bg-white h-24 rounded-lg border border-gray-200 p-2 relative hover:shadow-md transition-shadow cursor-pointer overflow-hidden';
+            
+            // Highlight today
+            if (cellDate.toDateString() === today.toDateString()) {
+                cell.classList.add('ring-2', 'ring-green-500');
+            }
+
+            const dayNumber = document.createElement('div');
+            dayNumber.className = 'font-semibold text-gray-700 mb-1';
+            dayNumber.textContent = day;
+            cell.appendChild(dayNumber);
+
+            // Find records for this day
+            const dayRecords = this.calendarRecords.filter(record => {
+                const recordDate = new Date(record.timestamp);
+                return recordDate.getDate() === day && 
+                       recordDate.getMonth() === month && 
+                       recordDate.getFullYear() === year;
+            });
+
+            // Add click listener
+            cell.addEventListener('click', () => this.showDayDetails(dayRecords, cellDate));
+
+            const recordsContainer = document.createElement('div');
+            recordsContainer.className = 'space-y-1 overflow-y-auto max-h-[calc(100%-24px)] text-xs'; // scrollable if too many
+
+            dayRecords.forEach(record => {
+                const child = this.children.find(c => c.id === record.student_id);
+                const childName = child ? (child.full_name || child.name || 'Unknown').split(' ')[0] : '??'; // First name only for space
+                
+                const statusColors = {
+                    'present': 'bg-green-100 text-green-800',
+                    'late': 'bg-yellow-100 text-yellow-800',
+                    'absent': 'bg-red-100 text-red-800',
+                    'in_clinic': 'bg-blue-100 text-blue-800'
+                };
+                
+                const colorClass = statusColors[record.status] || 'bg-gray-100 text-gray-800';
+                
+                const badge = document.createElement('div');
+                badge.className = `px-1.5 py-0.5 rounded ${colorClass} truncate flex justify-between items-center`;
+                badge.innerHTML = `<span>${childName}</span>`;
+                badge.title = `${childName}: ${record.status}`;
+                
+                recordsContainer.appendChild(badge);
+            });
+
+            cell.appendChild(recordsContainer);
+            grid.appendChild(cell);
+        }
+    }
+
+    showDayDetails(records, date) {
+        const modal = document.getElementById('dayDetailsModal');
+        const title = document.getElementById('dayDetailsTitle');
+        const content = document.getElementById('dayDetailsContent');
+        
+        if (!modal || !title || !content) return;
+
+        title.textContent = `Attendance for ${date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
+        
+        if (records.length === 0) {
+            content.innerHTML = `
+                <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-calendar-day text-3xl mb-2"></i>
+                    <p>No attendance records for this day.</p>
+                </div>
+            `;
+        } else {
+            content.innerHTML = `
+                <div class="space-y-4">
+                    ${records.map(record => {
+                        const child = this.children.find(c => c.id === record.student_id);
+                        const childName = child ? (child.full_name || child.name) : 'Unknown Child';
+                        const time = record.timestamp ? new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'N/A';
+                        
+                        const statusColors = {
+                            'present': 'bg-green-100 text-green-800 border-green-200',
+                            'late': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+                            'absent': 'bg-red-100 text-red-800 border-red-200',
+                            'in_clinic': 'bg-blue-100 text-blue-800 border-blue-200'
+                        };
+                        const statusClass = statusColors[record.status] || 'bg-gray-100 text-gray-800 border-gray-200';
+                        
+                        return `
+                            <div class="border rounded-lg p-3 ${statusClass.split(' ')[0]} bg-opacity-30">
+                                <div class="flex justify-between items-start mb-2">
+                                    <h4 class="font-semibold text-gray-900">${childName}</h4>
+                                    <span class="px-2 py-0.5 rounded text-xs font-semibold uppercase ${statusClass}">${record.status}</span>
+                                </div>
+                                <div class="text-sm text-gray-600 space-y-1">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-clock w-5 text-center mr-2"></i>
+                                        <span>${time} (${record.session || 'AM'})</span>
+                                    </div>
+                                    ${record.remarks ? `
+                                    <div class="flex items-start">
+                                        <i class="fas fa-comment w-5 text-center mr-2 mt-0.5"></i>
+                                        <span>${record.remarks}</span>
+                                    </div>` : ''}
+                                    ${record.recordedByName ? `
+                                    <div class="flex items-center text-xs text-gray-500 mt-2">
+                                        <i class="fas fa-user-edit w-5 text-center mr-2"></i>
+                                        <span>Recorded by: ${record.recordedByName}</span>
+                                    </div>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        modal.classList.remove('hidden');
     }
 
     async loadNotificationCount() {
@@ -567,41 +768,45 @@ class ParentAttendance {
     }
 
     initTabs() {
-        const tabs = ['records', 'chart', 'summary'];
+        const tabs = ['records', 'calendar', 'chart', 'summary'];
         
         tabs.forEach(tab => {
             document.getElementById(`${tab}Tab`).addEventListener('click', () => {
-                this.switchTab(tab);
+                // Update active tab
+                this.currentTab = tab;
+                
+                // Update tab styles
+                tabs.forEach(t => {
+                    const el = document.getElementById(`${t}Tab`);
+                    if (t === tab) {
+                        el.classList.add('tab-active');
+                        el.classList.remove('text-gray-500', 'hover:text-gray-700');
+                    } else {
+                        el.classList.remove('tab-active');
+                        el.classList.add('text-gray-500', 'hover:text-gray-700');
+                    }
+                });
+
+                // Show/hide content
+                tabs.forEach(t => {
+                    const content = document.getElementById(`${t}Content`);
+                    if (t === tab) {
+                        content.classList.remove('hidden');
+                    } else {
+                        content.classList.add('hidden');
+                    }
+                });
+
+                // Update content based on tab
+                if (tab === 'chart') {
+                    this.updateChartTab();
+                } else if (tab === 'summary') {
+                    this.updateSummaryTab();
+                } else if (tab === 'calendar') {
+                    this.updateCalendarTab();
+                }
             });
         });
-    }
-
-    switchTab(tabName) {
-        // Update tab buttons
-        document.getElementById('recordsTab').classList.remove('tab-active');
-        document.getElementById('chartTab').classList.remove('tab-active');
-        document.getElementById('summaryTab').classList.remove('tab-active');
-        document.getElementById('recordsTab').classList.add('text-gray-500', 'hover:text-gray-700');
-        document.getElementById('chartTab').classList.add('text-gray-500', 'hover:text-gray-700');
-        document.getElementById('summaryTab').classList.add('text-gray-500', 'hover:text-gray-700');
-        
-        document.getElementById(`${tabName}Tab`).classList.add('tab-active');
-        document.getElementById(`${tabName}Tab`).classList.remove('text-gray-500', 'hover:text-gray-700');
-
-        // Update tab content
-        document.getElementById('recordsContent').classList.add('hidden');
-        document.getElementById('chartContent').classList.add('hidden');
-        document.getElementById('summaryContent').classList.add('hidden');
-        document.getElementById(`${tabName}Content`).classList.remove('hidden');
-
-        this.currentTab = tabName;
-
-        // Update tab-specific content
-        if (tabName === 'chart') {
-            this.updateChartTab();
-        } else if (tabName === 'summary') {
-            this.updateSummaryTab();
-        }
     }
 
     initEventListeners() {
@@ -638,10 +843,77 @@ class ParentAttendance {
             });
         }
 
+        // Calendar listeners
+        document.getElementById('prevMonth').addEventListener('click', () => this.changeMonth(-1));
+        document.getElementById('nextMonth').addEventListener('click', () => this.changeMonth(1));
+        
+        // Listen for child filter change to update calendar if active
+        document.getElementById('childFilter').addEventListener('change', () => {
+            if (this.currentTab === 'calendar') {
+                this.updateCalendarTab();
+            }
+        });
+
         // Listen for new notifications
         window.addEventListener('educareTrack:newNotifications', () => {
             this.loadNotificationCount();
         });
+    }
+
+    initRealtimeSubscription() {
+        if (!window.supabaseClient) return;
+
+        // Clean up existing subscription if any
+        if (this.subscription) {
+            window.supabaseClient.removeChannel(this.subscription);
+        }
+
+        // Subscribe to changes in students table (for status updates) and attendance/clinic_visits
+        this.subscription = window.supabaseClient
+            .channel('parent-attendance-changes')
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'students' }, payload => {
+                // Check if the updated student is one of our children
+                const isMyChild = this.children.some(child => child.id === payload.new.id);
+                if (isMyChild) {
+                    // Check if status changed
+                    if (payload.old && payload.old.current_status !== payload.new.current_status) {
+                         // Refresh data
+                         this.applyFilters(); // This refreshes records list
+                         if (this.currentTab === 'calendar') {
+                             this.updateCalendarTab();
+                         }
+                    } else if (!payload.old) {
+                        // Fallback if no old data (e.g. if not full replica), just refresh
+                        this.applyFilters();
+                        if (this.currentTab === 'calendar') {
+                             this.updateCalendarTab();
+                        }
+                    }
+                }
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, payload => {
+                 const record = payload.new || payload.old;
+                 const isMyChild = this.children.some(child => child.id === record.student_id);
+                 if (isMyChild) {
+                     this.applyFilters();
+                     if (this.currentTab === 'calendar') {
+                         this.updateCalendarTab();
+                     }
+                 }
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'clinic_visits' }, payload => {
+                const record = payload.new || payload.old;
+                const isMyChild = this.children.some(child => child.id === record.student_id);
+                if (isMyChild) {
+                    this.applyFilters();
+                    if (this.currentTab === 'calendar') {
+                        this.updateCalendarTab();
+                    }
+                }
+           })
+            .subscribe();
+            
+        console.log('Parent attendance realtime subscription initialized');
     }
 
     resetFilters() {

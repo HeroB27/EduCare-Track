@@ -89,12 +89,40 @@ class TeacherAttendance {
 
             await this.loadNotificationCount();
             this.initEventListeners();
+            this.setupRealTimeListeners();
             
             this.hideLoading();
         } catch (error) {
             console.error('Teacher attendance initialization failed:', error);
             this.hideLoading();
         }
+    }
+
+    setupRealTimeListeners() {
+        if (!window.supabaseClient || !this.currentUser.classId) return;
+
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('teacher_attendance_realtime');
+        
+        // Listen for attendance changes for this class
+        this.realtimeChannel.on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'attendance',
+            filter: `class_id=eq.${this.currentUser.classId}`
+        }, (payload) => {
+            console.log('Attendance update received:', payload);
+            this.loadTodayAttendance();
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Teacher attendance connected to realtime updates');
+            }
+        });
     }
 
     updateUI() {

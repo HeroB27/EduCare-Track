@@ -116,6 +116,48 @@ class ClinicDashboard {
         }
     }
 
+    setupRealTimeListeners() {
+        if (!window.supabaseClient) return;
+
+        // Clean up existing subscription if any
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('clinic_dashboard_realtime');
+
+        // Listen for Clinic Visits (New check-ins or updates)
+        this.realtimeChannel.on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'clinic_visits'
+        }, () => {
+            console.log('Clinic visit update received');
+            this.loadDashboardData();
+        });
+
+        // Listen for Student Status Changes (e.g. status changed to/from 'in_clinic')
+        this.realtimeChannel.on('postgres_changes', {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'students'
+        }, (payload) => {
+            // Only reload if the status changed to or from 'in_clinic'
+            const oldStatus = payload.old.current_status;
+            const newStatus = payload.new.current_status;
+            if (oldStatus === 'in_clinic' || newStatus === 'in_clinic') {
+                console.log('Student clinic status update received');
+                this.loadDashboardData();
+            }
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Clinic dashboard connected to realtime updates');
+            }
+        });
+    }
+
     async getClinicStats() {
         try {
             const today = new Date();

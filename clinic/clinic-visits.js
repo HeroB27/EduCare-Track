@@ -21,6 +21,7 @@ class ClinicVisits {
             await this.checkAuth();
             await this.loadVisits();
             this.setupEventListeners();
+            this.setupRealTimeListeners();
             console.log('Clinic Visits initialized');
         } catch (error) {
             console.error('Error initializing clinic visits:', error);
@@ -47,15 +48,26 @@ class ClinicVisits {
     async loadVisits() {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data, error } = await window.supabaseClient
-                    .from('clinic_visits')
-                    .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
-                    .order('visit_time', { ascending: false });
-                if (error) throw error;
-                this.visits = (data || []).map(v => ({
+                // Fetch visits and students in parallel
+                const [visitsResult, studentsResult] = await Promise.all([
+                    window.supabaseClient
+                        .from('clinic_visits')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                        .order('visit_time', { ascending: false }),
+                    window.supabaseClient
+                        .from('students')
+                        .select('id, name')
+                ]);
+
+                if (visitsResult.error) throw visitsResult.error;
+                if (studentsResult.error) throw studentsResult.error;
+
+                const studentMap = new Map(studentsResult.data.map(s => [s.id, s.name]));
+
+                this.visits = (visitsResult.data || []).map(v => ({
                     id: v.id,
                     studentId: v.student_id,
-                    studentName: '', // Will be loaded separately if needed
+                    studentName: studentMap.get(v.student_id) || 'Unknown Student',
                     classId: '', // Will be loaded separately if needed
                     reason: v.reason || '',
                     checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
@@ -87,6 +99,31 @@ class ClinicVisits {
             console.error('Error loading visits:', error);
             this.showError('Failed to load clinic visits');
         }
+    }
+
+    setupRealTimeListeners() {
+        if (!window.supabaseClient) return;
+
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('clinic_visits_list_realtime');
+        
+        this.realtimeChannel.on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'clinic_visits' 
+        }, () => {
+            console.log('Clinic visits update received');
+            this.loadVisits();
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Clinic visits list connected to realtime updates');
+            }
+        });
     }
 
     setupEventListeners() {

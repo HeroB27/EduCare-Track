@@ -41,6 +41,15 @@ class ClinicReports {
     async loadVisits() {
         try {
             if (window.USE_SUPABASE && window.supabaseClient) {
+                // Load students first for mapping
+                const { data: students, error: studentsError } = await window.supabaseClient
+                    .from('students')
+                    .select('id, full_name, class_id');
+                
+                if (!studentsError && students) {
+                    students.forEach(s => this.studentsMap.set(s.id, s));
+                }
+
                 const { data, error } = await window.supabaseClient
                     .from('clinic_visits')
                     .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
@@ -48,15 +57,18 @@ class ClinicReports {
                 if (error) {
                     throw error;
                 }
-                this.visits = (data || []).map(v => ({
-                    id: v.id,
-                    studentId: v.student_id,
-                    studentName: '', // Will be loaded separately if needed
-                    classId: '', // Will be loaded separately if needed
-                    checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
-                    ...v,
-                    timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
-                }));
+                this.visits = (data || []).map(v => {
+                    const student = this.studentsMap.get(v.student_id) || {};
+                    return {
+                        id: v.id,
+                        studentId: v.student_id,
+                        studentName: student.full_name || 'Unknown Student',
+                        classId: student.class_id || '',
+                        checkIn: v.outcome !== 'checked_out', // Assume check-in unless explicitly checked out
+                        ...v,
+                        timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
+                    };
+                });
             } else {
                 const db = window.EducareTrack ? window.EducareTrack.db : null;
                 if (!db) {
@@ -348,9 +360,106 @@ class ClinicReports {
             case 'students':
                 reportContent.innerHTML = this.generateStudentsReport(visits);
                 break;
+            case 'detailed':
+                reportContent.innerHTML = this.generateDetailedListReport(visits);
+                break;
             default:
                 reportContent.innerHTML = this.generateDailyReport(visits);
         }
+    }
+
+    handleSort(field) {
+        if (this.sortField === field) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sortField = field;
+            this.sortDirection = 'asc';
+        }
+        this.generateReport();
+    }
+
+    generateDetailedListReport(visits) {
+        // Sort visits
+        const sortedVisits = [...visits].sort((a, b) => {
+            let valA = a[this.sortField];
+            let valB = b[this.sortField];
+
+            if (this.sortField === 'timestamp') {
+                valA = new Date(valA).getTime();
+                valB = new Date(valB).getTime();
+            } else if (typeof valA === 'string') {
+                valA = valA.toLowerCase();
+                valB = valB ? valB.toLowerCase() : '';
+            }
+
+            if (valA < valB) return this.sortDirection === 'asc' ? -1 : 1;
+            if (valA > valB) return this.sortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        const getSortIcon = (field) => {
+            if (this.sortField !== field) return '<span class="text-gray-400">↕</span>';
+            return this.sortDirection === 'asc' ? '↑' : '↓';
+        };
+
+        return `
+            <div class="space-y-6">
+                <div class="flex justify-between items-center">
+                    <h4 class="text-lg font-semibold text-gray-800">Detailed Visits List</h4>
+                    <span class="bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-semibold">
+                        ${sortedVisits.length} Records
+                    </span>
+                </div>
+                
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white border border-gray-200 rounded-lg">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th onclick="clinicReports.handleSort('timestamp')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    Date/Time ${getSortIcon('timestamp')}
+                                </th>
+                                <th onclick="clinicReports.handleSort('studentName')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    Student ${getSortIcon('studentName')}
+                                </th>
+                                <th onclick="clinicReports.handleSort('reason')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    Reason ${getSortIcon('reason')}
+                                </th>
+                                <th onclick="clinicReports.handleSort('outcome')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    Outcome ${getSortIcon('outcome')}
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Notes
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            ${sortedVisits.map(visit => `
+                                <tr class="hover:bg-gray-50">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        ${new Date(visit.timestamp).toLocaleDateString()} ${new Date(visit.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900">${visit.studentName}</div>
+                                        <div class="text-xs text-gray-500">${visit.classId || 'N/A'}</div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                            ${this.capitalizeFirstLetter(visit.reason)}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        ${this.capitalizeFirstLetter(visit.outcome || 'N/A')}
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" title="${visit.notes || ''}">
+                                        ${visit.notes || '-'}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
     }
 
     generateDailyReport(visits) {

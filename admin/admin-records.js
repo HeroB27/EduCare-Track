@@ -8,6 +8,8 @@ class AdminRecords {
         this.pageSize = 20;
         this.allAttendanceData = [];
         this.filteredAttendanceData = [];
+        this.filteredClinicVisits = [];
+        this.sortConfig = { column: 'timestamp', direction: 'desc', type: 'attendance' };
         this.realtimeChannel = null;
         this.realtimeRefreshTimer = null;
         this.isLoadingData = false;
@@ -130,7 +132,7 @@ class AdminRecords {
             classId: record.classId || record.class_id,
             studentName: record.studentName || record.student_name,
             checkIn: record.checkIn ?? record.check_in,
-            timestamp: record.timestamp ? new Date(record.timestamp) : null
+            timestamp: record.timestamp ? new Date(record.timestamp) : (record.visit_time ? new Date(record.visit_time) : null)
         };
     }
 
@@ -235,9 +237,9 @@ class AdminRecords {
                 const { data, error } = await window.supabaseClient
                     .from('clinic_visits')
                     .select('*')
-                    .gte('timestamp', startDate.toISOString())
-                    .lte('timestamp', endDate.toISOString())
-                    .order('timestamp', { ascending: false })
+                    .gte('visit_time', startDate.toISOString())
+                    .lte('visit_time', endDate.toISOString())
+                    .order('visit_time', { ascending: false })
                     .range(from, from + batchSize - 1);
 
                 if (error) throw error;
@@ -283,6 +285,13 @@ class AdminRecords {
         
         const absentToday = totalStudents - presentToday;
         const lateToday = todayAttendance.filter(record => record.status === 'late').length;
+        const excusedToday = todayAttendance.filter(record => record.status === 'excused').length;
+
+        // Calculate today's clinic visits
+        const clinicToday = this.clinicVisits.filter(visit => {
+            const visitDate = visit.timestamp;
+            return visitDate >= today && visitDate < tomorrow;
+        }).length;
 
         // Overall attendance rate for the period
         const dateMap = {};
@@ -291,7 +300,7 @@ class AdminRecords {
             const dateStr = d.toDateString();
             if (!dateMap[dateStr]) dateMap[dateStr] = new Set();
             
-            if (record.status === 'present' || record.status === 'late') {
+            if (record.status === 'present' || record.status === 'late' || record.status === 'half_day') {
                 dateMap[dateStr].add(record.studentId);
             }
         });
@@ -336,9 +345,16 @@ class AdminRecords {
         // Update DOM
         document.getElementById('overallAttendanceRate').textContent = `${overallAttendanceRate}%`;
         document.getElementById('totalPresent').textContent = presentToday;
-        document.getElementById('totalAbsent').textContent = absentToday;
-        document.getElementById('totalLate').textContent = lateToday;
-    }
+            document.getElementById('totalAbsent').textContent = absentToday;
+            document.getElementById('totalLate').textContent = lateToday;
+            
+            // Update new metrics
+            const totalExcusedEl = document.getElementById('totalExcused');
+            if (totalExcusedEl) totalExcusedEl.textContent = excusedToday;
+            
+            const totalClinicEl = document.getElementById('totalClinic');
+            if (totalClinicEl) totalClinicEl.textContent = clinicToday;
+        }
 
     initEventListeners() {
         // Sidebar toggle
@@ -437,6 +453,56 @@ class AdminRecords {
         if (closeEditBtn) closeEditBtn.addEventListener('click', () => this.closeEditModal());
         if (cancelEditBtn) cancelEditBtn.addEventListener('click', () => this.closeEditModal());
         if (saveEditBtn) saveEditBtn.addEventListener('click', () => this.saveEditedRecord());
+    }
+
+    setupRealtimeUpdates() {
+        if (!window.supabaseClient) return;
+
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('admin_analytics_realtime');
+
+        // Listen for Attendance Changes
+        this.realtimeChannel.on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'attendance'
+        }, () => {
+            console.log('Realtime attendance update received');
+            this.pendingRealtimeRefresh = true;
+            // Debounce refresh
+            if (this.realtimeRefreshTimer) clearTimeout(this.realtimeRefreshTimer);
+            this.realtimeRefreshTimer = setTimeout(() => {
+                this.refreshData();
+            }, 2000);
+        });
+
+        // Listen for Clinic Visits
+        this.realtimeChannel.on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'clinic_visits'
+        }, () => {
+            console.log('Realtime clinic update received');
+            this.pendingRealtimeRefresh = true;
+            if (this.realtimeRefreshTimer) clearTimeout(this.realtimeRefreshTimer);
+            this.realtimeRefreshTimer = setTimeout(() => {
+                this.refreshData();
+            }, 2000);
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Admin analytics connected to realtime updates');
+            }
+        });
+    }
+
+    refreshData() {
+        if (this.isLoadingData) return;
+        this.loadAnalyticsData();
     }
 
     setDateRange(rangeType) {
@@ -564,6 +630,7 @@ class AdminRecords {
 
         // Initialize filtered data
         this.filteredAttendanceData = [...this.allAttendanceData];
+        this.filteredClinicVisits = [...this.clinicVisits];
         this.currentPage = 1;
         this.updateDetailedRecordsTable();
         this.updateLateArrivalsTable();
@@ -575,6 +642,7 @@ class AdminRecords {
         const statusFilter = document.getElementById('statusFilter').value;
         const classFilter = document.getElementById('classFilter').value;
 
+        // Filter Attendance Records
         this.filteredAttendanceData = this.allAttendanceData.filter(record => {
             const student = this.students.find(s => s.id === record.studentId);
             if (!student) return false;
@@ -589,6 +657,37 @@ class AdminRecords {
 
             // Status filter
             if (statusFilter !== 'all' && record.status !== statusFilter) {
+                // Special case: if status filter is 'in_clinic', attendance records might not match, 
+                // but we are filtering attendance data here. Clinic visits are separate.
+                return false;
+            }
+
+            // Class filter
+            if (classFilter !== 'all') {
+                const studentClassId = student.classId || student.class_id;
+                if (studentClassId !== classFilter) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        // Filter Clinic Visits
+        this.filteredClinicVisits = this.clinicVisits.filter(visit => {
+            const student = this.students.find(s => s.id === visit.studentId);
+            if (!student) return false;
+
+            // Search filter
+            const studentName = this.getStudentName(student).toLowerCase();
+            const studentId = this.getStudentIdentifier(student).toLowerCase();
+            if (searchTerm && !studentName.includes(searchTerm) && 
+                !studentId.includes(searchTerm)) {
+                return false;
+            }
+
+            // Status filter - only relevant if 'all' or 'in_clinic'
+            if (statusFilter !== 'all' && statusFilter !== 'in_clinic') {
                 return false;
             }
 
@@ -605,6 +704,32 @@ class AdminRecords {
 
         this.currentPage = 1;
         this.updateDetailedRecordsTable();
+        this.updateClinicVisitsTable();
+    }
+
+    handleSort(column, type) {
+        if (this.sortConfig.column === column && this.sortConfig.type === type) {
+            this.sortConfig.direction = this.sortConfig.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sortConfig.column = column;
+            this.sortConfig.direction = 'desc'; // Default to newest first for time, etc.
+            this.sortConfig.type = type;
+        }
+
+        if (type === 'attendance') {
+            this.updateDetailedRecordsTable();
+        } else if (type === 'clinic') {
+            this.updateClinicVisitsTable();
+        }
+    }
+
+    getSortIcon(column, type) {
+        if (this.sortConfig.column !== column || this.sortConfig.type !== type) {
+            return '<i class="fas fa-sort text-gray-300 ml-1"></i>';
+        }
+        return this.sortConfig.direction === 'asc' 
+            ? '<i class="fas fa-sort-up text-blue-500 ml-1"></i>' 
+            : '<i class="fas fa-sort-down text-blue-500 ml-1"></i>';
     }
 
     updateDetailedRecordsTable() {
@@ -614,13 +739,67 @@ class AdminRecords {
         if (this.filteredAttendanceData.length === 0) {
             tableBody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="px-4 py-4 text-center text-gray-500">
+                    <td colspan="9" class="px-4 py-4 text-center text-gray-500">
                         No records found for the selected filters
                     </td>
                 </tr>
             `;
             recordsCount.textContent = 'Showing 0 records';
             return;
+        }
+
+        // Apply sorting
+        if (this.sortConfig.type === 'attendance') {
+            this.filteredAttendanceData.sort((a, b) => {
+                let valA, valB;
+                
+                switch(this.sortConfig.column) {
+                    case 'timestamp':
+                        valA = a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate() : new Date(a.timestamp)) : new Date(0);
+                        valB = b.timestamp ? (b.timestamp.toDate ? b.timestamp.toDate() : new Date(b.timestamp)) : new Date(0);
+                        break;
+                    case 'student':
+                        valA = this.getStudentName(this.students.find(s => s.id === a.studentId) || {}).toLowerCase();
+                        valB = this.getStudentName(this.students.find(s => s.id === b.studentId) || {}).toLowerCase();
+                        break;
+                    case 'class':
+                        valA = (this.classes.find(c => c.id === (a.classId || a.class_id)) || {name: ''}).name.toLowerCase();
+                        valB = (this.classes.find(c => c.id === (b.classId || b.class_id)) || {name: ''}).name.toLowerCase();
+                        break;
+                    case 'level':
+                         valA = (this.students.find(s => s.id === a.studentId) || {level: ''}).level.toLowerCase();
+                         valB = (this.students.find(s => s.id === b.studentId) || {level: ''}).level.toLowerCase();
+                         break;
+                    case 'time':
+                        valA = a.time || '';
+                        valB = b.time || '';
+                        break;
+                    case 'status':
+                        valA = a.status || '';
+                        valB = b.status || '';
+                        break;
+                    case 'session':
+                        valA = a.session || '';
+                        valB = b.session || '';
+                        break;
+                    case 'method':
+                        const getMethodVal = (r) => {
+                            if (r.method === 'qr' || (r.remarks && (r.remarks.includes('qr_') || r.remarks.includes('qr ')))) return 3;
+                            if (r.manualEntry || (r.remarks && r.remarks.includes('manual'))) return 2;
+                            return 1;
+                        };
+                        valA = getMethodVal(a);
+                        valB = getMethodVal(b);
+                        break;
+                    default:
+                        valA = a[this.sortConfig.column];
+                        valB = b[this.sortConfig.column];
+                }
+                
+                if (valA < valB) return this.sortConfig.direction === 'asc' ? -1 : 1;
+                if (valA > valB) return this.sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
         }
 
         // Calculate pagination
@@ -658,6 +837,17 @@ class AdminRecords {
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 capitalize">
                         ${record.session || 'N/A'}
                     </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        ${(() => {
+                            if (record.method === 'qr' || (record.remarks && (record.remarks.includes('qr_') || record.remarks.includes('qr ')))) {
+                                return '<span class="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs"><i class="fas fa-qrcode mr-1"></i>QR Scan</span>';
+                            }
+                            if (record.manualEntry || (record.remarks && record.remarks.includes('manual'))) {
+                                return '<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs"><i class="fas fa-keyboard mr-1"></i>Manual</span>';
+                            }
+                            return '<span class="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-xs"><i class="fas fa-chalkboard-teacher mr-1"></i>Teacher</span>';
+                        })()}
+                    </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">
                         <button onclick="adminRecords.editRecord('${record.id}')" class="text-indigo-600 hover:text-indigo-900 mr-3">
                             <i class="fas fa-edit"></i>
@@ -676,6 +866,28 @@ class AdminRecords {
         const totalPages = Math.ceil(this.filteredAttendanceData.length / this.pageSize);
         document.getElementById('prevPage').disabled = this.currentPage === 1;
         document.getElementById('nextPage').disabled = this.currentPage === totalPages;
+
+        // Update Header Icons
+        const headers = {
+            'timestamp': 'th-date',
+            'student': 'th-student',
+            'class': 'th-class',
+            'level': 'th-level',
+            'time': 'th-time',
+            'status': 'th-status',
+            'session': 'th-session',
+            'method': 'th-method'
+        };
+
+        for (const [col, id] of Object.entries(headers)) {
+            const el = document.getElementById(id);
+            if (el) {
+                const iconSpan = el.querySelector('.sort-icon');
+                if (iconSpan) {
+                    iconSpan.innerHTML = this.getSortIcon(col, 'attendance');
+                }
+            }
+        }
     }
 
     updateLateArrivalsTable() {
@@ -729,19 +941,49 @@ class AdminRecords {
 
     updateClinicVisitsTable() {
         const tableBody = document.getElementById('clinicVisitsTable');
+        let visitsToDisplay = [...(this.filteredClinicVisits || this.clinicVisits)];
 
-        if (this.clinicVisits.length === 0) {
+        if (visitsToDisplay.length === 0) {
             tableBody.innerHTML = `
                 <tr>
                     <td colspan="6" class="px-4 py-4 text-center text-gray-500">
-                        No clinic visits in the selected period
+                        No clinic visits in the selected period (or matching filters)
                     </td>
                 </tr>
             `;
             return;
         }
 
-        tableBody.innerHTML = this.clinicVisits.map(visit => {
+        // Apply sorting
+        if (this.sortConfig.type === 'clinic') {
+            visitsToDisplay.sort((a, b) => {
+                let valA, valB;
+                
+                switch(this.sortConfig.column) {
+                    case 'timestamp':
+                        valA = a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate() : new Date(a.timestamp)) : new Date(0);
+                        valB = b.timestamp ? (b.timestamp.toDate ? b.timestamp.toDate() : new Date(b.timestamp)) : new Date(0);
+                        break;
+                    case 'studentName':
+                        valA = this.getStudentName(this.students.find(s => s.id === a.studentId) || {}).toLowerCase();
+                        valB = this.getStudentName(this.students.find(s => s.id === b.studentId) || {}).toLowerCase();
+                        break;
+                    case 'reason':
+                        valA = (a.reason || '').toLowerCase();
+                        valB = (b.reason || '').toLowerCase();
+                        break;
+                    default:
+                        valA = a[this.sortConfig.column];
+                        valB = b[this.sortConfig.column];
+                }
+                
+                if (valA < valB) return this.sortConfig.direction === 'asc' ? -1 : 1;
+                if (valA > valB) return this.sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        tableBody.innerHTML = visitsToDisplay.map(visit => {
             const student = this.students.find(s => s.id === visit.studentId);
             const classObj = this.classes.find(c => c.id === (visit.classId || visit.class_id));
             
@@ -769,6 +1011,37 @@ class AdminRecords {
                 </tr>
             `;
         }).join('');
+
+        // Update Header Icons (Clinic)
+        // IDs are assumed to be in the HTML (need to verify/add them)
+        // Based on previous HTML read, the Clinic table has onclicks but maybe not IDs for the TH elements themselves to target the icon.
+        // Wait, looking at HTML lines 495-504:
+        // <th ... onclick="...">Student <i class="fas fa-sort ml-1"></i></th>
+        // I need to target the <i> inside the <th>.
+        // I should probably add IDs to the THs in HTML first.
+        // Let's assume I will add IDs: th-clinic-student, th-clinic-date, th-clinic-reason
+        
+        const headers = {
+            'studentName': 'th-clinic-student',
+            'timestamp': 'th-clinic-date',
+            'reason': 'th-clinic-reason'
+        };
+
+        for (const [col, id] of Object.entries(headers)) {
+            const el = document.getElementById(id);
+            if (el) {
+                // The icon is likely an <i> tag or a span. In the current HTML it's <i class="fas fa-sort ml-1"></i> directly inside TH.
+                // My getSortIcon returns an <i> tag string.
+                // So I can just replace the <i> tag.
+                const iconEl = el.querySelector('i');
+                if (iconEl) {
+                    iconEl.outerHTML = this.getSortIcon(col, 'clinic');
+                } else {
+                    // Fallback if no icon found, append it
+                    el.insertAdjacentHTML('beforeend', this.getSortIcon(col, 'clinic'));
+                }
+            }
+        }
     }
 
     initCharts() {

@@ -682,30 +682,40 @@ class QRScanner {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            // Get all enrolled students (excluding withdrawn/transferred)
-            const studentsSnapshot = await window.EducareTrack.db
-                .collection('students')
-                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
-                .get();
-                
-            const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Get all enrolled students
+            const { data: students, error: sErr } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, class_id')
+                .in('current_status', ['enrolled', 'active', 'present']);
+
+            if (sErr) throw sErr;
+            
+            const allStudents = students || [];
             
             // Get today's attendance entries
-            const attendanceSnapshot = await window.EducareTrack.db
-                .collection('attendance')
-                .where('timestamp', '>=', today)
-                .where('entry_type', '==', 'entry')
-                .get();
+            const { data: attendance, error: aErr } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id')
+                .gte('timestamp', today.toISOString())
+                .eq('session', 'AM');
                 
-            const presentStudentIds = new Set();
-            attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().student_id);
-            });
+            if (aErr) throw aErr;
+                
+            const presentStudentIds = new Set((attendance || []).map(a => a.student_id));
             
             // Find absent students
             const absentStudents = allStudents.filter(student => !presentStudentIds.has(student.id));
             
-            this.displayAbsentStudents(absentStudents);
+            // Map to expected format
+            const formattedAbsentStudents = absentStudents.map(s => ({
+                id: s.id,
+                first_name: s.full_name.split(' ')[0],
+                last_name: s.full_name.split(' ').slice(1).join(' '),
+                attendanceStatus: { status: 'absent', remarks: 'Full day absence' },
+                class_id: s.class_id
+            }));
+
+            this.displayAbsentStudents(formattedAbsentStudents);
             
         } catch (error) {
             console.error('Error loading absent students (basic):', error);

@@ -490,6 +490,172 @@ const EducareTrack = {
         }
     },
 
+    async getAtRiskStudentsReport({ startDate, endDate, limit = 20 }) {
+        try {
+            const { data, error } = await this.db.client
+                .from('attendance')
+                .select('student_id, status, class_id, students(full_name)')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .in('status', ['absent', 'late']);
+
+            if (error) throw error;
+
+            const studentStats = {};
+
+            data.forEach(r => {
+                if (!studentStats[r.student_id]) {
+                    studentStats[r.student_id] = {
+                        studentId: r.student_id,
+                        studentName: r.students ? r.students.full_name : 'Unknown',
+                        class_id: r.class_id,
+                        absentDays: 0,
+                        lateDays: 0,
+                        riskScore: 0
+                    };
+                }
+                
+                if (r.status === 'absent') {
+                    studentStats[r.student_id].absentDays++;
+                    studentStats[r.student_id].riskScore += 2; // Absence weighted higher
+                } else if (r.status === 'late') {
+                    studentStats[r.student_id].lateDays++;
+                    studentStats[r.student_id].riskScore += 1;
+                }
+            });
+
+            const sorted = Object.values(studentStats)
+                .sort((a, b) => b.riskScore - a.riskScore)
+                .slice(0, limit);
+
+            return sorted;
+        } catch (error) {
+            console.error('Error getting at-risk students:', error);
+            return [];
+        }
+    },
+
+    async getClinicReasonTrend(startDate, endDate, limit = 6) {
+        try {
+            const { data, error } = await this.db.client
+                .from('clinic_visits')
+                .select('reason')
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString());
+
+            if (error) throw error;
+
+            const counts = {};
+            data.forEach(r => {
+                const reason = r.reason || 'Unspecified';
+                counts[reason] = (counts[reason] || 0) + 1;
+            });
+
+            const sorted = Object.entries(counts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, limit);
+
+            return {
+                labels: sorted.map(([k]) => k),
+                counts: sorted.map(([, v]) => v)
+            };
+        } catch (error) {
+            console.error('Error getting clinic reason trend:', error);
+            return { labels: [], counts: [] };
+        }
+    },
+
+    async getAbsenceReasonTrend(startDate, endDate, limit = 8) {
+        // Since we don't have a separate absence reasons table yet (usually in excuse letters or attendance remarks),
+        // we'll try to fetch from excuse letters if available, or attendance remarks.
+        // For now, let's assume we use 'excuse_letters' table linked to attendance or just attendance remarks.
+        // Checking schema: attendance table has 'remarks'? 
+        // Or excuse_letters table.
+        try {
+             // Try fetching from excuse_letters for reasons
+            const { data, error } = await this.db.client
+                .from('excuse_letters')
+                .select('reason')
+                .eq('status', 'approved') // Only count approved excuses for trends? Or all?
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString());
+
+            if (error) {
+                // If table doesn't exist or error, fallback to attendance remarks?
+                // But attendance remarks might be free text.
+                console.warn('Error fetching excuse letters for trend:', error);
+                return { labels: [], counts: [] };
+            }
+
+            const counts = {};
+            data.forEach(r => {
+                const reason = r.reason || 'Unspecified';
+                counts[reason] = (counts[reason] || 0) + 1;
+            });
+
+            const sorted = Object.entries(counts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, limit);
+
+            return {
+                labels: sorted.map(([k]) => k),
+                counts: sorted.map(([, v]) => v)
+            };
+        } catch (error) {
+            console.error('Error getting absence reason trend:', error);
+            return { labels: [], counts: [] };
+        }
+    },
+
+    async getExcusedVsUnexcusedAbsences(startDate, endDate) {
+        try {
+            // Count total absences
+            const { count: totalAbsences, error: absError } = await this.db.client
+                .from('attendance')
+                .select('id', { count: 'exact', head: true })
+                .eq('status', 'absent')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString());
+
+            if (absError) throw absError;
+
+            // Count excused (status = 'excused' OR status='absent' with approved excuse letter)
+            // If the system marks them as 'excused' status, we just count that.
+            const { count: excusedCount, error: excError } = await this.db.client
+                .from('attendance')
+                .select('id', { count: 'exact', head: true })
+                .eq('status', 'excused')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString());
+
+            if (excError) throw excError;
+
+            // Also check pending excuse letters for "Pending" category
+            const { count: pendingCount, error: penError } = await this.db.client
+                .from('excuse_letters')
+                .select('id', { count: 'exact', head: true })
+                .eq('status', 'pending')
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString());
+
+            if (penError) throw penError;
+
+            // Unexcused is (Total Absent Records - those linked to approved excuses?)
+            // If status 'absent' implies unexcused unless changed to 'excused', then totalAbsences is unexcused.
+            // But if we want to show "Unexcused" vs "Excused", usually 'absent' = unexcused, 'excused' = excused.
+            
+            return {
+                approved: excusedCount || 0,
+                rejected: 0, // We might not track rejected counts easily unless we query excuse_letters with status='rejected'
+                pending: pendingCount || 0,
+                unexcused: totalAbsences || 0
+            };
+        } catch (error) {
+            console.error('Error getting excused vs unexcused:', error);
+            return { approved: 0, rejected: 0, pending: 0, unexcused: 0 };
+        }
+    },
+
     // Calendar & Schedule Helper
     async fetchCalendarData() {
         if (dataCache.calendar && dataCache.lastUpdated && (Date.now() - dataCache.lastUpdated < CACHE_DURATION)) {
@@ -3223,12 +3389,45 @@ const EducareTrack = {
                 .update({ current_status: newStudentStatus })
                 .eq('id', studentId);
 
+            // Get parent IDs for notification
+            const { data: relations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', studentId);
+            const parentIds = (relations || []).map(r => r.parent_id);
+
+            // Notify parents about the status change
+            if (parentIds.length > 0) {
+                await this.createNotification({
+                    type: this.NOTIFICATION_TYPES.ATTENDANCE,
+                    title: 'Attendance Status Updated',
+                    message: `Student attendance status has been updated to: ${status}${status === 'late' ? ' (Late)' : ''}`,
+                    target_users: parentIds,
+                    studentId: studentId,
+                    studentName: (await this.getStudentById(studentId))?.full_name || 'Student',
+                    relatedRecord: recordId
+                });
+            }
+
             await this.syncAttendanceToReports();
             return recordId;
         } catch (error) {
             console.error('Error overriding attendance status:', error);
             throw error;
         }
+    },
+
+    // Helper to get student by ID (if not already cached/available)
+    async getStudentById(studentId) {
+        if (dataCache.students) {
+            // This is cache for a class, might not have all students if teacher has multiple classes? 
+            // But usually teachers load their class.
+            // Safer to fetch if needed or check cache.
+             const cached = Object.values(dataCache).find(c => c && c.data && Array.isArray(c.data) && c.data.find(s => s.id === studentId));
+             if (cached) return cached.data.find(s => s.id === studentId);
+        }
+        const { data } = await window.supabaseClient.from('students').select('*').eq('id', studentId).single();
+        return data;
     },
 
     // Enhanced guard attendance recording

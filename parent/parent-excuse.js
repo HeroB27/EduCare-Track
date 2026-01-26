@@ -486,10 +486,10 @@ async loadChildren() {
             const attachmentInput = document.getElementById('excuseAttachment');
             const file = attachmentInput && attachmentInput.files ? attachmentInput.files[0] : null;
             if (file) {
-                const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+                const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
                 if (!allowedTypes.includes(file.type)) {
                     if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
-                        window.EducareTrack.showNormalNotification({ title: 'Invalid Attachment', message: 'Please upload a JPG or PNG image.', type: 'warning' });
+                        window.EducareTrack.showNormalNotification({ title: 'Invalid Attachment', message: 'Please upload a JPG, PNG image or PDF.', type: 'warning' });
                     }
                 } else if (file.size > 5 * 1024 * 1024) {
                     if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
