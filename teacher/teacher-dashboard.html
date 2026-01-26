@@ -81,15 +81,33 @@
                     </a>
                 </li>
                 <li>
-                    <a href="teacher-reports.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
-                        <i class="fas fa-chart-bar w-5 h-5 mr-3"></i>
-                        <span class="sidebar-text">Class Reports</span>
+                    <a href="teacher-analytics.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-chart-line w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Analytics</span>
                     </a>
                 </li>
                 <li>
                     <a href="teacher-announcements.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                         <i class="fas fa-bullhorn w-5 h-5 mr-3"></i>
                         <span class="sidebar-text">Announcements</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-subjects.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-book-open w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Subject Attendance</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-gatekeeper.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-user-shield w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Gatekeeper Mode</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="teacher-clinic.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
+                        <i class="fas fa-stethoscope w-5 h-5 mr-3"></i>
+                        <span class="sidebar-text">Clinic Dashboard</span>
                     </a>
                 </li>
                 <li>
@@ -258,13 +276,47 @@
                         <i class="fas fa-bullhorn text-purple-600 text-lg mr-3"></i>
                         <span class="font-medium text-purple-800">Post Announcement</span>
                     </a>
-                    <li>
-                      <a href="teacher-clinic.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
-                         <i class="fas fa-clinic-medical w-5 h-5 mr-3"></i>
-                          <span class="sidebar-text">Clinic Management</span>
-                         </a>
-                    </li>
+                    <button onclick="window.teacherDashboard.openClinicPassModal()" class="w-full flex items-center p-3 bg-red-50 hover:bg-red-100 rounded-lg transition duration-200 text-left">
+                        <i class="fas fa-clinic-medical text-red-600 text-lg mr-3"></i>
+                        <span class="font-medium text-red-800">Create Clinic Pass</span>
+                    </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Real-time Student Status List -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">Real-time Student Status</h3>
+                <div class="flex space-x-2">
+                    <input type="text" id="statusSearch" placeholder="Search student..." class="text-sm border border-gray-300 rounded px-3 py-1">
+                    <select id="statusFilter" class="text-sm border border-gray-300 rounded px-2 py-1">
+                        <option value="all">All Status</option>
+                        <option value="present">Present</option>
+                        <option value="late">Late</option>
+                        <option value="absent">Absent</option>
+                        <option value="in_clinic">In Clinic</option>
+                        <option value="out_school">Out</option>
+                    </select>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentStatusTableBody" class="bg-white divide-y divide-gray-200">
+                        <tr>
+                            <td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">Loading students...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -337,22 +389,87 @@
         </div>
     </div>
 
-    <!-- Inline Notification Modal -->
-    <div id="inlineNotificationModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div class="px-6 py-4 border-b">
-                <h3 id="inlineNotificationTitle" class="text-lg font-semibold text-gray-800">Info</h3>
+    <!-- Manual Override Modal -->
+    <div id="manualOverrideModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg w-full max-w-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800">Manual Attendance Override</h3>
+                <button onclick="window.teacherDashboard.closeManualOverrideModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
-            <div class="px-6 py-4">
-                <p id="inlineNotificationMessage" class="text-sm text-gray-700"></p>
-            </div>
-            <div class="px-6 py-4 border-t flex justify-end">
-                <button onclick="document.getElementById('inlineNotificationModal').classList.add('hidden')" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">OK</button>
-            </div>
+            <form id="manualOverrideForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Student ID</label>
+                    <input type="text" id="overrideStudentId" class="w-full border border-gray-300 rounded-lg p-2" required>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select id="overrideStatus" class="w-full border border-gray-300 rounded-lg p-2">
+                        <option value="present">Present</option>
+                        <option value="late">Late</option>
+                        <option value="absent">Absent</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Time In</label>
+                        <input type="time" id="overrideTimeIn" class="w-full border border-gray-300 rounded-lg p-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Time Out</label>
+                        <input type="time" id="overrideTimeOut" class="w-full border border-gray-300 rounded-lg p-2">
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                    <textarea id="overrideRemarks" class="w-full border border-gray-300 rounded-lg p-2" rows="2"></textarea>
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button type="button" onclick="window.teacherDashboard.closeManualOverrideModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Update Attendance</button>
+                </div>
+            </form>
         </div>
     </div>
 
-    
+    <!-- Clinic Pass Modal -->
+    <div id="clinicPassModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg w-full max-w-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800">Create Clinic Pass</h3>
+                <button onclick="window.teacherDashboard.closeClinicPassModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="clinicPassForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Student</label>
+                    <select id="clinicStudentId" class="w-full border border-gray-300 rounded-lg p-2" required>
+                        <option value="">Select Student...</option>
+                    </select>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                    <select id="clinicReason" class="w-full border border-gray-300 rounded-lg p-2" required>
+                        <option value="headache">Headache</option>
+                        <option value="stomachache">Stomachache</option>
+                        <option value="fever">Fever</option>
+                        <option value="injury">Injury</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="mb-4 hidden" id="clinicOtherReasonDiv">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Specify Reason</label>
+                    <input type="text" id="clinicOtherReason" class="w-full border border-gray-300 rounded-lg p-2">
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button type="button" onclick="window.teacherDashboard.closeClinicPassModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Create Pass</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50 hidden">
@@ -368,541 +485,22 @@
     <script src="../core.js"></script>
     
     <!-- Teacher Dashboard Script -->
-    <script>
-        class TeacherDashboard {
-            constructor() {
-                this.currentUser = null;
-                this.assignedClass = null;
-                this.classStudents = [];
-                this.attendanceChart = null;
-                this.init();
-            }
+    <script src="teacher-dashboard.js"></script>
 
-            async init() {
-                try {
-                    this.showLoading();
-                    
-                    // Wait for EducareTrack to be ready
-                    if (!window.EducareTrack) {
-                        setTimeout(() => this.init(), 100);
-                        return;
-                    }
-
-                    // Check if user is logged in
-                    const savedUser = localStorage.getItem('educareTrack_user');
-                    if (!savedUser) {
-                        window.location.href = '../index.html';
-                        return;
-                    }
-
-                    this.currentUser = JSON.parse(savedUser);
-                    
-                    if (this.currentUser.role !== 'teacher') {
-                        window.location.href = `../${this.currentUser.role}/${this.currentUser.role}-dashboard.html`;
-                        return;
-                    }
-
-                    this.updateUI();
-                    await this.loadTeacherData();
-                    this.initEventListeners();
-                    this.initCharts();
-                    
-                    this.hideLoading();
-                } catch (error) {
-                    console.error('Teacher dashboard initialization failed:', error);
-                    this.hideLoading();
-                }
-            }
-
-            updateUI() {
-                document.getElementById('userName').textContent = this.currentUser.name;
-                document.getElementById('userRole').textContent = this.currentUser.role;
-                document.getElementById('userInitials').textContent = this.currentUser.name
-                    .split(' ')
-                    .map(n => n[0])
-                    .join('')
-                    .substring(0, 2)
-                    .toUpperCase();
-
-                if (this.currentUser.classId) {
-                    document.getElementById('assignedClass').textContent = this.currentUser.className || 'Class ' + this.currentUser.classId;
-                } else {
-                    document.getElementById('assignedClass').textContent = 'No assigned class';
-                }
-
-                this.updateCurrentTime();
-                setInterval(() => this.updateCurrentTime(), 60000);
-            }
-
-            updateCurrentTime() {
-                const now = new Date();
-                document.getElementById('currentTime').textContent = now.toLocaleString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-
-            async loadTeacherData() {
-                try {
-                    if (!window.EducareTrack) {
-                        console.error('EducareTrack not available');
-                        return;
-                    }
-
-                    // Load assigned class information from classes table where adviser_id = teacher id
-                    const { data: classData, error: classError } = await window.supabaseClient
-                        .from('classes')
-                        .select('*')
-                        .eq('adviser_id', this.currentUser.id)
-                        .eq('is_active', true)
-                        .single();
-                    
-                    if (!classError && classData) {
-                        this.assignedClass = classData;
-                        // Set classId for backward compatibility
-                        this.currentUser.classId = classData.id;
-                        this.currentUser.className = `${classData.grade} - ${classData.level || classData.strand || 'Class'}`;
-                    }
-
-                    // Load class students
-                    await this.loadClassStudents();
-
-                    // Load dashboard stats
-                    await this.loadDashboardStats();
-
-                    // Load recent activity
-                    await this.loadRecentActivity();
-
-                    // Load notifications
-                    await this.loadNotifications();
-
-                } catch (error) {
-                    console.error('Error loading teacher data:', error);
-                }
-            }
-
-            async loadClassStudents() {
-                try {
-                    if (!this.currentUser.classId) {
-                        console.warn('Teacher has no assigned class');
-                        this.classStudents = [];
-                        return;
-                    }
-                    this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
-                    this.updateStudentStatus();
-                } catch (error) {
-                    console.error('Error loading class students:', error);
-                    this.classStudents = [];
-                }
-            }
-
-            async loadDashboardStats() {
-                try {
-                    if (!this.currentUser.classId) {
-                        console.warn('No class assigned, skipping dashboard stats');
-                        return;
-                    }
-                    
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-
-                    // Get today's attendance using Supabase
-                    const { data: attendanceData, error: attendanceError } = await window.supabaseClient
-                        .from('attendance')
-                        .select('*')
-                        .eq('class_id', this.currentUser.classId)
-                        .gte('timestamp', today.toISOString());
-
-                    if (attendanceError) throw attendanceError;
-
-                    const presentStudents = new Set();
-                    const lateStudents = new Set();
-                    const clinicStudents = new Set();
-
-                    (attendanceData || []).forEach(record => {
-                        // In new schema, all attendance records are entries (no entry_type field)
-                        if (record.status === 'late') {
-                            lateStudents.add(record.student_id);
-                        } else if (record.status === 'present') {
-                            presentStudents.add(record.student_id);
-                        }
-                    });
-
-                    // Get current clinic visits using Supabase
-                    // In new schema, we need to check if there are any recent clinic visits without checkout
-                    const classStudentIds = this.classStudents.map(s => s.id);
-                    const { data: clinicData, error: clinicError } = await window.supabaseClient
-                        .from('clinic_visits')
-                        .select('student_id,visit_time')
-                        .in('student_id', classStudentIds)
-                        .order('visit_time', { ascending: false });
-
-                    if (clinicError) throw clinicError;
-
-                    // Since there's no check_in/check_out, we'll consider visits in the last 4 hours as "in clinic"
-                    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
-                    (clinicData || []).forEach(visit => {
-                        const visitTime = new Date(visit.visit_time);
-                        if (visitTime > fourHoursAgo) {
-                            clinicStudents.add(visit.student_id);
-                        }
-                    });
-
-                    // Update UI
-                    document.getElementById('totalStudents').textContent = this.classStudents.length;
-                    document.getElementById('presentStudents').textContent = presentStudents.size;
-                    document.getElementById('lateStudents').textContent = lateStudents.size;
-                    document.getElementById('clinicStudents').textContent = clinicStudents.size;
-
-                } catch (error) {
-                    console.error('Error loading dashboard stats:', error);
-                }
-            }
-
-            updateStudentStatus() {
-                const inClassCount = this.classStudents.filter(s => s.currentStatus === 'in_school').length;
-                const inClinicCount = this.classStudents.filter(s => s.currentStatus === 'in_clinic').length;
-                const absentCount = this.classStudents.filter(s => s.currentStatus === 'out_school').length;
-                
-                // Count late students (this would need additional logic based on today's attendance)
-                const lateCount = 0; // Placeholder
-
-                document.getElementById('inClassCount').textContent = inClassCount;
-                document.getElementById('inClinicCount').textContent = inClinicCount;
-                document.getElementById('absentCount').textContent = absentCount;
-                document.getElementById('lateCount').textContent = lateCount;
-                document.getElementById('totalStatusCount').textContent = this.classStudents.length;
-            }
-
-            async loadRecentActivity() {
-                try {
-                    if (!this.currentUser.classId) {
-                        console.warn('No class assigned, skipping recent activity');
-                        return;
-                    }
-                    
-                    let attendanceActivities = [];
-                    let clinicActivities = [];
-                    
-                    const classId = this.currentUser.classId;
-                    
-                    // Get attendance records
-                    const { data: attendance, error: aErr } = await window.supabaseClient
-                        .from('attendance')
-                        .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by')
-                        .eq('class_id', classId)
-                        .order('timestamp', { ascending: false })
-                        .limit(10);
-                    
-                    if (aErr) throw aErr;
-                    
-                    // Get clinic visits for students in this class
-                    const studentIds = this.classStudents.map(s => s.id);
-                    let clinicData = [];
-                    if (studentIds.length > 0) {
-                        const { data: clinic, error: cErr } = await window.supabaseClient
-                            .from('clinic_visits')
-                            .select('id,student_id,visit_time,reason,notes,treated_by')
-                            .in('student_id', studentIds)
-                            .order('visit_time', { ascending: false })
-                            .limit(10);
-                        clinicData = clinic || [];
-                    }
-                    
-                    const nameById = new Map(this.classStudents.map(s => [s.id, s.name || s.full_name]));
-                    
-                    attendanceActivities = (attendance || []).map(r => ({
-                        id: r.id,
-                        type: 'attendance',
-                        studentId: r.student_id,
-                        classId: r.class_id,
-                        entryType: 'entry', // Default to entry since field doesn't exist in new schema
-                        timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
-                        time: r.timestamp ? new Date(r.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '',
-                        session: r.session,
-                        status: r.status,
-                        remarks: r.remarks,
-                        recordedBy: r.recorded_by,
-                        studentName: nameById.get(r.student_id) || 'Student'
-                    }));
-                    
-                    clinicActivities = (clinicData || []).map(r => ({
-                        id: r.id,
-                        type: 'clinic',
-                        studentId: r.student_id,
-                        checkIn: true, // Default to true since field doesn't exist
-                        checkOut: false, // Default to false since field doesn't exist
-                        timestamp: r.visit_time ? new Date(r.visit_time) : new Date(),
-                        reason: r.reason,
-                        notes: r.notes,
-                        treatedBy: r.treated_by,
-                        studentName: nameById.get(r.student_id) || 'Student'
-                    }));
-
-                    // Combine and sort by timestamp
-                    const allActivities = [...attendanceActivities, ...clinicActivities]
-                        .sort((a, b) => b.timestamp - a.timestamp)
-                        .slice(0, 5);
-
-                    const container = document.getElementById('recentActivity');
-                    
-                    if (allActivities.length === 0) {
-                        container.innerHTML = `
-                            <div class="text-center py-4 text-gray-500">
-                                <i class="fas fa-inbox text-2xl mb-2"></i>
-                                <p>No recent activity in your class</p>
-                            </div>
-                        `;
-                        return;
-                    }
-
-                    container.innerHTML = allActivities.map(item => `
-                        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                            <div class="flex items-center">
-                                <div class="w-8 h-8 ${this.getActivityColor(item.entryType, item.status)} rounded-full flex items-center justify-center mr-3">
-                                    <i class="${this.getActivityIcon(item.entryType, item.status)} text-sm"></i>
-                                </div>
-                                <div>
-                                    <p class="text-sm font-medium">${item.studentName}</p>
-                                    <p class="text-xs text-gray-500">${this.getActivityText(item)}</p>
-                                </div>
-                            </div>
-                            <span class="text-xs text-gray-500">${this.formatTime(item.timestamp)}</span>
-                        </div>
-                    `).join('');
-                } catch (error) {
-                    console.error('Error loading recent activity:', error);
-                }
-            }
-
-            async loadNotifications() {
-                try {
-                    if (!this.currentUser) return;
-
-                    const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true, 10);
-                    const unreadCount = notifications.filter(n => 
-                        !n.readBy || !n.readBy.includes(this.currentUser.id)
-                    ).length;
-
-                    // Update notification badge
-                    const badge = document.getElementById('notificationCount');
-                    if (unreadCount > 0) {
-                        badge.textContent = unreadCount;
-                        badge.classList.remove('hidden');
-                    } else {
-                        badge.classList.add('hidden');
-                    }
-
-                    // Store notifications for modal
-                    this.notifications = notifications;
-
-                } catch (error) {
-                    console.error('Error loading notifications:', error);
-                }
-            }
-
-            formatTime(timestamp) {
-                if (!timestamp) return 'Unknown time';
-                const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-                return date.toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-
-            getActivityColor(entryType, status) {
-                if (status === 'late') return 'bg-yellow-100 text-yellow-600';
-                if (status === 'in_clinic') return 'bg-blue-100 text-blue-600';
-                return entryType === 'entry' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600';
-            }
-
-            getActivityIcon(entryType, status) {
-                if (status === 'late') return 'fas fa-clock';
-                if (status === 'in_clinic') return 'fas fa-clinic-medical';
-                return entryType === 'entry' ? 'fas fa-sign-in-alt' : 'fas fa-sign-out-alt';
-            }
-
-            getActivityText(activity) {
-                if (activity.status === 'late') {
-                    return `Late arrival at ${activity.time}`;
-                } else if (activity.status === 'in_clinic') {
-                    return `Checked into clinic`;
-                } else {
-                    return `${activity.entryType === 'entry' ? 'Arrived' : 'Left'} at ${activity.time}`;
-                }
-            }
-
-            formatTime(date) {
-                if (!date) return 'N/A';
-                return new Date(date).toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-
-            initEventListeners() {
-                // Sidebar toggle
-                document.getElementById('sidebarToggle').addEventListener('click', () => {
-                    this.toggleSidebar();
-                });
-
-                // Logout via modal
-                document.getElementById('logoutBtn').addEventListener('click', async () => {
-                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
-                        : true;
-                    if (ok) {
-                        localStorage.removeItem('educareTrack_user');
-                        window.location.href = '../index.html';
-                    }
-                });
-
-                // Notifications
-                document.getElementById('notificationsBtn').addEventListener('click', () => {
-                    this.showNotifications();
-                });
-            }
-
-            initCharts() {
-                const ctx = document.getElementById('attendanceChart').getContext('2d');
-                this.attendanceChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-                        datasets: [{
-                            label: 'Attendance Rate',
-                            data: [85, 92, 78, 88, 95],
-                            borderColor: '#3B82F6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                            borderWidth: 2,
-                            fill: true,
-                            tension: 0.4
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                max: 100,
-                                ticks: {
-                                    callback: function(value) {
-                                        return value + '%';
-                                    }
-                                }
-                            }
-                        },
-                        plugins: {
-                            legend: {
-                                display: false
-                            },
-                            title: {
-                                display: true,
-                                text: 'Weekly Class Attendance'
-                            }
-                        }
-                    }
-                });
-            }
-
-            async showNotifications() {
-                const modal = document.getElementById('notificationsModal');
-                const list = document.getElementById('notificationsList');
-
-                if (this.notifications && this.notifications.length > 0) {
-                    list.innerHTML = this.notifications.map(notification => `
-                        <div class="p-3 border-b border-gray-200 last:border-b-0">
-                            <div class="flex justify-between items-start">
-                                <div class="flex-1">
-                                    <h4 class="font-semibold text-gray-800">${notification.title}</h4>
-                                    <p class="text-sm text-gray-600 mt-1">${notification.message}</p>
-                                    <p class="text-xs text-gray-500 mt-2">${this.formatTime(notification.createdAt?.toDate())}</p>
-                                </div>
-                                ${!notification.readBy || !notification.readBy.includes(this.currentUser.id) ? 
-                                    '<span class="w-2 h-2 bg-blue-500 rounded-full ml-2 mt-1"></span>' : ''}
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
-                    list.innerHTML = `
-                        <div class="text-center py-8 text-gray-500">
-                            <i class="fas fa-bell-slash text-2xl mb-2"></i>
-                            <p>No notifications</p>
-                        </div>
-                    `;
-                }
-
-                modal.classList.remove('hidden');
-            }
-
-            hideNotifications() {
-                document.getElementById('notificationsModal').classList.add('hidden');
-            }
-
-            async markAllNotificationsRead() {
-                try {
-                    if (!this.notifications || !this.currentUser) return;
-
-                    const promises = this.notifications.map(notification => 
-                        EducareTrack.markNotificationAsRead(notification.id)
-                    );
-
-                    await Promise.all(promises);
-                    
-                    // Reload notifications
-                    await this.loadNotifications();
-                    this.hideNotifications();
-                    
-                    this.showNotification('All notifications marked as read', 'success');
-                } catch (error) {
-                    console.error('Error marking notifications as read:', error);
-                    this.showNotification('Error updating notifications', 'error');
-                }
-            }
-
-            toggleSidebar() {
-                const sidebar = document.querySelector('.sidebar');
-                const mainContent = document.querySelector('.main-content');
-                
-                if (sidebar.classList.contains('collapsed')) {
-                    sidebar.classList.remove('collapsed');
-                    mainContent.classList.remove('ml-16');
-                    mainContent.classList.add('ml-64');
-                } else {
-                    sidebar.classList.add('collapsed');
-                    mainContent.classList.remove('ml-64');
-                    mainContent.classList.add('ml-16');
-                }
-            }
-
-            showLoading() {
-                document.getElementById('loadingSpinner').classList.remove('hidden');
-            }
-
-            hideLoading() {
-                document.getElementById('loadingSpinner').classList.add('hidden');
-            }
-
-            showNotification(message, type = 'info') {
-                const modal = document.getElementById('inlineNotificationModal');
-                const titleEl = document.getElementById('inlineNotificationTitle');
-                const msgEl = document.getElementById('inlineNotificationMessage');
-                titleEl.textContent = type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info');
-                msgEl.textContent = message;
-                modal.classList.remove('hidden');
-            }
-        }
-
-        // Initialize dashboard when page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            window.teacherDashboard = new TeacherDashboard();
-        });
-    </script>
+    <!-- Inline Notification Modal (Toast) -->
+    <div id="inlineNotificationModal" class="fixed bottom-4 right-4 z-50 hidden">
+        <div class="bg-white border-l-4 border-blue-500 rounded shadow-lg p-4 flex items-start max-w-xs">
+            <div class="mr-3 text-blue-500">
+                <i class="fas fa-info-circle text-xl"></i>
+            </div>
+            <div>
+                <h4 class="font-bold text-gray-800" id="inlineNotificationTitle">Info</h4>
+                <p class="text-sm text-gray-600" id="inlineNotificationMessage">Message content</p>
+            </div>
+            <button onclick="document.getElementById('inlineNotificationModal').classList.add('hidden')" class="ml-auto text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
 </body>
 </html>

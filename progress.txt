@@ -1,0 +1,36 @@
+EduCare Track Progress Report
+Date: 2026-01-24
+
+1. Attendance System Improvements
+   - Fixed attendance rate calculation to remove dummy data and use real records.
+   - Implemented level-specific school day validation (Kindergarten, Elementary, Junior High, Senior High, College).
+   - Added calendar pre-fetching to ensure accurate school day checks across all portals.
+   - Normalized dates to UTC midnight to prevent time zone discrepancies in attendance tracking.
+   - Optimized data fetching with set-based tracking to avoid double-counting students.
+
+2. Schedule Settings & Calendar
+   - Added functionality to edit Semesteral Breaks (start/end dates) in Admin Schedule Settings.
+   - Implemented "Affected Levels" for calendar events (suspensions/holidays).
+   - Updated `isSchoolDay` logic to respect level-specific suspensions and semester breaks.
+   - Removed Sunday classes from valid school days.
+   - Persisted affected levels in event notes using `{{LEVELS:...}}` tag for backward compatibility.
+
+3. Class Management
+   - Updated "Edit Class" modal to allow editing the "Level" field.
+   - Fixed dynamic population of Grade and Strand options when Level changes in the Edit modal.
+   - Refactored form logic to share event listeners between Create and Edit modes.
+
+4. Role-Specific Updates
+   - Admin Dashboard: Cleaned up sample charts to reflect real data or empty states instead of random dummy values.
+   - Parent Portal: Updated attendance statistics to calculate expected days based on the specific child's level.
+   - Teacher Reports: Refined daily summary generation to calculate implied absences correctly.
+   - Admin Student Records: Aligned attendance metrics with level-specific school calendars.
+
+5. Technical Refinements
+   - Centralized calendar logic in `core.js`.
+   - Added helper methods for level-dependent grade and subject population.
+   - Ensured real-time updates for class performance rates.
+
+Pending/Next Steps:
+- Continue monitoring real-time sync for attendance updates.
+- Verify user feedback on the new level-specific suspension controls.

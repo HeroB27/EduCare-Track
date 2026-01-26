@@ -1,5 +1,5 @@
-// QR Scanner JavaScript with Working Time In/Time Out
-class QRScanner {
+// Teacher Scanner JavaScript (Adapted from Guard Scanner)
+class TeacherScanner {
     constructor() {
         this.videoElement = document.getElementById('video');
         this.canvasElement = document.createElement('canvas');
@@ -17,31 +17,14 @@ class QRScanner {
         this.scannerDebounceMs = 100;
         
         // Initialize Attendance Logic
+        // Assuming AttendanceLogic is available globally via script tag
         this.attendanceLogic = new AttendanceLogic();
         
-        this.adminIds = [];
-        this.loadAdminIds();
-
         this.initEventListeners();
         this.loadRecentScans().catch(error => console.error('Error loading recent scans:', error));
         this.checkAuth();
         this.loadAbsentStudents();
         this.updateModeDisplay();
-    }
-
-    async loadAdminIds() {
-        try {
-            const { data, error } = await window.supabaseClient
-                .from('profiles')
-                .select('id')
-                .eq('role', 'admin');
-            
-            if (!error && data) {
-                this.adminIds = data.map(admin => admin.id);
-            }
-        } catch (error) {
-            console.error('Error loading admin IDs:', error);
-        }
     }
 
     async checkAuth() {
@@ -52,7 +35,8 @@ class QRScanner {
         }
 
         this.currentUser = JSON.parse(savedUser);
-        if (this.currentUser.role !== 'guard') {
+        // Allow teachers to use this scanner
+        if (this.currentUser.role !== 'teacher') {
             window.location.href = '../index.html';
             return;
         }
@@ -76,14 +60,17 @@ class QRScanner {
 
         // Physical scanner input (keyboard‑wedge friendly)
         const physInput = document.getElementById('physicalScannerInput');
-        physInput.addEventListener('input', (e) => this.handlePhysicalInput(e.target.value));
-        physInput.addEventListener('keydown', (e) => this.handlePhysicalKeydown(e));
-        physInput.addEventListener('paste', (e) => {
-            const text = (e.clipboardData || window.clipboardData).getData('text');
-            e.preventDefault();
-            this.processPhysicalData(text);
-        });
-        physInput.addEventListener('focus', () => { physInput.value = ''; });
+        if (physInput) {
+            physInput.addEventListener('input', (e) => this.handlePhysicalInput(e.target.value));
+            physInput.addEventListener('keydown', (e) => this.handlePhysicalKeydown(e));
+            physInput.addEventListener('paste', (e) => {
+                const text = (e.clipboardData || window.clipboardData).getData('text');
+                e.preventDefault();
+                this.processPhysicalData(text);
+            });
+            physInput.addEventListener('focus', () => { physInput.value = ''; });
+        }
+        
         // Also capture global keydown so scanner works even without focus
         document.addEventListener('keydown', (e) => {
             if (!this.physicalModeActive) return;
@@ -91,20 +78,48 @@ class QRScanner {
         });
 
         // Camera settings controls
-        document.getElementById('brightnessControl').addEventListener('input', (e) => this.updateVideoFilter());
-        document.getElementById('contrastControl').addEventListener('input', (e) => this.updateVideoFilter());
-        document.getElementById('saturationControl').addEventListener('input', (e) => this.updateVideoFilter());
+        const brightnessControl = document.getElementById('brightnessControl');
+        if (brightnessControl) {
+            brightnessControl.addEventListener('input', (e) => this.updateVideoFilter());
+            brightnessControl.addEventListener('input', (e) => {
+                document.getElementById('brightnessValue').textContent = Math.round(e.target.value * 100) + '%';
+            });
+        }
+        
+        const contrastControl = document.getElementById('contrastControl');
+        if (contrastControl) {
+            contrastControl.addEventListener('input', (e) => this.updateVideoFilter());
+            contrastControl.addEventListener('input', (e) => {
+                document.getElementById('contrastValue').textContent = Math.round(e.target.value * 100) + '%';
+            });
+        }
+        
+        const saturationControl = document.getElementById('saturationControl');
+        if (saturationControl) {
+            saturationControl.addEventListener('input', (e) => this.updateVideoFilter());
+            saturationControl.addEventListener('input', (e) => {
+                document.getElementById('saturationValue').textContent = Math.round(e.target.value * 100) + '%';
+            });
+        }
+        
+        // Quick Action Buttons
+        const quickTimeInBtn = document.getElementById('quickTimeInBtn');
+        if (quickTimeInBtn) {
+            quickTimeInBtn.addEventListener('click', () => {
+                if (this.currentStudent) {
+                    this.recordAttendance(this.currentStudent.id, this.currentStudent, 'entry');
+                }
+            });
+        }
 
-        // Update value displays
-        document.getElementById('brightnessControl').addEventListener('input', (e) => {
-            document.getElementById('brightnessValue').textContent = Math.round(e.target.value * 100) + '%';
-        });
-        document.getElementById('contrastControl').addEventListener('input', (e) => {
-            document.getElementById('contrastValue').textContent = Math.round(e.target.value * 100) + '%';
-        });
-        document.getElementById('saturationControl').addEventListener('input', (e) => {
-            document.getElementById('saturationValue').textContent = Math.round(e.target.value * 100) + '%';
-        });
+        const quickTimeOutBtn = document.getElementById('quickTimeOutBtn');
+        if (quickTimeOutBtn) {
+            quickTimeOutBtn.addEventListener('click', () => {
+                if (this.currentStudent) {
+                    this.recordAttendance(this.currentStudent.id, this.currentStudent, 'exit');
+                }
+            });
+        }
     }
 
     // Switch between Time In and Time Out modes
@@ -493,27 +508,31 @@ class QRScanner {
                     remarks = 'Lunch break departure';
                 }
             }
-
-            // Create attendance record using Supabase
+            
+            // Create attendance record using Supabase (Schema Aligned)
+            const record = {
+                student_id: studentId,
+                class_id: student.class_id || student.classId || null,
+                session: session === 'morning' ? 'AM' : 'PM',
+                status: status,
+                method: 'qr',
+                timestamp: timestamp.toISOString(),
+                recorded_by: this.currentUser.id,
+                remarks: `qr_${entryType} - ${remarks}`
+            };
+            
+            // Insert into Supabase
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .insert({
-                    student_id: studentId,
-                    class_id: student.class_id || student.classId || null,
-                    session: session === 'morning' ? 'AM' : 'PM',
-                    status: status,
-                    method: 'qr',
-                    timestamp: timestamp.toISOString(),
-                    recorded_by: this.currentUser.id,
-                    remarks: `qr_${entryType}` // Store entry type in remarks
-                });
-            
+                .insert([record])
+                .select();
+                
             if (error) throw error;
-
+            
             // Send enhanced notifications to both parent and teacher
             await this.sendEnhancedNotifications(student, entryType, timeString, status, remarks, data[0].id);
-
-            // Show success result
+            
+            // Success
             const actionText = entryType === 'entry' ? 'Time In' : 'Time Out';
             const actionVerb = entryType === 'entry' ? 'arrived' : 'departed';
             
@@ -523,24 +542,29 @@ class QRScanner {
                 studentId
             );
             
+            this.updateScannerStatus(`Recorded: ${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()}`);
+            
             // Add to recent scans
-            this.addRecentScan({
-                studentName: student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim(),
+            this.updateRecentScansUI({
+                name: student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                 time: timeString,
-                entryType: entryType,
                 status: status,
-                remarks: remarks,
-                classId: student.class_id || student.classId
+                type: entryType
             });
             
             // Reload absent students list
-            this.loadAbsentStudents();
-            
-            this.playBeepSound();
+            if (typeof this.loadAbsentStudents === 'function') {
+                this.loadAbsentStudents();
+            }
+
+            // Play beep sound if available
+            if (typeof this.playBeepSound === 'function') {
+                this.playBeepSound();
+            }
             
         } catch (error) {
             console.error('Error recording attendance:', error);
-            throw error;
+            this.showResult('error', 'Database Error', 'Failed to save attendance record: ' + error.message);
         }
     }
 
@@ -562,15 +586,7 @@ class QRScanner {
             const teacherIds = await this.getRelevantTeachers(student);
             
             // Combine all target users
-            targetUsers = [...targetUsers, ...teacherIds];
-
-            // Add admins to target users
-            if (this.adminIds && this.adminIds.length > 0) {
-                targetUsers = [...targetUsers, ...this.adminIds];
-            }
-            
-            // Deduplicate and filter
-            targetUsers = [...new Set(targetUsers)].filter(id => id && id !== '');
+            targetUsers = [...targetUsers, ...teacherIds].filter(id => id && id !== '');
             
             if (targetUsers.length === 0) {
                 console.warn('No target users found for notifications');
@@ -608,11 +624,10 @@ class QRScanner {
                 console.error('Error creating notification:', error);
             }
 
-            console.log(`Notification sent to ${targetUsers.length} users for ${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()}`);
+            console.log(`Notification sent to ${targetUsers.length} users`);
             
         } catch (error) {
             console.error('Error sending enhanced notifications:', error);
-            // Don't throw error to prevent attendance recording from failing
         }
     }
 
@@ -644,106 +659,33 @@ class QRScanner {
         }
     }
 
-    // Helper method to check morning attendance
+
+    getCurrentSession() {
+        return this.attendanceLogic.getCurrentSession();
+    }
+
     async getStudentMorningAttendance(studentId) {
-        try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            
-            const { data, error } = await window.supabaseClient
-                .from('attendance')
-                .select('id')
-                .eq('student_id', studentId)
-                .gte('timestamp', today.toISOString())
-                .eq('session', 'AM')
-                .limit(1);
-                
-            return !error && data && data.length > 0;
-        } catch (error) {
-            console.error('Error checking morning attendance:', error);
-            return false;
-        }
-    }
-
-    async loadAbsentStudents() {
-        try {
-            // Use the advanced attendance logic to get absent students
-            const absentStudents = await this.attendanceLogic.getAbsentStudents();
-            this.displayAbsentStudents(absentStudents);
-        } catch (error) {
-            console.error('Error loading absent students:', error);
-            // Fallback to basic absent student loading
-            await this.loadAbsentStudentsBasic();
-        }
-    }
-
-    async loadAbsentStudentsBasic() {
-        try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            
-            // Get all enrolled students (excluding withdrawn/transferred)
-            const studentsSnapshot = await window.EducareTrack.db
-                .collection('students')
-                .where('current_status', 'not-in', ['withdrawn', 'transferred', 'graduated'])
-                .get();
-                
-            const allStudents = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            
-            // Get today's attendance entries
-            const attendanceSnapshot = await window.EducareTrack.db
-                .collection('attendance')
-                .where('timestamp', '>=', today)
-                .where('entry_type', '==', 'entry')
-                .get();
-                
-            const presentStudentIds = new Set();
-            attendanceSnapshot.docs.forEach(doc => {
-                presentStudentIds.add(doc.data().student_id);
-            });
-            
-            // Find absent students
-            const absentStudents = allStudents.filter(student => !presentStudentIds.has(student.id));
-            
-            this.displayAbsentStudents(absentStudents);
-            
-        } catch (error) {
-            console.error('Error loading absent students (basic):', error);
-        }
-    }
-
-    displayAbsentStudents(absentStudents) {
-        const container = document.getElementById('absentStudents');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
         
-        if (absentStudents.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-8 text-gray-500">
-                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <p>No absent students found for today</p>
-                </div>
-            `;
-            return;
-        }
-        
-        container.innerHTML = absentStudents.map(student => {
-            const status = student.attendanceStatus || { status: 'absent', remarks: 'Full day absence' };
-            return `
-                <div class="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-200">
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-900">${(student.first_name || '' + ' ' + student.last_name || '').trim()}</h4>
-                        <p class="text-xs text-gray-600">${student.id}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
-                        <p class="text-xs text-red-600 mt-1">${status.remarks}</p>
-                    </div>
-                    <span class="px-2 py-1 text-xs font-semibold rounded-full ${this.getStatusColor(status.status)}">
-                        ${this.getStatusText(status.status)}
-                    </span>
-                </div>
-            `;
-        }).join('');
+        const { data, error } = await window.supabaseClient
+            .from('attendance')
+            .select('id')
+            .eq('student_id', studentId)
+            .gte('timestamp', today.toISOString())
+            .eq('session', 'morning')
+            .limit(1);
+            
+        return !error && data && data.length > 0;
     }
 
+    // Helper to update status text
+    updateScannerStatus(message) {
+        const statusEl = document.getElementById('scannerStatus');
+        if (statusEl) statusEl.textContent = message;
+    }
+
+    // Helper to show results
     showResult(type, title, message, studentId = null) {
         const resultsDiv = document.getElementById('scanResults');
         const resultContent = document.getElementById('resultContent');
@@ -789,7 +731,7 @@ class QRScanner {
             }, 5000);
         }
     }
-
+    
     addRecentScan(scanData) {
         const recentScansDiv = document.getElementById('recentScans');
         const statusColor = this.getStatusColor(scanData.status);
@@ -862,8 +804,85 @@ class QRScanner {
         }
     }
 
-    updateScannerStatus(message) {
-        document.getElementById('scannerStatus').textContent = message;
+    async loadAbsentStudents() {
+        try {
+            // Use the advanced attendance logic to get absent students
+            const absentStudents = await this.attendanceLogic.getAbsentStudents();
+            this.displayAbsentStudents(absentStudents);
+        } catch (error) {
+            console.error('Error loading absent students:', error);
+            // Fallback to basic absent student loading
+            await this.loadAbsentStudentsBasic();
+        }
+    }
+
+    async loadAbsentStudentsBasic() {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(today);
+            endOfDay.setHours(23, 59, 59, 999);
+            
+            // Get all enrolled students (Supabase)
+            const { data: allStudents, error: sError } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, class_id')
+                .in('current_status', ['enrolled', 'active']);
+
+            if (sError) throw sError;
+            
+            // Get today's attendance entries
+            const { data: attendanceData, error: aError } = await window.supabaseClient
+                .from('attendance')
+                .select('student_id')
+                .gte('timestamp', today.toISOString())
+                .lte('timestamp', endOfDay.toISOString())
+                .eq('session', 'AM'); // Assuming AM entry means present for the day
+                
+            if (aError) throw aError;
+                
+            const presentStudentIds = new Set(attendanceData.map(r => r.student_id));
+            
+            // Find absent students
+            const absentStudents = allStudents.filter(student => !presentStudentIds.has(student.id));
+            
+            this.displayAbsentStudents(absentStudents);
+            
+        } catch (error) {
+            console.error('Error loading absent students (basic):', error);
+        }
+    }
+
+    displayAbsentStudents(absentStudents) {
+        const container = document.getElementById('absentStudents');
+        
+        if (absentStudents.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <p>No absent students found for today</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = absentStudents.map(student => {
+            const status = student.attendanceStatus || { status: 'absent', remarks: 'Full day absence' };
+            return `
+                <div class="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-200">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-900">${(student.full_name || student.first_name + ' ' + student.last_name).trim()}</h4>
+                        <p class="text-xs text-gray-600">${student.id}${(student.class_id || student.classId) ? ` • ${student.class_id || student.classId}` : ''}</p>
+                        <p class="text-xs text-red-600 mt-1">${status.remarks}</p>
+                    </div>
+                    <span class="px-2 py-1 text-xs font-semibold rounded-full ${this.getStatusColor(status.status)}">
+                        ${this.getStatusText(status.status)}
+                    </span>
+                </div>
+            `;
+        }).join('');
     }
 
     playBeepSound() {
@@ -886,10 +905,6 @@ class QRScanner {
         } catch (error) {
             console.warn('Audio context not supported:', error);
         }
-    }
-
-    getCurrentSession() {
-        return this.attendanceLogic.getCurrentSession();
     }
 
     getStatusColor(status) {
@@ -926,19 +941,25 @@ class QRScanner {
         return texts[status] || 'Unknown';
     }
 
-    destroy() {
-        this.stopWebcamScanner();
+    // Deprecated but kept for compatibility with old calls
+    updateRecentScansUI(scan) {
+        this.addRecentScan({
+            studentName: scan.name,
+            time: scan.time,
+            entryType: scan.type === 'entry' ? 'entry' : 'exit',
+            status: scan.status
+        });
     }
 }
 
 // Global functions for HTML button onclick events
 function loadAbsentStudents() {
-    if (window.qrScanner) {
-        window.qrScanner.loadAbsentStudents();
+    if (window.teacherScanner) {
+        window.teacherScanner.loadAbsentStudents();
     }
 }
 
 // Initialize scanner when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    window.qrScanner = new QRScanner();
+    window.teacherScanner = new TeacherScanner();
 });

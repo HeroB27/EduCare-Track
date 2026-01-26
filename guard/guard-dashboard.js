@@ -464,6 +464,61 @@ class GuardDashboard {
         }
     }
 
+    async sendManualEntryNotification(student, entryType, timeString, status, remarks, attendanceId) {
+        try {
+            // Get parent-student relationship
+            const { data: relationshipData, error: relationshipError } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', student.id);
+            
+            if (relationshipError) {
+                console.error('Error fetching parent relationships:', relationshipError);
+                return;
+            }
+
+            const targetUsers = relationshipData ? relationshipData.map(r => r.parent_id).filter(Boolean) : [];
+            
+            if (targetUsers.length === 0) {
+                console.log('No parents found for notification');
+                return;
+            }
+
+            const actionType = entryType === 'entry' ? 'arrived' : 'left';
+            const notificationTitle = entryType === 'entry' ? 'Student Arrival (Manual Entry)' : 'Student Departure (Manual Entry)';
+            
+            // Create detailed message
+            let message = `${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} has ${actionType} at ${timeString}`;
+            if (status === 'late') {
+                message += ' - LATE ARRIVAL';
+            }
+
+            // Create notification data
+            const notificationData = {
+                target_users: targetUsers,
+                title: notificationTitle,
+                message: message,
+                type: 'attendance',
+                student_id: student.id,
+                related_record: attendanceId,
+                created_at: new Date().toISOString()
+            };
+
+            const { error } = await window.supabaseClient
+                .from('notifications')
+                .insert(notificationData);
+            
+            if (error) {
+                console.error('Error creating notification:', error);
+            } else {
+                console.log(`Notification sent to ${targetUsers.length} parents`);
+            }
+            
+        } catch (error) {
+            console.error('Error sending manual entry notifications:', error);
+        }
+    }
+
     openManualEntry() {
         document.getElementById('manualEntryModal').classList.remove('hidden');
         document.getElementById('studentSearch').value = '';

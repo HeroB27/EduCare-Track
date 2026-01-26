@@ -123,7 +123,7 @@ CREATE TABLE public.class_schedules (
 );
 
 -- =========================================
--- ATTENDANCE
+-- ATTENDANCE (DAILY)
 -- =========================================
 CREATE TABLE public.attendance (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -135,6 +135,19 @@ CREATE TABLE public.attendance (
   timestamp timestamptz DEFAULT now(),
   recorded_by uuid REFERENCES profiles(id),
   remarks text
+);
+
+-- =========================================
+-- SUBJECT ATTENDANCE
+-- =========================================
+CREATE TABLE public.subject_attendance (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  schedule_id uuid REFERENCES class_schedules(id),
+  student_id text REFERENCES students(id),
+  status text CHECK (status IN ('present','late','absent')),
+  date date DEFAULT CURRENT_DATE,
+  timestamp timestamptz DEFAULT now(),
+  recorded_by uuid REFERENCES profiles(id)
 );
 
 -- =========================================
@@ -159,6 +172,8 @@ CREATE TABLE public.clinic_visits (
   reason text,
   notes text,
   treated_by uuid REFERENCES clinic_staff(id),
+  referred_by uuid REFERENCES profiles(id),
+  status text DEFAULT 'referred' CHECK (status IN ('referred','in_clinic','discharged')),
   outcome text,
   visit_time timestamptz DEFAULT now()
 );
@@ -201,21 +216,7 @@ CREATE TABLE public.notifications (
   title text,
   message text,
   type text,
-  read_by uuid[],
-  created_at timestamptz DEFAULT now()
-);
-
--- =========================================
--- SCHOOL CALENDAR
--- =========================================
-CREATE TABLE public.school_calendar (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  title text,
-  type text,
-  start_date timestamptz,
-  end_date timestamptz,
-  notes text,
-  created_by uuid REFERENCES profiles(id),
+  is_read boolean DEFAULT false,
   created_at timestamptz DEFAULT now()
 );
 

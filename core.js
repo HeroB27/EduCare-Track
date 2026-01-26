@@ -299,6 +299,197 @@ const EducareTrack = {
     // Database reference
     db: db,
 
+    async getStudentsByClass(classId) {
+        if (!classId) return [];
+        
+        // Check cache first
+        const cacheKey = `students_${classId}`;
+        if (dataCache[cacheKey] && (Date.now() - (dataCache[cacheKey].timestamp || 0) < CACHE_DURATION)) {
+            return dataCache[cacheKey].data;
+        }
+
+        try {
+            await this.db._ensureClient();
+            const { data, error } = await this.db.client
+                .from('students')
+                .select('*')
+                .eq('class_id', classId)
+                .order('name');
+
+            if (error) throw error;
+
+            // Add computed status property that will be populated by dashboard/real-time logic
+            const students = (data || []).map(s => ({
+                ...s,
+                currentStatus: 'out_school' // Default
+            }));
+
+            // Update cache
+            dataCache[cacheKey] = {
+                data: students,
+                timestamp: Date.now()
+            };
+            
+            return students;
+        } catch (error) {
+            console.error('Error fetching students by class:', error);
+            return [];
+        }
+    },
+
+    // Notifications Helper
+    async getNotificationsForUser(userId, unreadOnly = false, limit = 20) {
+        try {
+            let query = this.db.client
+                .from('notifications')
+                .select('*')
+                .contains('target_users', [userId])
+                .eq('is_active', true)
+                .order('timestamp', { ascending: false })
+                .limit(limit);
+
+            const { data, error } = await query;
+            if (error) throw error;
+            
+            if (unreadOnly) {
+                return data.filter(n => !n.read_by || !n.read_by.includes(userId));
+            }
+            return data;
+        } catch (error) {
+            console.error('Error fetching notifications:', error);
+            return [];
+        }
+    },
+
+    async markAllNotificationsAsRead(userId) {
+        try {
+            // This is a bit tricky with array columns in Supabase.
+            // A simpler approach for now is to fetch unread and update them one by one or using a stored procedure.
+            // For client-side, we'll just fetch recent unread ones and update them.
+            const { data: unread } = await this.db.client
+                .from('notifications')
+                .select('id, read_by')
+                .contains('target_users', [userId])
+                .eq('is_active', true)
+                .limit(50); // Batch size
+            
+            if (!unread) return;
+
+            const updates = unread.filter(n => !n.read_by || !n.read_by.includes(userId)).map(n => {
+                const currentReadBy = n.read_by || [];
+                return this.db.client
+                    .from('notifications')
+                    .update({ read_by: [...currentReadBy, userId] })
+                    .eq('id', n.id);
+            });
+
+            await Promise.all(updates);
+        } catch (error) {
+            console.error('Error marking notifications as read:', error);
+        }
+    },
+
+    // Analytics Helpers
+    async getClassAttendanceTrend(classId, startDate, endDate) {
+        try {
+            const { data, error } = await this.db.client
+                .from('attendance')
+                .select('status, timestamp')
+                .eq('class_id', classId)
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString());
+
+            if (error) throw error;
+
+            const labels = [];
+            const present = [];
+            const late = [];
+            const absent = [];
+            
+            // Generate date labels
+            let curr = new Date(startDate);
+            while (curr <= endDate) {
+                const dateStr = curr.toISOString().split('T')[0];
+                labels.push(curr.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                
+                // Count for this day
+                const dayRecs = data.filter(r => r.timestamp.startsWith(dateStr));
+                present.push(dayRecs.filter(r => r.status === 'present').length);
+                late.push(dayRecs.filter(r => r.status === 'late').length);
+                absent.push(dayRecs.filter(r => r.status === 'absent').length);
+                
+                curr.setDate(curr.getDate() + 1);
+            }
+
+            return { labels, datasets: { present, late, absent } };
+        } catch (error) {
+            console.error('Error getting attendance trend:', error);
+            return { labels: [], datasets: { present: [], late: [], absent: [] } };
+        }
+    },
+
+    async getClassClinicReasonTrend(classId, startDate, endDate) {
+        try {
+            const { data, error } = await this.db.client
+                .from('clinic_visits')
+                .select('reason')
+                .eq('class_id', classId)
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString());
+
+            if (error) throw error;
+
+            const counts = {};
+            data.forEach(r => {
+                counts[r.reason] = (counts[r.reason] || 0) + 1;
+            });
+
+            const labels = Object.keys(counts);
+            const dataPoints = Object.values(counts);
+
+            return { labels, counts: dataPoints };
+        } catch (error) {
+            console.error('Error getting clinic trend:', error);
+            return { labels: [], counts: [] };
+        }
+    },
+
+    async getClassLateLeaders(classId, startDate, endDate, limit = 5) {
+        try {
+            const { data, error } = await this.db.client
+                .from('attendance')
+                .select('student_id, students(full_name)')
+                .eq('class_id', classId)
+                .eq('status', 'late')
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString());
+
+            if (error) throw error;
+
+            const counts = {};
+            const names = {};
+
+            data.forEach(r => {
+                counts[r.student_id] = (counts[r.student_id] || 0) + 1;
+                if (r.students) names[r.student_id] = r.students.full_name;
+            });
+
+            const sorted = Object.entries(counts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, limit)
+                .map(([id, count]) => ({
+                    studentId: id,
+                    studentName: names[id] || id,
+                    lateCount: count
+                }));
+
+            return sorted;
+        } catch (error) {
+            console.error('Error getting late leaders:', error);
+            return [];
+        }
+    },
+
     // Calendar & Schedule Helper
     async fetchCalendarData() {
         if (dataCache.calendar && dataCache.lastUpdated && (Date.now() - dataCache.lastUpdated < CACHE_DURATION)) {
@@ -2953,6 +3144,93 @@ const EducareTrack = {
         }
     },
 
+    // Override attendance status (for teachers/admins)
+    async overrideAttendanceStatus(studentId, status) {
+        try {
+            const today = new Date();
+            const startOfDay = new Date(today);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(today);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            // Check for existing record today
+            const { data: existingRecords, error: fetchError } = await window.supabaseClient
+                .from('attendance')
+                .select('id')
+                .eq('student_id', studentId)
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString())
+                .limit(1);
+            
+            if (fetchError) throw fetchError;
+
+            let recordId;
+            const timeString = today.toTimeString().split(' ')[0].substring(0, 5);
+            const session = this.getCurrentSession();
+
+            if (existingRecords && existingRecords.length > 0) {
+                // Update existing
+                recordId = existingRecords[0].id;
+                const { error: updateError } = await window.supabaseClient
+                    .from('attendance')
+                    .update({ 
+                        status: status,
+                        manual_entry: true
+                    })
+                    .eq('id', recordId);
+                
+                if (updateError) throw updateError;
+            } else {
+                // Create new
+                const { data: student, error: studentErr } = await window.supabaseClient
+                    .from('students')
+                    .select('class_id')
+                    .eq('id', studentId)
+                    .single();
+                
+                if (studentErr) throw studentErr;
+
+                const insertData = {
+                    student_id: studentId,
+                    class_id: student.class_id || '',
+                    entry_type: 'entry', // Assume entry if overriding status
+                    timestamp: today.toISOString(),
+                    time: timeString,
+                    session: session,
+                    status: status,
+                    recorded_by: this.currentUser ? this.currentUser.id : null,
+                    recorded_by_name: this.currentUser ? this.currentUser.name : 'System',
+                    manual_entry: true
+                };
+
+                const { data: inserted, error: insertError } = await window.supabaseClient
+                    .from('attendance')
+                    .insert(insertData)
+                    .select('id')
+                    .single();
+                
+                if (insertError) throw insertError;
+                recordId = inserted.id;
+            }
+
+            // Update student current status
+            let newStudentStatus = 'in_school';
+            if (status === 'absent') newStudentStatus = 'absent';
+            else if (status === 'out_school') newStudentStatus = 'out_school';
+            
+            await window.supabaseClient
+                .from('students')
+                .update({ current_status: newStudentStatus })
+                .eq('id', studentId);
+
+            await this.syncAttendanceToReports();
+            return recordId;
+        } catch (error) {
+            console.error('Error overriding attendance status:', error);
+            throw error;
+        }
+    },
+
     // Enhanced guard attendance recording
     async recordGuardAttendance(studentId, student, entry_type) {
         try {
@@ -3371,10 +3649,20 @@ const EducareTrack = {
                 throw new Error('Only admins and teachers can create announcements');
             }
 
+            // Ensure audience is an array
+            let audienceArray = [];
+            if (Array.isArray(announcementData.audience)) {
+                audienceArray = announcementData.audience;
+            } else if (announcementData.audience) {
+                audienceArray = [announcementData.audience];
+            } else {
+                audienceArray = ['all'];
+            }
+
             const row = {
                 title: announcementData.title,
                 message: announcementData.message,
-                audience: announcementData.audience,
+                audience: audienceArray,
                 priority: announcementData.priority,
                 class_id: announcementData.class_id || announcementData.classId || null,
                 class_name: announcementData.class_name || announcementData.className || null,
@@ -3391,16 +3679,50 @@ const EducareTrack = {
 
             // Get target users based on audience
             let target_users = [];
-            if (announcementData.audience === 'all') {
+            
+            // Check if audience contains special keywords
+            const isAll = audienceArray.includes('all');
+            const isParents = audienceArray.includes('parents');
+            const isTeachers = audienceArray.includes('teachers');
+            const isStudents = audienceArray.includes('students');
+            
+            // Collect class IDs (strings that are not keywords)
+            const classIds = audienceArray.filter(a => !['all', 'parents', 'teachers', 'students', 'class', 'both'].includes(a));
+
+            if (isAll) {
                 const { data } = await window.supabaseClient.from('profiles').select('id').eq('is_active', true);
                 target_users = (data || []).map(u => u.id);
-            } else if (announcementData.audience === 'parents') {
-                const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'parent').eq('is_active', true);
-                target_users = (data || []).map(u => u.id);
-            } else if (announcementData.audience === 'teachers') {
-                const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'teacher').eq('is_active', true);
-                target_users = (data || []).map(u => u.id);
+            } else {
+                if (isParents || isStudents) {
+                    // 'students' audience implies notifying parents
+                    const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'parent').eq('is_active', true);
+                    const parentIds = (data || []).map(u => u.id);
+                    target_users = [...target_users, ...parentIds];
+                }
+                
+                if (isTeachers) {
+                    const { data } = await window.supabaseClient.from('profiles').select('id').eq('role', 'teacher').eq('is_active', true);
+                    const teacherIds = (data || []).map(u => u.id);
+                    target_users = [...target_users, ...teacherIds];
+                }
+
+                // Handle class-specific targeting
+                if (classIds.length > 0) {
+                     // Find students in these classes
+                     const { data: students } = await window.supabaseClient
+                        .from('students')
+                        .select('parent_id')
+                        .in('class_id', classIds);
+                     
+                     if (students) {
+                         const classParentIds = students.map(s => s.parent_id).filter(Boolean);
+                         target_users = [...target_users, ...classParentIds];
+                     }
+                }
             }
+
+            // Deduplicate
+            target_users = [...new Set(target_users)];
 
             // Create notifications for target users
             if (target_users.length > 0) {

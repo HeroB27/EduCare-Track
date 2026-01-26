@@ -98,20 +98,39 @@ class TeacherAnnouncements {
 
     async loadAnnouncements() {
         try {
+            // Build query to fetch announcements that:
+            // 1. Target this class specifically
+            // 2. Target 'all'
+            // 3. Were created by this teacher (so they can see their own posts even if for parents)
+            
             const { data, error } = await window.supabaseClient
                 .from('announcements')
                 .select('id,title,message,audience,priority,created_by,created_at,is_active')
-                .contains('audience', [this.currentUser.classId, 'all'])
+                .or(`audience.cs.{${this.currentUser.classId}},audience.cs.{all},created_by.eq.${this.currentUser.id}`)
                 .eq('is_active', true)
                 .order('created_at', { ascending: false })
                 .limit(20);
 
             if (error) throw error;
 
+            // Fetch creator names
+            const creatorIds = [...new Set((data || []).map(a => a.created_by))];
+            let creators = {};
+            if (creatorIds.length > 0) {
+                const { data: profiles } = await window.supabaseClient
+                    .from('profiles')
+                    .select('id, full_name')
+                    .in('id', creatorIds);
+                if (profiles) {
+                    profiles.forEach(p => creators[p.id] = p.full_name);
+                }
+            }
+
             this.announcements = (data || []).map(a => ({
                 id: a.id,
                 ...a,
                 createdBy: a.created_by,
+                createdByName: creators[a.created_by] || 'Unknown',
                 createdAt: a.created_at,
                 isActive: a.is_active
             }));
@@ -170,6 +189,179 @@ class TeacherAnnouncements {
         this.attachAnnouncementEventListeners();
     }
 
+    attachAnnouncementEventListeners() {
+        // View Announcement
+        document.querySelectorAll('.view-announcement, .announcement-item').forEach(el => {
+            el.addEventListener('click', (e) => {
+                const id = el.dataset.announcementId;
+                // Prevent double triggering if clicking button inside item
+                if (e.target.closest('.view-announcement') && el.classList.contains('announcement-item')) return;
+                this.viewAnnouncement(id);
+            });
+        });
+    }
+
+    initEventListeners() {
+        // Create Announcement Modal
+        const createBtn = document.getElementById('createAnnouncementBtn');
+        const closeBtn = document.getElementById('closeCreateModal');
+        const modal = document.getElementById('createAnnouncementModal');
+        const form = document.getElementById('announcementForm');
+
+        if (createBtn) {
+            createBtn.addEventListener('click', () => {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                form.reset();
+            });
+        }
+
+        // Close on outside click
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                    form.reset();
+                }
+            });
+        }
+
+        // Submit Announcement
+        const saveBtn = document.getElementById('saveAnnouncementBtn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.createAnnouncement());
+        }
+    }
+
+    async createAnnouncement() {
+        try {
+            const title = document.getElementById('announcementTitle').value;
+            const message = document.getElementById('announcementMessage').value;
+            const audienceType = document.getElementById('announcementAudience').value;
+            const priority = document.getElementById('announcementPriority').value;
+            const sendNotification = document.getElementById('sendNotification').checked;
+
+            if (!title || !message) {
+                this.showNotification('Please fill in all required fields', 'error');
+                return;
+            }
+
+            this.showLoading();
+
+            // Determine audience array based on selection
+            let audience = [];
+            if (audienceType === 'class') {
+                audience = [this.currentUser.classId];
+            } else if (audienceType === 'parents') {
+                audience = ['parents_' + this.currentUser.classId];
+            } else if (audienceType === 'both') {
+                audience = [this.currentUser.classId, 'parents_' + this.currentUser.classId];
+            }
+
+            const newAnnouncement = {
+                title,
+                message,
+                audience,
+                priority,
+                created_by: this.currentUser.id,
+                created_by_name: this.currentUser.name,
+                is_active: true,
+                class_id: this.currentUser.classId // Helper for simpler queries if needed
+            };
+
+            const { data, error } = await window.supabaseClient
+                .from('announcements')
+                .insert([newAnnouncement])
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            // Send notification if requested
+            if (sendNotification) {
+                await this.sendAnnouncementNotification(newAnnouncement, data.id);
+            }
+
+            this.showNotification('Announcement created successfully', 'success');
+            
+            // Close modal and refresh
+            document.getElementById('createAnnouncementModal').classList.add('hidden');
+            document.getElementById('createAnnouncementModal').classList.remove('flex');
+            document.getElementById('announcementForm').reset();
+            
+            await this.loadAnnouncements();
+
+        } catch (error) {
+            console.error('Error creating announcement:', error);
+            this.showNotification('Error creating announcement', 'error');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async sendAnnouncementNotification(announcement, announcementId) {
+        try {
+            // Get target users based on audience
+            let targetUsers = [];
+            
+            if (announcement.audience.includes('parents_' + this.currentUser.classId)) {
+                // Fetch parents of the class
+                // First get students of the class
+                const { data: students } = await window.supabaseClient
+                    .from('students')
+                    .select('id')
+                    .eq('class_id', this.currentUser.classId);
+                
+                if (students && students.length > 0) {
+                    const studentIds = students.map(s => s.id);
+                    // Get parents
+                    const { data: relations } = await window.supabaseClient
+                        .from('parent_students')
+                        .select('parent_id')
+                        .in('student_id', studentIds);
+                    
+                    if (relations) {
+                        targetUsers = [...new Set(relations.map(r => r.parent_id))];
+                    }
+                }
+            }
+
+            if (targetUsers.length === 0) return;
+
+            const { error } = await window.supabaseClient
+                .from('notifications')
+                .insert({
+                    target_users: targetUsers,
+                    title: 'New Class Announcement: ' + announcement.title,
+                    message: announcement.message.substring(0, 100) + (announcement.message.length > 100 ? '...' : ''),
+                    type: 'announcement',
+                    related_record: announcementId,
+                    is_urgent: announcement.priority === 'urgent'
+                });
+
+            if (error) console.error('Error sending notification:', error);
+
+        } catch (error) {
+            console.error('Error processing notification:', error);
+        }
+    }
+
+    viewAnnouncement(id) {
+        const announcement = this.announcements.find(a => a.id === id);
+        if (!announcement) return;
+        
+        // Simple alert for now, could be a modal
+        alert(`Title: ${announcement.title}\n\n${announcement.message}`);
+    }
+
     getPriorityClass(priority) {
         const classes = {
             'urgent': 'bg-red-100 text-red-800',
@@ -180,6 +372,11 @@ class TeacherAnnouncements {
     }
 
     getAudienceText(audience) {
+        if (Array.isArray(audience)) {
+            if (audience.includes('all')) return 'All Users';
+            if (audience.some(a => a === this.currentUser.classId)) return 'My Class';
+            return 'Custom Group';
+        }
         const texts = {
             'class': 'Class Only',
             'parents': 'Parents Only',
@@ -348,7 +545,7 @@ class TeacherAnnouncements {
             if (error) throw error;
 
             if (sendNotification) {
-                await this.sendAnnouncementNotifications(announcementRow, data.id);
+                await this.sendAnnouncementNotifications(announcementRow, data.id, audience);
             }
 
             await this.loadAnnouncements();
@@ -362,19 +559,21 @@ class TeacherAnnouncements {
         }
     }
 
-    async sendAnnouncementNotifications(announcementData, announcementId) {
+    async sendAnnouncementNotifications(announcementData, announcementId, audienceType) {
         try {
             let targetUsers = [];
 
             // Get target users based on audience
-            if (announcementData.audience === 'class' || announcementData.audience === 'both') {
-                // For class announcements, we'd typically notify students
-                // Since we don't have student user accounts, we'll notify parents instead
+            // audienceType from dropdown: 'class', 'parents', 'both'
+            // announcementData.audience is always [classId]
+            
+            if (audienceType === 'class' || audienceType === 'both') {
+                // Notify parents about class announcements (effectively notifying students)
                 const parentIds = await this.getClassParentIds();
                 targetUsers = [...targetUsers, ...parentIds];
             }
 
-            if (announcementData.audience === 'parents' || announcementData.audience === 'both') {
+            if (audienceType === 'parents' || audienceType === 'both') {
                 const parentIds = await this.getClassParentIds();
                 targetUsers = [...targetUsers, ...parentIds];
             }

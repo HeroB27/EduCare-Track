@@ -120,6 +120,22 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   await load();
   
+  // Setup Real-time updates
+  if (window.supabaseClient && window.EducareTrack && EducareTrack.currentUser) {
+    window.supabaseClient
+        .channel('notifications_page_realtime')
+        .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications'
+        }, (payload) => {
+            if (payload.new && payload.new.target_users && payload.new.target_users.includes(EducareTrack.currentUser.id)) {
+                load();
+            }
+        })
+        .subscribe();
+  }
+
   // Setup home button redirect after page loads
   checkUserAndSetup();
 });

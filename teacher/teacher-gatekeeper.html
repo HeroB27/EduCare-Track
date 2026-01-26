@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Gatekeeper Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40">
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800">EducareTrack</h1>
+        </div>
+        
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li><a href="teacher-dashboard.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>Dashboard</a></li>
+                <li><a href="teacher-students.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-user-graduate w-5 h-5 mr-3"></i>My Students</a></li>
+                <li><a href="teacher-attendance.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>Attendance</a></li>
+                <li><a href="teacher-excuses.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-file-alt w-5 h-5 mr-3"></i>Excuse Letters</a></li>
+                <li><a href="teacher-reports.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-chart-bar w-5 h-5 mr-3"></i>Class Reports</a></li>
+                <li><a href="teacher-announcements.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-bullhorn w-5 h-5 mr-3"></i>Announcements</a></li>
+                <li><a href="teacher-subjects.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-book-open w-5 h-5 mr-3"></i>Subject Attendance</a></li>
+                <li><a href="teacher-gatekeeper.html" class="flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg"><i class="fas fa-qrcode w-5 h-5 mr-3"></i>Gatekeeper Mode</a></li>
+            </ul>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="ml-64 p-8">
+        <header class="mb-8">
+            <h1 class="text-2xl font-bold text-gray-800">Gatekeeper Mode</h1>
+            <p class="text-gray-600">Scan QR codes or manually record entry/exit</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Manual Entry -->
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">Manual Entry</h3>
+                <div class="space-y-4">
+                    <div class="relative">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Student Search</label>
+                        <input type="text" id="studentSearch" placeholder="Search by name or ID..." class="w-full border rounded-lg p-2">
+                        <div id="studentResults" class="absolute z-10 w-full bg-white border rounded-lg shadow mt-1 hidden max-h-48 overflow-y-auto"></div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                            <select id="entryType" class="w-full border rounded-lg p-2">
+                                <option value="entry">Entry</option>
+                                <option value="exit">Exit</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Time</label>
+                            <input type="time" id="manualTime" class="w-full border rounded-lg p-2" value="07:30">
+                        </div>
+                    </div>
+
+                    <button id="submitManualEntry" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+                        Record Attendance
+                    </button>
+                </div>
+            </div>
+
+            <!-- Scanner Placeholder -->
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">QR Scanner</h3>
+                <div id="reader" class="w-full h-64 bg-gray-100 flex items-center justify-center rounded-lg border-2 border-dashed border-gray-300">
+                    <div class="text-center text-gray-500">
+                        <i class="fas fa-camera text-4xl mb-2"></i>
+                        <p>Scanner area</p>
+                        <p class="text-xs mt-1">(Requires camera permission)</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../config.js"></script>
+    <script src="../core.js"></script>
+    <script src="../guard/qr-attendance-logic.js"></script>
+    <script src="teacher-gatekeeper.js"></script>
+</body>
+</html>

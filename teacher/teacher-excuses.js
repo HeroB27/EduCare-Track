@@ -113,7 +113,41 @@ async loadNotificationCount() {
 }
     async loadClassStudents() {
         try {
-            this.classStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+            // 1. Get students from advisory class
+            let allStudents = [];
+            const advisoryStudents = await EducareTrack.getStudentsByClass(this.currentUser.classId);
+            if (advisoryStudents && advisoryStudents.length > 0) {
+                allStudents = [...advisoryStudents];
+            }
+
+            // 2. Get students from subject classes
+            // Find all classes where this teacher is a subject teacher
+            const { data: schedules, error: scheduleError } = await window.supabaseClient
+                .from('class_schedules')
+                .select('class_id')
+                .eq('teacher_id', this.currentUser.id);
+
+            if (!scheduleError && schedules && schedules.length > 0) {
+                // Get unique class IDs excluding the advisory class (already fetched)
+                const subjectClassIds = [...new Set(schedules.map(s => s.class_id))]
+                    .filter(id => id !== this.currentUser.classId);
+
+                if (subjectClassIds.length > 0) {
+                    for (const classId of subjectClassIds) {
+                        const classStudents = await EducareTrack.getStudentsByClass(classId);
+                        if (classStudents) {
+                            allStudents = [...allStudents, ...classStudents];
+                        }
+                    }
+                }
+            }
+
+            // Remove duplicates (in case a student is in both advisory and subject class - unlikely but possible if data is messy)
+            const uniqueStudents = Array.from(new Map(allStudents.map(s => [s.id, s])).values());
+            
+            this.classStudents = uniqueStudents;
+            console.log('Total students loaded (Advisory + Subject):', this.classStudents.length);
+
         } catch (error) {
             console.error('Error loading class students:', error);
             this.showNotification('Error loading students', 'error');
@@ -148,7 +182,7 @@ async loadNotificationCount() {
                 submittedAt: excuse.created_at,
                 reviewedAt: excuse.reviewed_at,
                 reviewedBy: excuse.reviewed_by,
-                reviewedByName: excuse.reviewed_by_name,
+                reviewedByName: 'Administrator', // Placeholder as schema uses ID
                 reviewerNotes: excuse.reviewer_notes
             }));
             this.filteredExcuses = [...this.excuseLetters];

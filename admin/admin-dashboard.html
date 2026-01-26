@@ -542,6 +542,9 @@
 
                     // Load at-risk students list
                     await this.loadAtRiskStudents();
+                    
+                    // Load unread notifications count
+                    await this.loadUnreadNotificationsCount();
 
                 } catch (error) {
                     console.error('Error loading dashboard data:', error);
@@ -553,9 +556,9 @@
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
                     
-                    // Listen for new attendance entries
+                    // Listen for new attendance entries and notifications
                     window.supabaseClient
-                        .channel('dashboard_attendance')
+                        .channel('dashboard_updates')
                         .on('postgres_changes', { 
                             event: 'INSERT', 
                             schema: 'public', 
@@ -567,8 +570,37 @@
                             this.updateStats(stats);
                             // Also refresh the recent activity
                             this.loadRecentActivity();
+                            // Refresh chart
+                            this.loadRealAttendanceData();
+                        })
+                        .on('postgres_changes', {
+                            event: 'INSERT',
+                            schema: 'public',
+                            table: 'notifications'
+                        }, async (payload) => {
+                            // Check if notification is for this user
+                            if (payload.new && payload.new.target_users && payload.new.target_users.includes(this.currentUser.id)) {
+                                await this.loadUnreadNotificationsCount();
+                                this.showNotification(payload.new.title + ': ' + payload.new.message);
+                            }
                         })
                         .subscribe();
+                }
+            }
+
+            async loadUnreadNotificationsCount() {
+                try {
+                    if (!this.currentUser) return;
+                    const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true);
+                    const count = notifications.length;
+                    const badge = document.getElementById('notificationBoxCount');
+                    if (badge) {
+                        badge.textContent = count;
+                        badge.classList.remove('hidden');
+                        if (count === 0) badge.classList.add('hidden');
+                    }
+                } catch (error) {
+                    console.error('Error loading unread notifications:', error);
                 }
             }
 

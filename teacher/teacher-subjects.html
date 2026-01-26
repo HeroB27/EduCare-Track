@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Subject Attendance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Sidebar -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40">
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800">EducareTrack</h1>
+        </div>
+        
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li><a href="teacher-dashboard.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>Dashboard</a></li>
+                <li><a href="teacher-students.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-user-graduate w-5 h-5 mr-3"></i>My Students</a></li>
+                <li><a href="teacher-attendance.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>Attendance</a></li>
+                <li><a href="teacher-excuses.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-file-alt w-5 h-5 mr-3"></i>Excuse Letters</a></li>
+                <li><a href="teacher-reports.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-chart-bar w-5 h-5 mr-3"></i>Class Reports</a></li>
+                <li><a href="teacher-announcements.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-bullhorn w-5 h-5 mr-3"></i>Announcements</a></li>
+                <li><a href="teacher-subjects.html" class="flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg"><i class="fas fa-book-open w-5 h-5 mr-3"></i>Subject Attendance</a></li>
+                <li><a href="teacher-gatekeeper.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-qrcode w-5 h-5 mr-3"></i>Gatekeeper Mode</a></li>
+            </ul>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="ml-64 p-8">
+        <!-- List View -->
+        <div id="subjectListView">
+            <header class="mb-8">
+                <h1 class="text-2xl font-bold text-gray-800">Subject Attendance</h1>
+                <p class="text-gray-600">Select a subject schedule to track attendance</p>
+            </header>
+            <div id="subjectList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Populated by JS -->
+                <p class="text-gray-500">Loading subjects...</p>
+            </div>
+        </div>
+
+        <!-- Detail View (Hidden by default) -->
+        <div id="subjectAttendanceView" class="hidden">
+            <header class="flex items-center mb-8">
+                <button onclick="window.teacherSubjects.backToList()" class="mr-4 text-gray-600 hover:text-blue-600">
+                    <i class="fas fa-arrow-left text-xl"></i>
+                </button>
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800" id="selectedSubjectTitle">Subject Name</h1>
+                    <p class="text-gray-600">Mark attendance for today</p>
+                </div>
+            </header>
+            
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div id="subjectStudentList">
+                    <!-- Student rows populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../config.js"></script>
+    <script src="../core.js"></script>
+    <script src="teacher-subjects.js"></script>
+</body>
+</html>

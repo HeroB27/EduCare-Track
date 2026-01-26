@@ -4,6 +4,13 @@ class TeacherAttendance {
         this.classStudents = [];
         this.todayAttendance = [];
         this.attendanceHistory = [];
+        
+        // Subject Attendance properties
+        this.subjects = [];
+        this.subjectStudents = [];
+        this.currentSubject = null;
+        this.currentSubjectAttendance = [];
+
         this.init();
     }
 
@@ -39,6 +46,11 @@ class TeacherAttendance {
             }
 
             this.currentUser = JSON.parse(savedUser);
+            
+            // Sync with core EducareTrack
+            if (window.EducareTrack) {
+                window.EducareTrack.currentUser = this.currentUser;
+            }
             
             if (this.currentUser.role !== 'teacher') {
                 window.location.href = `../${this.currentUser.role}/${this.currentUser.role}-dashboard.html`;
@@ -469,7 +481,7 @@ class TeacherAttendance {
                 ...record,
                 studentId: record.student_id,
                 classId: record.class_id,
-                entryType: 'entry', // Default since field doesn't exist in new schema
+                entryType: (record.remarks && record.remarks.includes('exit')) ? 'exit' : 'entry',
                 timestamp: new Date(record.timestamp),
                 time: new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
                 recordedBy: record.recorded_by,
@@ -605,6 +617,64 @@ class TeacherAttendance {
     }
 
     initEventListeners() {
+        // Tabs
+        const tabDaily = document.getElementById('tabDaily');
+        const tabSubject = document.getElementById('tabSubject');
+        
+        if (tabDaily && tabSubject) {
+            tabDaily.addEventListener('click', () => {
+                document.getElementById('dailyAttendanceSection').classList.remove('hidden');
+                document.getElementById('subjectAttendanceSection').classList.add('hidden');
+                tabDaily.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+                tabDaily.classList.remove('text-gray-500');
+                tabSubject.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+                tabSubject.classList.add('text-gray-500');
+            });
+
+            tabSubject.addEventListener('click', () => {
+                document.getElementById('dailyAttendanceSection').classList.add('hidden');
+                document.getElementById('subjectAttendanceSection').classList.remove('hidden');
+                tabSubject.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+                tabSubject.classList.remove('text-gray-500');
+                tabDaily.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+                tabDaily.classList.add('text-gray-500');
+                
+                if (this.subjects.length === 0) {
+                    this.loadTeacherSubjects();
+                }
+            });
+        }
+
+        // Load Subject Button
+        const loadSubjectBtn = document.getElementById('loadSubjectBtn');
+        if (loadSubjectBtn) {
+            loadSubjectBtn.addEventListener('click', () => {
+                const subjectSelect = document.getElementById('subjectSelect');
+                const scheduleId = subjectSelect.value;
+                if (scheduleId) {
+                    this.loadSubjectStudents(scheduleId);
+                } else {
+                    this.showNotification('Please select a subject', 'warning');
+                }
+            });
+        }
+
+        // Save Subject Attendance Button
+        const saveSubjectAttendanceBtn = document.getElementById('saveSubjectAttendance');
+        if (saveSubjectAttendanceBtn) {
+            saveSubjectAttendanceBtn.addEventListener('click', () => {
+                this.saveSubjectAttendance();
+            });
+        }
+
+        // Mark All Subject Present Button
+        const subjectMarkAllPresentBtn = document.getElementById('subjectMarkAllPresent');
+        if (subjectMarkAllPresentBtn) {
+            subjectMarkAllPresentBtn.addEventListener('click', () => {
+                this.markAllSubjectPresent();
+            });
+        }
+
         // Mark all present
         const markAllPresentBtn = document.getElementById('markAllPresent');
         if (markAllPresentBtn) {
@@ -687,6 +757,178 @@ class TeacherAttendance {
             sidebar.classList.add('collapsed');
             mainContent.classList.remove('ml-64');
             mainContent.classList.add('ml-16');
+        }
+    }
+
+    async loadTeacherSubjects() {
+        try {
+            this.showLoading();
+            const { data: schedules, error } = await window.supabaseClient
+                .from('class_schedules')
+                .select('id, class_id, subject, schedule_text, classes(grade, level, strand, section)')
+                .eq('teacher_id', this.currentUser.id);
+
+            if (error) throw error;
+
+            this.subjects = schedules || [];
+            
+            const subjectSelect = document.getElementById('subjectSelect');
+            subjectSelect.innerHTML = '<option value="">Select Subject/Class</option>';
+            
+            this.subjects.forEach(schedule => {
+                const className = schedule.classes ? 
+                    `${schedule.classes.grade} - ${schedule.classes.level || schedule.classes.strand || schedule.classes.section}` : 
+                    'Unknown Class';
+                const option = document.createElement('option');
+                option.value = schedule.id;
+                option.textContent = `${schedule.subject} (${className}) - ${schedule.schedule_text || ''}`;
+                subjectSelect.appendChild(option);
+            });
+
+            this.hideLoading();
+        } catch (error) {
+            console.error('Error loading subjects:', error);
+            this.hideLoading();
+            this.showNotification('Error loading subjects', 'error');
+        }
+    }
+
+    async loadSubjectStudents(scheduleId) {
+        try {
+            this.showLoading();
+            const schedule = this.subjects.find(s => s.id === scheduleId);
+            if (!schedule) throw new Error('Schedule not found');
+            
+            this.currentSubject = schedule;
+            document.getElementById('selectedSubjectTitle').textContent = schedule.subject;
+            const className = schedule.classes ? 
+                `${schedule.classes.grade} - ${schedule.classes.level || schedule.classes.strand || schedule.classes.section}` : 
+                'Unknown Class';
+            document.getElementById('selectedSubjectDetails').textContent = `${className} • ${schedule.schedule_text || ''}`;
+
+            // Load students for this class
+            this.subjectStudents = await EducareTrack.getStudentsByClass(schedule.class_id);
+            
+            // Load existing attendance for today if any
+            const today = new Date().toISOString().split('T')[0];
+            const { data: attendanceData, error } = await window.supabaseClient
+                .from('subject_attendance')
+                .select('*')
+                .eq('schedule_id', scheduleId)
+                .eq('date', today);
+
+            if (error) throw error;
+            
+            this.currentSubjectAttendance = attendanceData || [];
+            
+            this.renderSubjectAttendanceTable();
+            document.getElementById('subjectAttendanceContainer').style.display = 'block';
+            
+            this.hideLoading();
+        } catch (error) {
+            console.error('Error loading subject students:', error);
+            this.hideLoading();
+            this.showNotification('Error loading students', 'error');
+        }
+    }
+
+    renderSubjectAttendanceTable() {
+        const tbody = document.getElementById('subjectAttendanceTableBody');
+        
+        if (this.subjectStudents.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center">No students found in this class</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = this.subjectStudents.map(student => {
+            const existingRecord = this.currentSubjectAttendance.find(r => r.student_id === student.id);
+            const status = existingRecord ? existingRecord.status : '';
+            
+            return `
+                <tr class="hover:bg-gray-50" data-student-id="${student.id}">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-3">
+                                ${(student.name || '?').charAt(0)}
+                            </div>
+                            <div class="text-sm font-medium text-gray-900">${student.name}</div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${student.lrn || 'N/A'}</td>
+                    <td class="px-6 py-4 text-center">
+                        <input type="radio" name="status_${student.id}" value="present" ${status === 'present' ? 'checked' : ''} class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300">
+                    </td>
+                    <td class="px-6 py-4 text-center">
+                        <input type="radio" name="status_${student.id}" value="late" ${status === 'late' ? 'checked' : ''} class="h-4 w-4 text-yellow-600 focus:ring-yellow-500 border-gray-300">
+                    </td>
+                    <td class="px-6 py-4 text-center">
+                        <input type="radio" name="status_${student.id}" value="absent" ${status === 'absent' ? 'checked' : ''} class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300">
+                    </td>
+                    <td class="px-6 py-4">
+                        <input type="text" class="w-full border-gray-300 rounded-md shadow-sm text-sm focus:ring-blue-500 focus:border-blue-500" placeholder="Optional remarks">
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    markAllSubjectPresent() {
+        const radios = document.querySelectorAll('input[type="radio"][value="present"]');
+        radios.forEach(radio => radio.checked = true);
+    }
+
+    async saveSubjectAttendance() {
+        try {
+            this.showLoading();
+            
+            const rows = document.querySelectorAll('#subjectAttendanceTableBody tr');
+            const attendanceRecords = [];
+            
+            rows.forEach(row => {
+                const studentId = row.getAttribute('data-student-id');
+                const present = row.querySelector(`input[name="status_${studentId}"][value="present"]`).checked;
+                const late = row.querySelector(`input[name="status_${studentId}"][value="late"]`).checked;
+                const absent = row.querySelector(`input[name="status_${studentId}"][value="absent"]`).checked;
+                
+                let status = null;
+                if (present) status = 'present';
+                else if (late) status = 'late';
+                else if (absent) status = 'absent';
+                
+                if (status) {
+                    attendanceRecords.push({
+                        schedule_id: this.currentSubject.id,
+                        student_id: studentId,
+                        status: status,
+                        date: new Date().toISOString().split('T')[0],
+                        recorded_by: this.currentUser.id
+                    });
+                }
+            });
+
+            if (attendanceRecords.length === 0) {
+                this.hideLoading();
+                this.showNotification('No attendance marked', 'warning');
+                return;
+            }
+
+            // Upsert records
+            const { error } = await window.supabaseClient
+                .from('subject_attendance')
+                .upsert(attendanceRecords, { onConflict: 'schedule_id, student_id, date' });
+
+            if (error) throw error;
+
+            this.hideLoading();
+            this.showNotification('Subject attendance saved successfully', 'success');
+            
+            // Refresh data
+            this.loadSubjectStudents(this.currentSubject.id);
+
+        } catch (error) {
+            console.error('Error saving subject attendance:', error);
+            this.hideLoading();
+            this.showNotification('Error saving attendance', 'error');
         }
     }
 

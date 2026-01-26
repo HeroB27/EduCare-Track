@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EducareTrack - Homeroom Analytics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+    <!-- Sidebar (Same as Dashboard) -->
+    <div class="sidebar flex flex-col h-screen bg-white shadow-lg w-64 fixed z-40">
+        <div class="p-6 border-b border-gray-200 flex items-center">
+            <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center mr-3">
+                <span class="text-white font-bold">ET</span>
+            </div>
+            <h1 class="text-xl font-bold text-blue-800">EducareTrack</h1>
+        </div>
+        
+        <nav class="flex-1 p-4">
+            <ul class="space-y-2">
+                <li><a href="teacher-dashboard.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-tachometer-alt w-5 h-5 mr-3"></i>Dashboard</a></li>
+                <li><a href="teacher-students.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-user-graduate w-5 h-5 mr-3"></i>My Students</a></li>
+                <li><a href="teacher-attendance.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-clipboard-check w-5 h-5 mr-3"></i>Attendance</a></li>
+                <li><a href="teacher-excuses.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-file-alt w-5 h-5 mr-3"></i>Excuse Letters</a></li>
+                <li><a href="teacher-reports.html" class="flex items-center p-3 text-blue-600 bg-blue-50 rounded-lg"><i class="fas fa-chart-bar w-5 h-5 mr-3"></i>Class Reports</a></li>
+                <li><a href="teacher-announcements.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-bullhorn w-5 h-5 mr-3"></i>Announcements</a></li>
+                <li><a href="teacher-subjects.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-book-open w-5 h-5 mr-3"></i>Subject Attendance</a></li>
+                <li><a href="teacher-gatekeeper.html" class="flex items-center p-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg"><i class="fas fa-qrcode w-5 h-5 mr-3"></i>Gatekeeper Mode</a></li>
+            </ul>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="ml-64 p-8" id="analyticsContent">
+        <header class="flex justify-between items-center mb-8">
+            <h1 class="text-2xl font-bold text-gray-800">Homeroom Analytics</h1>
+        </header>
+
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-gray-500 text-sm font-medium">Attendance Rate</h3>
+                <p class="text-3xl font-bold text-gray-800" id="analyticsAttendanceRate">0%</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-gray-500 text-sm font-medium">Total Present</h3>
+                <p class="text-3xl font-bold text-green-600" id="analyticsTotalPresent">0</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-gray-500 text-sm font-medium">Total Late</h3>
+                <p class="text-3xl font-bold text-yellow-600" id="analyticsTotalLate">0</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-gray-500 text-sm font-medium">Total Absent</h3>
+                <p class="text-3xl font-bold text-red-600" id="analyticsTotalAbsent">0</p>
+            </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="bg-white p-6 rounded-lg shadow mb-8">
+            <h3 class="text-lg font-semibold mb-4">Attendance Trend (Last 30 Days)</h3>
+            <div class="h-80">
+                <canvas id="homeroomAttendanceChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Student Table -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 border-b">
+                <h3 class="text-lg font-semibold">Student Performance</h3>
+            </div>
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Present</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Late</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Absent</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rate</th>
+                    </tr>
+                </thead>
+                <tbody id="studentAnalyticsTable" class="bg-white divide-y divide-gray-200">
+                    <!-- Rows populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../config.js"></script>
+    <script src="../core.js"></script>
+    <script src="teacher-analytics.js"></script>
+</body>
+</html>
