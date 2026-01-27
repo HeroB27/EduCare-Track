@@ -75,8 +75,7 @@ class GuardDashboard {
             const { data: attendanceData, error: attendanceError } = await window.supabaseClient
                 .from('attendance')
                 .select('student_id, status')
-                .gte('timestamp', today.toISOString())
-                .eq('method', 'qr'); // Both entry types use QR method
+                .gte('timestamp', today.toISOString());
             
             if (attendanceError) throw attendanceError;
             

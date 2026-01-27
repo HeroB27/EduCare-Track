@@ -530,21 +530,21 @@ class TeacherDashboard {
             this.showLoading();
 
             const { error } = await window.supabaseClient.from('clinic_visits').insert({
-                student_id: studentId,
-                class_id: this.currentUser.classId,
-                teacher_id: this.currentUser.id,
-                reason: reason,
-                notes: notes,
-                status: 'in_clinic', // Initial status
-                visit_time: new Date().toISOString()
-            });
+                    student_id: studentId,
+                    class_id: this.currentUser.classId,
+                    teacher_id: this.currentUser.id,
+                    reason: reason,
+                    notes: notes,
+                    outcome: 'referred', // Initial status
+                    visit_time: new Date().toISOString()
+                });
 
-            if (error) throw error;
+                if (error) throw error;
 
-            // Update student status
-            await window.supabaseClient.from('students')
-                .update({ current_status: 'in_clinic' })
-                .eq('id', studentId);
+                // Update student status
+                await window.supabaseClient.from('students')
+                    .update({ current_status: 'sent_to_clinic' })
+                    .eq('id', studentId);
 
             // Notify Nurse
             const studentName = this.getStudentName(studentId);
