@@ -597,7 +597,7 @@ class QRScanner {
                 title: notificationTitle,
                 message: message,
                 type: 'attendance',
-                student_id: student.id
+                read_by: [] // Initialize as empty array
             };
 
             const { error } = await window.supabaseClient

@@ -16,10 +16,14 @@ class TeacherAnalytics {
     setupRealTimeListeners() {
         if (!window.supabaseClient) return;
 
-        const channel = window.supabaseClient.channel('teacher_analytics_realtime');
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('teacher_analytics_realtime');
 
         // Listen for Attendance Changes
-        channel.on('postgres_changes', { 
+        this.realtimeChannel.on('postgres_changes', { 
             event: '*', 
             schema: 'public', 
             table: 'attendance',
@@ -30,23 +34,19 @@ class TeacherAnalytics {
         });
 
         // Listen for Clinic Visits
-        channel.on('postgres_changes', { 
+        this.realtimeChannel.on('postgres_changes', { 
             event: '*', 
             schema: 'public', 
             table: 'clinic_visits'
-            // Clinic visits might not always have class_id in the filter if not indexed/setup, 
-            // but we can filter client side or just reload. 
-            // Ideally filtering by class_id if column exists.
         }, (payload) => {
             // Check if relevant to this class if possible, or just reload
-            // Based on previous reads, clinic_visits has class_id
             if (payload.new?.class_id == this.classId || payload.old?.class_id == this.classId) {
                 console.log('Realtime clinic update received');
                 this.loadAnalytics();
             }
         });
 
-        channel.subscribe();
+        this.realtimeChannel.subscribe();
     }
 
     async checkAuth() {

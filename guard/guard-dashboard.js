@@ -533,13 +533,7 @@ class GuardDashboard {
                 title: notificationTitle,
                 message: message,
                 type: 'attendance',
-                student_id: student.id,
-                metadata: {
-                    attendance_id: attendanceId,
-                    entry_type: entryType,
-                    status: status,
-                    remarks: remarks
-                }
+                read_by: [] // Initialize as empty array
             };
 
             const { error } = await window.supabaseClient

@@ -737,7 +737,7 @@ class ClinicCheckin {
                 const insertData = {
                     student_id: studentId,
                     reason: reason,
-                    visit_time: timestamp,
+                    visit_time: timestamp.toISOString(),
                     notes: notes || '',
                     treated_by: this.currentUser.id, // Send UUID as required by NEW schema
                     outcome: checkIn ? 'checked_in' : 'checked_out'
