@@ -422,6 +422,13 @@ class GuardDashboard {
             return;
         }
 
+        // Debug: Check current user
+        if (!this.currentUser || !this.currentUser.id) {
+            console.error('Current user or user ID is missing:', this.currentUser);
+            this.showNotification('Authentication error: User not properly logged in', 'error');
+            return;
+        }
+
         const entryType = document.getElementById('entryType').value;
         const timeValue = document.getElementById('manualTime').value;
 
@@ -436,21 +443,31 @@ class GuardDashboard {
             const status = entryType === 'entry' ? 
                 (timeValue <= '07:30' ? 'present' : 'late') : 'present';
 
+            // Debug: Log the data being inserted
+            const insertData = {
+                student_id: this.selectedStudent.id,
+                class_id: this.selectedStudent.classId || null,
+                session: session,
+                status: status,
+                method: 'manual',
+                timestamp: now.toISOString(),
+                recorded_by: this.currentUser.id,
+                remarks: `manual_${entryType}` // Store entry type in remarks
+            };
+            console.log('Inserting attendance data:', insertData);
+
             // Insert attendance record using Supabase
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .insert({
-                    student_id: this.selectedStudent.id,
-                    class_id: this.selectedStudent.classId || null,
-                    session: session,
-                    status: status,
-                    method: 'manual',
-                    timestamp: now.toISOString(),
-                    recorded_by: this.currentUser.id,
-                    remarks: `manual_${entryType}` // Store entry type in remarks
-                });
+                .insert(insertData)
+                .select(); // Add .select() to return the inserted data
             
             if (error) throw error;
+            
+            // Check if data was returned
+            if (!data || data.length === 0) {
+                throw new Error('No data returned from insert operation');
+            }
             
             // Send notification
             await this.sendManualEntryNotification(

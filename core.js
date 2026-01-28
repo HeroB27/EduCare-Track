@@ -503,10 +503,22 @@ const EducareTrack = {
 
     async getClassClinicReasonTrend(classId, startDate, endDate) {
         try {
+            // Get students in the class first, then their clinic visits
+            const { data: classStudents } = await this.db.client
+                .from('students')
+                .select('id')
+                .eq('class_id', classId);
+
+            if (!classStudents || classStudents.length === 0) {
+                return { labels: [], counts: [] };
+            }
+
+            const studentIds = classStudents.map(s => s.id);
+
             const { data, error } = await this.db.client
                 .from('clinic_visits')
                 .select('reason')
-                .eq('class_id', classId)
+                .in('student_id', studentIds)
                 .gte('visit_time', startDate.toISOString())
                 .lte('visit_time', endDate.toISOString());
 
@@ -692,14 +704,13 @@ const EducareTrack = {
 
             if (absError) throw absError;
 
-            // Count excused (status = 'excused' OR status='absent' with approved excuse letter)
-            // If the system marks them as 'excused' status, we just count that.
+            // Count excused absences (from excuse_letters table instead)
             const { count: excusedCount, error: excError } = await this.db.client
-                .from('attendance')
+                .from('excuse_letters')
                 .select('id', { count: 'exact', head: true })
-                .eq('status', 'excused')
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString());
+                .eq('status', 'approved')
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString());
 
             if (excError) throw excError;
 
@@ -854,9 +865,7 @@ const EducareTrack = {
     ATTENDANCE_STATUS: {
         PRESENT: 'present',
         ABSENT: 'absent',
-        LATE: 'late',
-        IN_CLINIC: 'in_clinic',
-        EXCUSED: 'excused'
+        LATE: 'late'
     },
 
     // Session types
@@ -4700,22 +4709,19 @@ const EducareTrack = {
             const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,status,entry_type,timestamp')
+                    .select('student_id,status,timestamp')
                     .eq('class_id', classId)
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso),
                 window.supabaseClient
                     .from('clinic_visits')
-                    .select('student_id,timestamp,check_in')
-                    .eq('class_id', classId)
-                    .eq('check_in', true)
-                    .gte('timestamp', startIso)
-                    .lte('timestamp', endIso),
+                    .select('student_id,visit_time')
+                    .gte('visit_time', startIso)
+                    .lte('visit_time', endIso),
                 window.supabaseClient
                     .from('students')
                     .select('id', { count: 'exact', head: true })
                     .eq('class_id', classId)
-                    .eq('is_active', true)
             ]);
             if (attendanceRes.error) throw attendanceRes.error;
             if (clinicRes.error) throw clinicRes.error;
@@ -4736,17 +4742,16 @@ const EducareTrack = {
                 }
                 const studentId = row.student_id || row.studentId;
                 if (!studentId) return;
-                if (row.entry_type === 'entry') {
-                    if (row.status === 'late') {
-                        dateGroups[dateKey].late.add(studentId);
-                    } else if (row.status === 'present') {
-                        dateGroups[dateKey].present.add(studentId);
-                    }
+                // Count all attendance records since entry_type doesn't exist
+                if (row.status === 'late') {
+                    dateGroups[dateKey].late.add(studentId);
+                } else if (row.status === 'present') {
+                    dateGroups[dateKey].present.add(studentId);
                 }
             });
             (clinicRes.data || []).forEach(row => {
-                if (!row.timestamp) return;
-                const ts = row.timestamp && row.timestamp.toDate ? row.timestamp.toDate() : row.timestamp;
+                if (!row.visit_time) return;
+                const ts = row.visit_time && row.visit_time.toDate ? row.visit_time.toDate() : row.visit_time;
                 const dateKey = new Date(ts).toDateString();
                 if (!dateGroups[dateKey]) {
                     dateGroups[dateKey] = {
@@ -4809,11 +4814,10 @@ const EducareTrack = {
             const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
             const { data: attendance, error } = await window.supabaseClient
                 .from('attendance')
-                .select('student_id,status,entry_type,timestamp')
+                .select('student_id,status,timestamp')
                 .eq('class_id', classId)
                 .gte('timestamp', startIso)
-                .lte('timestamp', endIso)
-                .eq('entry_type', 'entry');
+                .lte('timestamp', endIso);
             if (error) {
                 throw error;
             }
@@ -4832,13 +4836,13 @@ const EducareTrack = {
             if (ids.length > 0) {
                 const { data: students, error: studentErr } = await window.supabaseClient
                     .from('students')
-                    .select('id,full_name,name')
+                    .select('id,full_name')
                     .in('id', ids);
                 if (studentErr) {
                     throw studentErr;
                 }
                 (students || []).forEach(s => {
-                    const name = s.full_name || s.name || s.id;
+                    const name = s.full_name || s.id;
                     namesById[s.id] = name;
                 });
             }
@@ -5201,9 +5205,8 @@ const EducareTrack = {
             const { data, error } = await window.supabaseClient
                 .from('clinic_visits')
                 .select('reason')
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .eq('check_in', true);
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString());
             
             if (error) throw error;
             
@@ -5253,17 +5256,27 @@ const EducareTrack = {
 
             const counts = new Map();
 
+            // Join clinic_visits with students to filter by class_id since clinic_visits doesn't have class_id
             const { data, error } = await window.supabaseClient
                 .from('clinic_visits')
-                .select('reason')
-                .eq('class_id', classId)
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .eq('check_in', true);
+                .select('reason, student_id')
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString());
             
             if (error) throw error;
             
+            // Get students in this class to filter the results
+            const { data: classStudents, error: studentError } = await window.supabaseClient
+                .from('students')
+                .select('id')
+                .eq('class_id', classId);
+            
+            if (studentError) throw studentError;
+            
+            const classStudentIds = new Set((classStudents || []).map(s => s.id));
+            
             (data || []).forEach(r => {
+                if (!classStudentIds.has(r.student_id)) return; // Only count students from this class
                 const label = normalize(r.reason);
                 if (!label) return;
                 counts.set(label, (counts.get(label) || 0) + 1);
@@ -5286,9 +5299,8 @@ const EducareTrack = {
             const { data, error } = await window.supabaseClient
                 .from('excuse_letters')
                 .select('reason')
-                .gte('submitted_at', startDate.toISOString())
-                .lte('submitted_at', endDate.toISOString())
-                .eq('type', 'absence');
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString());
             
             if (error) throw error;
             
@@ -5313,9 +5325,8 @@ const EducareTrack = {
             const { data, error } = await window.supabaseClient
                 .from('excuse_letters')
                 .select('status')
-                .gte('submitted_at', startDate.toISOString())
-                .lte('submitted_at', endDate.toISOString())
-                .eq('type', 'absence');
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString());
             
             if (error) throw error;
             
@@ -5337,8 +5348,8 @@ const EducareTrack = {
             let query = window.supabaseClient
                 .from('clinic_visits')
                 .select('*')
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
+                .gte('visit_time', startDate.toISOString())
+                .lte('visit_time', endDate.toISOString())
                 .eq('reason', reason);
             
             if (classId) {
@@ -5346,7 +5357,7 @@ const EducareTrack = {
             }
             
             const { data: visits, error } = await query
-                .order('timestamp', { ascending: false })
+                .order('visit_time', { ascending: false })
                 .limit(limit);
                 
             if (error) throw error;

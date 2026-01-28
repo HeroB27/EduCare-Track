@@ -584,53 +584,77 @@
 
             initEventListeners() {
                 // Sidebar toggle
-                document.getElementById('sidebarToggle').addEventListener('click', () => {
-                    this.toggleSidebar();
-                });
+                const sidebarToggle = document.getElementById('sidebarToggle');
+                if (sidebarToggle) {
+                    sidebarToggle.addEventListener('click', () => {
+                        this.toggleSidebar();
+                    });
+                }
 
                 // Logout via modal
-                document.getElementById('logoutBtn').addEventListener('click', async () => {
-                    const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-                        ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
-                        : true;
-                    if (ok) {
-                        localStorage.removeItem('educareTrack_user');
-                        window.location.href = '../index.html';
-                    }
-                });
+                const logoutBtn = document.getElementById('logoutBtn');
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', async () => {
+                        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                            ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                            : true;
+                        if (ok) {
+                            localStorage.removeItem('educareTrack_user');
+                            window.location.href = '../index.html';
+                        }
+                    });
+                }
 
                 // Create announcement button
-                document.getElementById('createAnnouncementBtn').addEventListener('click', () => {
-                    this.openCreateAnnouncementModal();
-                });
+                const createAnnouncementBtn = document.getElementById('createAnnouncementBtn');
+                if (createAnnouncementBtn) {
+                    createAnnouncementBtn.addEventListener('click', () => {
+                        this.openCreateAnnouncementModal();
+                    });
+                }
 
-                document.getElementById('createFirstAnnouncement').addEventListener('click', () => {
-                    this.openCreateAnnouncementModal();
-                });
+                const createFirstAnnouncement = document.getElementById('createFirstAnnouncement');
+                if (createFirstAnnouncement) {
+                    createFirstAnnouncement.addEventListener('click', () => {
+                        this.openCreateAnnouncementModal();
+                    });
+                }
 
                 // Filter buttons
-                document.getElementById('filterAll').addEventListener('click', () => {
-                    this.setActiveFilter('filterAll');
-                    this.applyFilter('all');
-                });
+                const filterAll = document.getElementById('filterAll');
+                if (filterAll) {
+                    filterAll.addEventListener('click', () => {
+                        this.setActiveFilter('filterAll');
+                        this.applyFilter('all');
+                    });
+                }
 
-                document.getElementById('filterUrgent').addEventListener('click', () => {
-                    this.setActiveFilter('filterUrgent');
-                    this.applyFilter('urgent');
-                });
+                const filterUrgent = document.getElementById('filterUrgent');
+                if (filterUrgent) {
+                    filterUrgent.addEventListener('click', () => {
+                        this.setActiveFilter('filterUrgent');
+                        this.applyFilter('urgent');
+                    });
+                }
 
                 // Close modals on outside click
-                document.getElementById('createAnnouncementModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'createAnnouncementModal') {
-                        this.closeCreateAnnouncementModal();
-                    }
-                });
+                const createAnnouncementModal = document.getElementById('createAnnouncementModal');
+                if (createAnnouncementModal) {
+                    createAnnouncementModal.addEventListener('click', (e) => {
+                        if (e.target.id === 'createAnnouncementModal') {
+                            this.closeCreateAnnouncementModal();
+                        }
+                    });
+                }
 
-                document.getElementById('announcementDetailModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'announcementDetailModal') {
-                        this.closeAnnouncementDetailModal();
-                    }
-                });
+                const announcementDetailModal = document.getElementById('announcementDetailModal');
+                if (announcementDetailModal) {
+                    announcementDetailModal.addEventListener('click', (e) => {
+                        if (e.target.id === 'announcementDetailModal') {
+                            this.closeAnnouncementDetailModal();
+                        }
+                    });
+                }
 
                 // Escape key to close modals
                 document.addEventListener('keydown', (e) => {
@@ -795,6 +819,25 @@
 
             showError(message) {
                 this.showNotification(message, 'error');
+            }
+
+            setupRealtimeSubscription() {
+                // Set up real-time subscription for announcements
+                if (window.EducareTrack && window.EducareTrack.supabase) {
+                    const subscription = window.EducareTrack.supabase
+                        .channel('announcements_changes')
+                        .on('postgres_changes', 
+                            { event: '*', schema: 'public', table: 'announcements' },
+                            (payload) => {
+                                console.log('Announcement change detected:', payload);
+                                this.loadAnnouncements(); // Refresh announcements when changes occur
+                            }
+                        )
+                        .subscribe();
+                    
+                    // Store subscription for cleanup
+                    this.realtimeSubscription = subscription;
+                }
             }
         }
 

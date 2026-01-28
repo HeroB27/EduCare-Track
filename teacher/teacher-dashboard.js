@@ -537,7 +537,6 @@ class TeacherDashboard {
 
             const { error } = await window.supabaseClient.from('clinic_visits').insert({
                     student_id: studentId,
-                    class_id: this.currentUser.classId,
                     teacher_id: this.currentUser.id,
                     reason: reason,
                     notes: notes,
@@ -667,13 +666,13 @@ class TeacherDashboard {
                     .order('timestamp', { ascending: false })
                     .limit(10),
                 window.supabaseClient.from('clinic_visits')
-                    .select('id,student_id,status,reason,outcome,visit_time')
-                    .eq('class_id', classId)
+                    .select('id,student_id,reason,outcome,visit_time')
                     .order('visit_time', { ascending: false })
                     .limit(10)
             ]);
 
             const nameById = new Map(this.classStudents.map(s => [s.id, s.full_name || s.name]));
+            const classStudentIds = new Set(this.classStudents.map(s => s.id));
 
             if (attRes.data) {
                 attendanceActivities = attRes.data.map(r => ({
@@ -689,12 +688,13 @@ class TeacherDashboard {
             }
 
             if (clinRes.data) {
-                clinicActivities = clinRes.data.map(r => ({
+                clinicActivities = clinRes.data
+                    .filter(r => classStudentIds.has(r.student_id)) // Only show students from this class
+                    .map(r => ({
                     id: r.id,
                     type: 'clinic',
                     studentId: r.student_id,
                     timestamp: new Date(r.visit_time),
-                    status: r.status,
                     reason: r.reason,
                     outcome: r.outcome,
                     studentName: nameById.get(r.student_id) || 'Student'
@@ -837,7 +837,8 @@ class TeacherDashboard {
                 table: 'clinic_visits'
             }, (payload) => {
                 const record = payload.new;
-                if (record && record.class_id == this.currentUser.classId) {
+                // Check if this clinic visit is for a student in this class
+                if (record && this.classStudents && this.classStudents.some(s => s.id === record.student_id)) {
                     console.log('Realtime clinic update received:', record);
                     this.refreshDashboardStats();
                     this.loadRecentActivity();

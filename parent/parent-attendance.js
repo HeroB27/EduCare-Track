@@ -6,6 +6,8 @@ class ParentAttendance {
         this.filteredRecords = [];
         this.currentTab = 'records';
         this.attendanceChart = null;
+        this.currentCalendarDate = new Date();
+        this.calendarRecords = [];
         this.init();
     }
 

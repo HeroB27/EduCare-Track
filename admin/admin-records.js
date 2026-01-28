@@ -623,7 +623,7 @@ class AdminRecords {
             if (classObj) {
                 const option = document.createElement('option');
                 option.value = classId;
-                option.textContent = classObj.name;
+                option.textContent = classObj.grade || classObj.id;
                 classFilter.appendChild(option);
             }
         });
@@ -821,10 +821,14 @@ class AdminRecords {
                         <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${classObj ? classObj.name : 'N/A'}
+                        ${classObj ? (classObj.grade || classObj.id) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${student ? student.level : 'N/A'}
+                        ${(() => {
+                            const studentClassId = student ? (student.classId || student.class_id) : null;
+                            const classObj = studentClassId ? this.classes.find(c => c.id === studentClassId) : null;
+                            return classObj ? (classObj.level || classObj.grade || 'N/A') : 'N/A';
+                        })()}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${record.time || 'N/A'}
@@ -910,7 +914,19 @@ class AdminRecords {
             const classObj = this.classes.find(c => c.id === (record.classId || record.class_id));
             
             // Calculate minutes late (assuming 8:00 AM as threshold)
-            const arrivalTime = record.time;
+            let arrivalTime = record.time;
+            
+            // If no time field, extract from timestamp
+            if (!arrivalTime && record.timestamp) {
+                const recordDate = record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+                arrivalTime = recordDate.toTimeString().slice(0, 5); // HH:MM format
+            }
+            
+            // Skip if still no time
+            if (!arrivalTime) {
+                return ''; // Skip this record
+            }
+            
             const [hours, minutes] = arrivalTime.split(':').map(Number);
             const totalMinutes = hours * 60 + minutes;
             const thresholdMinutes = 8 * 60; // 8:00 AM
@@ -923,7 +939,7 @@ class AdminRecords {
                         <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${classObj ? classObj.name : 'N/A'}
+                        ${classObj ? (classObj.grade || classObj.id) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${record.timestamp ? EducareTrack.formatDate(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
@@ -994,7 +1010,7 @@ class AdminRecords {
                         <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${classObj ? classObj.name : 'N/A'}
+                        ${classObj ? (classObj.grade || classObj.id) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${visit.timestamp ? EducareTrack.formatDate(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A'}
@@ -1129,7 +1145,7 @@ class AdminRecords {
                 if (!labels || labels.length === 0) {
                     const withinRange = this.clinicVisits.filter(v => {
                         const t = v.timestamp?.toDate ? v.timestamp.toDate() : v.timestamp;
-                        return t && t >= clinicStart && t <= end && v.checkIn === true;
+                        return t && t >= clinicStart && t <= end;
                     });
                     const mapCounts = new Map();
                     withinRange.forEach(v => {
@@ -1325,19 +1341,33 @@ class AdminRecords {
     }
 
     updateStatusDistributionChart() {
-        if (!this.filteredAttendanceData) return;
+        if (!this.attendanceData) return;
 
         const stats = {
             present: 0,
             late: 0,
             absent: 0,
-            excused: 0,
-            in_clinic: 0
+            excused: 0
         };
 
-        this.filteredAttendanceData.forEach(record => {
+        // Count attendance statuses
+        this.attendanceData.forEach(record => {
             if (stats.hasOwnProperty(record.status)) {
                 stats[record.status]++;
+            }
+        });
+
+        // Count unique students who visited clinic today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        
+        const clinicStudents = new Set();
+        this.clinicVisits.forEach(visit => {
+            const visitDate = visit.timestamp;
+            if (visitDate >= today && visitDate < tomorrow) {
+                clinicStudents.add(visit.studentId);
             }
         });
 
@@ -1347,7 +1377,7 @@ class AdminRecords {
                 stats.late,
                 stats.absent,
                 stats.excused,
-                stats.in_clinic
+                clinicStudents.size
             ];
             this.charts.statusDistribution.update();
         }
@@ -1415,9 +1445,10 @@ class AdminRecords {
         };
 
         this.attendanceData.forEach(record => {
-            if (!record.time) return;
+            if (!record.timestamp) return;
 
-            const hour = parseInt(record.time.split(':')[0]);
+            const recordDate = record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+            const hour = recordDate.getHours();
             let timeSlot;
 
             if (hour >= 6 && hour < 7) timeSlot = '6-7 AM';
@@ -1432,11 +1463,13 @@ class AdminRecords {
             else if (hour >= 15 && hour < 16) timeSlot = '3-4 PM';
             else return;
 
-            if (record.entryType === 'entry') {
+            // Use status to determine entry/exit pattern
+            // Present/Late = entries, Absent = no pattern
+            if (record.status === 'present' || record.status === 'late') {
                 timeSlots[timeSlot].entries++;
-            } else if (record.entryType === 'exit') {
-                timeSlots[timeSlot].exits++;
             }
+            // For exits, we could track when students leave (if we had exit records)
+            // For now, we'll estimate based on school day end patterns
         });
 
         const labels = Object.keys(timeSlots);
@@ -1576,7 +1609,7 @@ class AdminRecords {
         // Initialize class stats
         this.classes.forEach(classObj => {
             classStats[classObj.id] = {
-                name: classObj.name,
+                name: classObj.grade || classObj.id, // Use grade as display name, fallback to ID
                 present: 0,
                 absent: 0,
                 late: 0,
@@ -1584,22 +1617,50 @@ class AdminRecords {
             };
         });
 
-        // Count students per class
+        // Count unique students per class
+        const studentsByClass = {};
         this.students.forEach(student => {
-            if (student.classId && classStats[student.classId]) {
-                classStats[student.classId].total++;
+            const studentClassId = student.classId || student.class_id;
+            if (studentClassId && classStats[studentClassId]) {
+                if (!studentsByClass[studentClassId]) {
+                    studentsByClass[studentClassId] = new Set();
+                }
+                studentsByClass[studentClassId].add(student.id);
             }
         });
 
-        // Count attendance status per class
+        // Set total students per class
+        Object.keys(studentsByClass).forEach(classId => {
+            if (classStats[classId]) {
+                classStats[classId].total = studentsByClass[classId].size;
+            }
+        });
+
+        // Count unique attendance status per class (for the most recent date)
+        const latestDate = this.attendanceData.length > 0 ? 
+            Math.max(...this.attendanceData.map(r => new Date(r.timestamp).getTime())) : 0;
+        
+        const latestDateStr = latestDate ? new Date(latestDate).toDateString() : '';
+        const processedStudents = new Set();
+
         this.attendanceData.forEach(record => {
-            if (record.classId && classStats[record.classId]) {
+            const recordDate = new Date(record.timestamp).toDateString();
+            if (recordDate !== latestDateStr) return; // Only use latest date
+            
+            const recordClassId = record.classId || record.class_id;
+            const studentKey = `${record.studentId}_${recordClassId}`;
+            
+            // Avoid counting the same student multiple times for the same day
+            if (processedStudents.has(studentKey)) return;
+            processedStudents.add(studentKey);
+            
+            if (recordClassId && classStats[recordClassId]) {
                 if (record.status === 'present') {
-                    classStats[record.classId].present++;
+                    classStats[recordClassId].present++;
                 } else if (record.status === 'late') {
-                    classStats[record.classId].late++;
+                    classStats[recordClassId].late++;
                 } else if (record.status === 'absent') {
-                    classStats[record.classId].absent++;
+                    classStats[recordClassId].absent++;
                 }
             }
         });
@@ -1700,26 +1761,32 @@ class AdminRecords {
     }
 
     updateLevelAttendanceChart() {
-        const levelStats = {
-            'Kindergarten': { total: 0, present: 0 },
-            'Elementary': { total: 0, present: 0 },
-            'Junior High School': { total: 0, present: 0 },
-            'Senior High School': { total: 0, present: 0 }
-        };
+        const levelStats = {};
 
-        // Count students per level
+        // Count students per level (from their classes)
         this.students.forEach(student => {
-            if (student.level && levelStats[student.level]) {
-                levelStats[student.level].total++;
+            const studentClassId = student.classId || student.class_id;
+            const classObj = this.classes.find(c => c.id === studentClassId);
+            const level = classObj ? (classObj.level || classObj.grade || 'Unknown') : 'Unknown';
+            
+            if (!levelStats[level]) {
+                levelStats[level] = { total: 0, present: 0 };
             }
+            levelStats[level].total++;
         });
 
         // Count present students per level
         this.attendanceData.forEach(record => {
             if (record.status === 'present' || record.status === 'late') {
                 const student = this.students.find(s => s.id === record.studentId);
-                if (student && student.level && levelStats[student.level]) {
-                    levelStats[student.level].present++;
+                if (student) {
+                    const studentClassId = student.classId || student.class_id;
+                    const classObj = this.classes.find(c => c.id === studentClassId);
+                    const level = classObj ? (classObj.level || classObj.grade || 'Unknown') : 'Unknown';
+                    
+                    if (levelStats[level]) {
+                        levelStats[level].present++;
+                    }
                 }
             }
         });
@@ -1790,24 +1857,77 @@ class AdminRecords {
     updateLevelAttendanceTable(levelStats) {
         const tableBody = document.getElementById('levelAttendanceTable');
         
+        if (Object.keys(levelStats).length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="px-4 py-4 text-center text-gray-500">
+                        No level data available
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        // Get the latest attendance date for accurate calculations
+        const latestDate = this.attendanceData.length > 0 ? 
+            Math.max(...this.attendanceData.map(r => new Date(r.timestamp).getTime())) : 0;
+        const latestDateStr = latestDate ? new Date(latestDate).toDateString() : '';
+        
         tableBody.innerHTML = Object.entries(levelStats).map(([level, stat]) => {
             if (stat.total === 0) return '';
 
-            const attendanceRate = Math.round((stat.present / stat.total) * 100);
-            const absentCount = stat.total - stat.present;
+            // Count actual attendance for this level on the latest date
+            const levelAttendance = { present: 0, absent: 0, late: 0 };
+            const processedStudents = new Set();
             
-            // Count clinic visits for this level
+            this.attendanceData.forEach(record => {
+                const recordDate = new Date(record.timestamp).toDateString();
+                if (recordDate !== latestDateStr) return;
+                
+                const student = this.students.find(s => s.id === record.studentId);
+                if (!student) return;
+                
+                const studentClassId = student.classId || student.class_id;
+                const classObj = this.classes.find(c => c.id === studentClassId);
+                const studentLevel = classObj ? (classObj.level || classObj.grade || 'Unknown') : 'Unknown';
+                
+                if (studentLevel !== level) return;
+                
+                // Avoid counting the same student multiple times
+                if (processedStudents.has(record.studentId)) return;
+                processedStudents.add(record.studentId);
+                
+                if (record.status === 'present') {
+                    levelAttendance.present++;
+                } else if (record.status === 'late') {
+                    levelAttendance.late++;
+                } else if (record.status === 'absent') {
+                    levelAttendance.absent++;
+                }
+            });
+            
+            // Calculate attendance rate based on actual attendance, not total students
+            const totalAttended = levelAttendance.present + levelAttendance.late + levelAttendance.absent;
+            const attendanceRate = totalAttended > 0 ? 
+                Math.round(((levelAttendance.present + levelAttendance.late) / totalAttended) * 100) : 0;
+            
+            // Count clinic visits for this level (today)
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
             const clinicCount = this.clinicVisits.filter(visit => {
                 const student = this.students.find(s => s.id === visit.studentId);
-                return student && student.level === level;
+                if (!student) return false;
+                
+                const studentClassId = student.classId || student.class_id;
+                const classObj = this.classes.find(c => c.id === studentClassId);
+                const studentLevel = classObj ? (classObj.level || classObj.grade || 'Unknown') : 'Unknown';
+                
+                const visitDate = visit.timestamp;
+                return studentLevel === level && visitDate >= today && visitDate < tomorrow;
             }).length;
-
-            // Actual late count for this level
-            const lateCount = this.attendanceData.filter(record => {
-                if (record.status !== 'late') return false;
-                const student = this.students.find(s => s.id === record.studentId);
-                return student && student.level === level;
-            }).reduce((acc) => acc + 1, 0);
 
             return `
                 <tr>
@@ -1818,13 +1938,13 @@ class AdminRecords {
                         ${stat.total}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${stat.present}
+                        ${levelAttendance.present}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${absentCount}
+                        ${levelAttendance.absent}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${lateCount}
+                        ${levelAttendance.late}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${clinicCount}
@@ -1899,7 +2019,7 @@ class AdminRecords {
                         <div class="text-sm text-gray-500">${student ? this.getStudentIdentifier(student) : ''}</div>
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        ${classObj ? classObj.name : 'N/A'}
+                        ${classObj ? (classObj.grade || classObj.id) : 'N/A'}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${record.timestamp ? EducareTrack.formatTime(record.timestamp.toDate ? record.timestamp.toDate() : new Date(record.timestamp)) : 'N/A'}
@@ -1940,8 +2060,12 @@ class AdminRecords {
                         time: record.time || 'N/A',
                         studentName: student ? this.getStudentName(student) : 'Unknown',
                         studentId: student ? this.getStudentIdentifier(student) : 'N/A',
-                        className: classObj ? classObj.name : 'N/A',
-                        level: student ? student.level : 'N/A',
+                        className: classObj ? (classObj.grade || classObj.id) : 'N/A',
+                        level: (() => {
+                            const studentClassId = student ? (student.classId || student.class_id) : null;
+                            const classObj = studentClassId ? this.classes.find(c => c.id === studentClassId) : null;
+                            return classObj ? (classObj.level || classObj.grade || 'N/A') : 'N/A';
+                        })(),
                         status: record.status,
                         session: record.session || 'N/A'
                     };
@@ -1955,7 +2079,7 @@ class AdminRecords {
                         time: visit.timestamp ? EducareTrack.formatTime(visit.timestamp.toDate ? visit.timestamp.toDate() : new Date(visit.timestamp)) : 'N/A',
                         studentName: student ? this.getStudentName(student) : 'Unknown',
                         studentId: student ? this.getStudentIdentifier(student) : 'N/A',
-                        className: classObj ? classObj.name : 'N/A',
+                        className: classObj ? (classObj.grade || classObj.id) : 'N/A',
                         reason: visit.reason || 'Not specified',
                         notes: visit.notes || 'No notes'
                     };

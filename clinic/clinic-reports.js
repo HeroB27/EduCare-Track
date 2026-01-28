@@ -5,6 +5,7 @@ class ClinicReports {
         this.visits = [];
         this.charts = {};
         this.currentReport = null;
+        this.studentsMap = new Map(); // Initialize students map
         
         this.init();
     }

@@ -56,13 +56,13 @@ class ClinicVisits {
                         .order('visit_time', { ascending: false }),
                     window.supabaseClient
                         .from('students')
-                        .select('id, name')
+                        .select('id, full_name')
                 ]);
 
                 if (visitsResult.error) throw visitsResult.error;
                 if (studentsResult.error) throw studentsResult.error;
 
-                const studentMap = new Map(studentsResult.data.map(s => [s.id, s.name]));
+                const studentMap = new Map(studentsResult.data.map(s => [s.id, s.full_name]));
 
                 this.visits = (visitsResult.data || []).map(v => ({
                     id: v.id,

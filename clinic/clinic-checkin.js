@@ -714,24 +714,34 @@ class ClinicCheckin {
             if (window.USE_SUPABASE && window.supabaseClient) {
                 const { data: student, error: sErr } = await window.supabaseClient
                     .from('students')
-                    .select(`
-                        id,
-                        full_name,
-                        class_id,
-                        parent_students!left(
-                            parent_id
-                        ),
-                        classes!left(
-                            adviser_id
-                        )
-                    `)
+                    .select('id,full_name,class_id')
                     .eq('id', studentId)
                     .single();
                 if (sErr || !student) throw new Error('Student not found');
                 
-                // Extract parent and teacher IDs
-                const parentId = student.parent_students?.[0]?.parent_id || null;
-                const teacherId = student.classes?.adviser_id || null;
+                // Get parent information separately
+                let parentId = null;
+                const { data: parentRelations } = await window.supabaseClient
+                    .from('parent_students')
+                    .select('parent_id')
+                    .eq('student_id', studentId)
+                    .limit(1);
+                if (parentRelations && parentRelations.length > 0) {
+                    parentId = parentRelations[0].parent_id;
+                }
+                
+                // Get teacher information separately
+                let teacherId = null;
+                if (student.class_id) {
+                    const { data: classData } = await window.supabaseClient
+                        .from('classes')
+                        .select('adviser_id')
+                        .eq('id', student.class_id)
+                        .single();
+                    if (classData) {
+                        teacherId = classData.adviser_id;
+                    }
+                }
                 const timestamp = new Date();
                 const timeStr = timestamp.toTimeString().split(' ')[0].substring(0, 5);
                 const insertData = {
@@ -828,14 +838,24 @@ class ClinicCheckin {
             const classId = student.classId || student.class_id;
             if (classId) {
                 if (window.USE_SUPABASE && window.supabaseClient) {
-                    const { data: homeroom, error: hrErr } = await window.supabaseClient
-                        .from('teachers')
-                        .select('id')
-                        .eq('class_id', classId)
-                        .eq('is_homeroom', true)
-                        .limit(1);
-                    if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
-                        teacherId = homeroom[0].id;
+                    // Get the adviser_id from classes table, then check if that teacher is homeroom
+                    const { data: classData, error: classErr } = await window.supabaseClient
+                        .from('classes')
+                        .select('adviser_id')
+                        .eq('id', classId)
+                        .single();
+                    
+                    if (!classErr && classData && classData.adviser_id) {
+                        // Verify this teacher is marked as homeroom
+                        const { data: homeroom, error: hrErr } = await window.supabaseClient
+                            .from('teachers')
+                            .select('id')
+                            .eq('id', classData.adviser_id)
+                            .eq('is_homeroom', true)
+                            .limit(1);
+                        if (!hrErr && Array.isArray(homeroom) && homeroom.length > 0) {
+                            teacherId = homeroom[0].id;
+                        }
                     }
                 } else {
                     const db = window.EducareTrack ? window.EducareTrack.db : null;
