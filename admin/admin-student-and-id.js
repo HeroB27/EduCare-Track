@@ -760,36 +760,52 @@ class StudentAndIDManagement {
         const backContainer = document.getElementById('idCardBack');
         
         const photoUrl = student.photo_url || student.photoUrl || '';
-        const grade = this.getClassById(student.class_id || student.classId)?.grade || '';
-        const section = this.getClassById(student.class_id || student.classId)?.name || '';
+        const cls = this.getClassById(student.class_id || student.classId);
+        const className = cls?.name || cls?.grade || 'No Class';
+        
         const parent = student.parentInfo || {};
+        const parentName = parent.full_name || parent.name || 'N/A';
+        const parentPhone = parent.phone || 'N/A';
         const studentAddress = student.address || parent.address || 'Address not available';
         
         // --- FRONT ---
         frontContainer.innerHTML = `
-            <div class="w-full h-full bg-white relative overflow-hidden flex flex-col items-center text-center border border-gray-200">
-                <!-- School Details -->
-                <div class="mt-4 z-10">
-                    <h1 class="font-bold text-sm tracking-wide text-blue-900 uppercase">Educare Colleges Inc</h1>
-                    <p class="text-[9px] text-gray-600">Purok 4 Irisan Baguio City</p>
+            <div class="h-full w-full flex flex-col p-4 relative z-10 font-sans select-none bg-white overflow-hidden">
+                <!-- Background Decoration -->
+                <div class="absolute top-0 left-0 w-full h-24 bg-gradient-to-br from-blue-700 to-blue-900 -z-10" style="border-bottom-left-radius: 50% 20px; border-bottom-right-radius: 50% 20px;"></div>
+                <div class="absolute top-2 right-2 opacity-10 text-white">
+                    <i class="fas fa-university text-4xl"></i>
+                </div>
+
+                <!-- School Header -->
+                <div class="text-center text-white mb-4 mt-1">
+                    <h2 class="text-[0.8rem] font-bold uppercase tracking-wider leading-tight text-shadow-sm">Educare Colleges Inc</h2>
+                    <p class="text-[0.55rem] opacity-90 font-light tracking-wide">Purok 4 Irisan Baguio City</p>
                 </div>
                 
                 <!-- Photo -->
-                <div class="relative z-10 mt-3 w-24 h-24 rounded-full border-2 border-blue-500 shadow-sm overflow-hidden bg-gray-100">
-                    ${photoUrl ? 
-                        `<img src="${photoUrl}" class="w-full h-full object-cover">` : 
-                        `<div class="w-full h-full flex items-center justify-center text-gray-400"><i class="fas fa-user text-3xl"></i></div>`
-                    }
+                <div class="mx-auto w-24 h-24 rounded-full border-[3px] border-white shadow-md overflow-hidden mb-3 bg-gray-100 relative group-hover:scale-105 transition-transform duration-300">
+                    ${photoUrl 
+                        ? `<img src="${photoUrl}" class="w-full h-full object-cover" alt="Student Photo">` 
+                        : '<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-user text-3xl"></i></div>'}
                 </div>
                 
                 <!-- Student Info -->
-                <div class="relative z-10 mt-2 w-full px-2 flex-1 flex flex-col items-center">
-                    <h2 class="font-bold text-base text-gray-900 uppercase leading-tight line-clamp-2">${student.full_name || 'STUDENT NAME'}</h2>
-                    <p class="text-[10px] text-gray-500 mt-1 px-2 line-clamp-2 leading-tight">${studentAddress}</p>
-                    <div class="mt-auto mb-4 bg-blue-600 text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                        ${grade} - ${section}
+                <div class="text-center flex-grow flex flex-col items-center w-full">
+                    <h1 class="text-lg font-bold text-gray-900 leading-tight mb-1 line-clamp-2 w-full px-2">${student.full_name || 'STUDENT NAME'}</h1>
+                    
+                    <div class="inline-block px-3 py-0.5 bg-blue-50 text-blue-800 rounded-full border border-blue-100 text-[0.65rem] font-bold mb-2 uppercase tracking-wide shadow-sm">
+                        ${className}
+                    </div>
+                    
+                    <div class="mt-auto mb-1 w-full px-4">
+                         <p class="text-[0.6rem] text-gray-500 leading-tight line-clamp-2">${studentAddress}</p>
                     </div>
                 </div>
+                
+                <!-- Footer Stripe -->
+                <div class="absolute bottom-0 left-0 w-full h-2.5 bg-yellow-400"></div>
+                <div class="absolute bottom-2.5 left-0 w-full h-1 bg-yellow-300 opacity-50"></div>
             </div>
         `;
 
@@ -800,36 +816,26 @@ class StudentAndIDManagement {
         const qr = qrcode(typeNumber, errorCorrectionLevel);
         qr.addData(student.id);
         qr.make();
-        const qrSrc = qr.createImgTag(3).match(/src="([^"]*)"/)[1];
+        const qrImg = qr.createImgTag(3).match(/src="([^"]*)"/)[1];
 
         backContainer.innerHTML = `
-            <div class="w-full h-full bg-white relative overflow-hidden flex flex-col items-center text-center border border-gray-200 p-4">
-                <div class="flex-1 flex flex-col items-center justify-center w-full space-y-2">
-                    <!-- QR Code -->
-                    <div class="bg-white p-1 border border-gray-200 rounded">
-                        <img src="${qrSrc}" class="w-24 h-24" alt="QR Code">
+            <div class="h-full w-full flex flex-col p-5 relative text-center bg-white select-none overflow-hidden">
+                 <div class="flex-grow flex flex-col items-center justify-center space-y-3">
+                    <div class="qr-container bg-white p-1.5 rounded-lg shadow-sm border border-gray-200">
+                        <img src="${qrImg}" class="w-24 h-24 block" alt="QR Code">
                     </div>
-                    
-                    <!-- Student ID -->
-                    <div class="font-mono font-bold text-lg text-gray-800 tracking-widest">${student.id}</div>
-                    
-                    <!-- Guardian Info -->
-                    <div class="w-full text-left mt-2 space-y-1">
-                        <div class="text-[10px] border-b border-gray-100 pb-1">
-                            <span class="text-gray-500 block text-[8px] uppercase">Guardian</span>
-                            <span class="font-semibold text-gray-800 truncate block">${parent.full_name || parent.name || 'N/A'}</span>
-                        </div>
-                        <div class="text-[10px]">
-                            <span class="text-gray-500 block text-[8px] uppercase">Contact</span>
-                            <span class="font-semibold text-gray-800 font-mono">${parent.phone || 'N/A'}</span>
-                        </div>
-                    </div>
+                    <div class="text-[0.65rem] font-mono text-gray-400 tracking-[0.2em] uppercase">${student.id}</div>
                 </div>
-                
-                <!-- Lost & Found Note -->
-                <div class="mt-auto pt-2 w-full border-t border-gray-100">
-                    <p class="text-[8px] text-gray-500 italic leading-tight">
-                        If this ID is lost, please return to Educare Colleges Inc, Purok 4 Irisan Baguio City.
+
+                <div class="border-t border-gray-100 pt-3 mb-2">
+                    <div class="text-[0.6rem] text-gray-400 uppercase tracking-widest mb-1 font-semibold">In case of emergency</div>
+                    <p class="font-bold text-gray-800 text-sm leading-tight">${parentName}</p>
+                    <p class="text-xs text-gray-600 font-medium">${parentPhone}</p>
+                </div>
+
+                <div class="bg-gray-50 rounded-md p-2 border border-gray-100 mt-auto">
+                    <p class="text-[0.55rem] text-gray-500 italic leading-tight">
+                        This card is non-transferable. If found, please return to Educare Colleges Inc. or call the number above.
                     </p>
                 </div>
             </div>

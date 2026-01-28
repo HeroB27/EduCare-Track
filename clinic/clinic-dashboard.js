@@ -59,7 +59,7 @@ class ClinicDashboard {
                         .select('id,full_name,class_id,current_status')
                         .eq('current_status', 'in_clinic'),
                     window.supabaseClient.from('clinic_visits')
-                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome, students(full_name, class_id)')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome,urgency, students(full_name, class_id)')
                         .is('outcome', null) // Fetch pending referrals
                         .gte('visit_time', today.toISOString()), 
                     this.getClinicStats()
@@ -646,7 +646,11 @@ class ClinicDashboard {
 
     async admitPatient(visitId, studentId) {
         try {
-            if (!confirm('Admit this student to the clinic?')) return;
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Admit this student to the clinic?', 'Confirm Admission', 'Admit', 'Cancel')
+                : confirm('Admit this student to the clinic?');
+            
+            if (!ok) return;
 
             // Update visit status
             const { error: visitError } = await window.supabaseClient
@@ -701,7 +705,10 @@ class ClinicDashboard {
     }
 
     async quickCheckout(studentId) {
-        const ok = confirm('Are you sure you want to check out this student?');
+        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+            ? await window.EducareTrack.confirmAction('Are you sure you want to check out this student?', 'Confirm Checkout', 'Check-out', 'Cancel')
+            : confirm('Are you sure you want to check out this student?');
+        
         if (!ok) return;
 
         try {

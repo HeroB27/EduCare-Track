@@ -47,12 +47,30 @@ class ClinicVisits {
 
     async loadVisits() {
         try {
+            // Show loading state
+            const tbody = document.getElementById('visitsTableBody');
+            if (tbody) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-6 py-10 text-center text-gray-500">
+                            <div class="flex justify-center items-center">
+                                <svg class="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span class="ml-2 text-lg">Loading visits...</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
             if (window.USE_SUPABASE && window.supabaseClient) {
                 // Fetch visits and students in parallel
                 const [visitsResult, studentsResult] = await Promise.all([
                     window.supabaseClient
                         .from('clinic_visits')
-                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome,medical_findings,treatment_given,additional_notes,recommendations')
                         .order('visit_time', { ascending: false }),
                     window.supabaseClient
                         .from('students')
@@ -74,7 +92,10 @@ class ClinicVisits {
                     timestamp: v.visit_time ? new Date(v.visit_time) : new Date(),
                     notes: v.notes || '',
                     staffName: v.treated_by || '',
-                    recommendations: v.outcome || ''
+                    recommendations: v.recommendations || v.outcome || '',
+                    medicalFindings: v.medical_findings || '',
+                    treatmentGiven: v.treatment_given || '',
+                    additionalNotes: v.additional_notes || v.notes || ''
                 }));
                 this.applyFilters();
             } else {
@@ -307,68 +328,99 @@ class ClinicVisits {
             overlay.id = 'clinicVisitDetailsModal';
             overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4';
             const container = document.createElement('div');
-            container.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full';
+            container.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full overflow-hidden';
             const header = document.createElement('div');
-            header.className = 'px-6 py-4 border-b';
+            header.className = 'px-6 py-4 border-b flex justify-between items-center bg-gray-50';
             const titleEl = document.createElement('h3');
-            titleEl.className = 'text-lg font-semibold text-gray-800';
-            titleEl.textContent = 'Visit Details';
+            titleEl.className = 'text-lg font-bold text-gray-800 flex items-center';
+            titleEl.innerHTML = '<i class="fas fa-clipboard-list text-blue-600 mr-2"></i> Visit Details';
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'text-gray-400 hover:text-gray-600 focus:outline-none';
+            closeBtn.innerHTML = '<i class="fas fa-times text-xl"></i>';
+            closeBtn.onclick = () => overlay.classList.add('hidden');
             header.appendChild(titleEl);
+            header.appendChild(closeBtn);
+            
             const body = document.createElement('div');
             body.id = 'clinicVisitDetailsBody';
-            body.className = 'px-6 py-4 text-sm text-gray-700';
-            const footer = document.createElement('div');
-            footer.className = 'px-6 py-4 border-t flex justify-end';
-            const okBtn = document.createElement('button');
-            okBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700';
-            okBtn.textContent = 'Close';
-            okBtn.onclick = () => overlay.classList.add('hidden');
-            footer.appendChild(okBtn);
+            body.className = 'px-6 py-4 text-sm text-gray-700 max-h-[70vh] overflow-y-auto';
+            
             container.appendChild(header);
             container.appendChild(body);
-            container.appendChild(footer);
             overlay.appendChild(container);
             document.body.appendChild(overlay);
         }
         const body = document.getElementById('clinicVisitDetailsBody');
         body.innerHTML = `
-            <div class="space-y-3">
-                <div class="grid grid-cols-2 gap-4">
-                    <div><span class="font-semibold text-gray-600">Student:</span> <div class="font-medium">${visit.studentName}</div></div>
-                    <div><span class="font-semibold text-gray-600">Date:</span> <div class="font-medium">${date}</div></div>
-                    <div><span class="font-semibold text-gray-600">Time:</span> <div class="font-medium">${time}</div></div>
-                    <div><span class="font-semibold text-gray-600">Type:</span> <div class="font-medium">${visit.checkIn ? 'Check-in' : 'Check-out'}</div></div>
-                    <div><span class="font-semibold text-gray-600">Staff:</span> <div class="font-medium">${visit.staffName || 'N/A'}</div></div>
-                    <div><span class="font-semibold text-gray-600">Status:</span> <div class="font-medium">${visit.status || 'N/A'}</div></div>
+            <div class="space-y-4">
+                <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                    <div class="grid grid-cols-2 gap-y-3 gap-x-6">
+                        <div class="flex flex-col">
+                            <span class="text-xs font-bold text-blue-500 uppercase tracking-wider">Student</span>
+                            <span class="font-bold text-gray-900 text-lg">${visit.studentName}</span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-bold text-blue-500 uppercase tracking-wider">Date & Time</span>
+                            <span class="font-medium text-gray-900">${date} at ${time}</span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-bold text-blue-500 uppercase tracking-wider">Type</span>
+                            <span class="font-medium ${visit.checkIn ? 'text-blue-600' : 'text-green-600'} flex items-center">
+                                <i class="fas ${visit.checkIn ? 'fa-sign-in-alt' : 'fa-sign-out-alt'} mr-1"></i>
+                                ${visit.checkIn ? 'Check-in' : 'Check-out'}
+                            </span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-bold text-blue-500 uppercase tracking-wider">Attending Staff</span>
+                            <span class="font-medium text-gray-900">${visit.staffName || 'N/A'}</span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-bold text-blue-500 uppercase tracking-wider">Urgency</span>
+                            <span class="font-medium ${visit.urgency === 'urgent' ? 'text-red-600 font-bold' : 'text-gray-900'} capitalize">
+                                ${visit.urgency === 'urgent' ? '<i class="fas fa-exclamation-circle mr-1"></i>' : ''}
+                                ${visit.urgency}
+                            </span>
+                        </div>
+                    </div>
                 </div>
-                <hr class="my-2">
+
                 <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Reason:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.reason}</div>
+                    <h4 class="flex items-center text-xs font-bold text-gray-500 uppercase mb-1">
+                        Reason for Visit
+                    </h4>
+                    <div class="bg-gray-50 p-3 rounded-md border border-gray-200 text-gray-800 font-medium">${visit.reason}</div>
                 </div>
+
                 ${visit.medicalFindings ? `
                 <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Medical Findings:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.medicalFindings}</div>
+                    <h4 class="flex items-center text-xs font-bold text-green-600 uppercase mb-1">
+                        <i class="fas fa-stethoscope mr-1"></i> Medical Findings
+                    </h4>
+                    <div class="bg-green-50 p-3 rounded-md border border-green-200 text-green-900">${visit.medicalFindings}</div>
                 </div>` : ''}
+
                 ${visit.treatmentGiven ? `
                 <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Treatment Given:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.treatmentGiven}</div>
+                    <h4 class="flex items-center text-xs font-bold text-purple-600 uppercase mb-1">
+                        <i class="fas fa-pills mr-1"></i> Treatment Given
+                    </h4>
+                    <div class="bg-purple-50 p-3 rounded-md border border-purple-200 text-purple-900">${visit.treatmentGiven}</div>
                 </div>` : ''}
+
                 ${visit.recommendations ? `
                 <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Recommendations:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.recommendations}</div>
+                    <h4 class="flex items-center text-xs font-bold text-orange-600 uppercase mb-1">
+                        <i class="fas fa-clipboard-list mr-1"></i> Recommendations
+                    </h4>
+                    <div class="bg-orange-50 p-3 rounded-md border border-orange-200 text-orange-900">${visit.recommendations}</div>
                 </div>` : ''}
-                <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Notes:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.notes || 'None'}</div>
-                </div>
+
                 ${visit.additionalNotes ? `
                 <div>
-                    <span class="font-semibold text-gray-600 block mb-1">Additional Notes:</span>
-                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.additionalNotes}</div>
+                    <h4 class="flex items-center text-xs font-bold text-gray-500 uppercase mb-1">
+                        <i class="fas fa-sticky-note mr-1"></i> Additional Notes
+                    </h4>
+                    <div class="bg-gray-50 p-3 rounded-md border border-gray-200 text-gray-600 text-sm italic">${visit.additionalNotes}</div>
                 </div>` : ''}
             </div>`;
         overlay.classList.remove('hidden');
@@ -417,14 +469,26 @@ class ClinicVisits {
             }
             const body = document.getElementById('clinicVisitEditBody');
             body.innerHTML = `
-                <div class="space-y-4">
+                <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
                         <input id="clinicVisitEditReason" type="text" class="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" value="${visit.reason || ''}">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                        <textarea id="clinicVisitEditNotes" class="w-full border rounded px-3 py-2 h-24 focus:outline-none focus:ring-2 focus:ring-blue-500">${visit.notes || ''}</textarea>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Medical Findings</label>
+                        <textarea id="clinicVisitEditFindings" class="w-full border rounded px-3 py-2 h-20 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Observations, vitals...">${visit.medicalFindings || ''}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Treatment Given</label>
+                        <textarea id="clinicVisitEditTreatment" class="w-full border rounded px-3 py-2 h-20 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Medication, first aid...">${visit.treatmentGiven || ''}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Recommendations</label>
+                        <textarea id="clinicVisitEditRecommendations" class="w-full border rounded px-3 py-2 h-20 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Rest, send home, return to class...">${visit.recommendations || ''}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>
+                        <textarea id="clinicVisitEditAdditionalNotes" class="w-full border rounded px-3 py-2 h-20 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Internal notes...">${visit.additionalNotes || ''}</textarea>
                     </div>
                 </div>`;
             const saveBtnEl = document.getElementById('clinicVisitEditSave');
@@ -432,18 +496,28 @@ class ClinicVisits {
             cancelBtnEl.onclick = () => overlay.classList.add('hidden');
             saveBtnEl.onclick = async () => {
                 const newReason = document.getElementById('clinicVisitEditReason').value.trim();
-                const newNotes = document.getElementById('clinicVisitEditNotes').value.trim();
+                const newFindings = document.getElementById('clinicVisitEditFindings').value.trim();
+                const newTreatment = document.getElementById('clinicVisitEditTreatment').value.trim();
+                const newRecommendations = document.getElementById('clinicVisitEditRecommendations').value.trim();
+                const newAdditionalNotes = document.getElementById('clinicVisitEditAdditionalNotes').value.trim();
+
                 if (!newReason) {
                     this.showError('Reason is required');
                     return;
                 }
                 try {
+                    saveBtnEl.disabled = true;
+                    saveBtnEl.textContent = 'Saving...';
+
                     if (window.USE_SUPABASE && window.supabaseClient) {
                         const { error } = await window.supabaseClient
                             .from('clinic_visits')
                             .update({
                                 reason: newReason,
-                                notes: newNotes,
+                                medical_findings: newFindings,
+                                treatment_given: newTreatment,
+                                recommendations: newRecommendations,
+                                additional_notes: newAdditionalNotes,
                                 updated_at: new Date().toISOString(),
                                 updated_by: this.currentUser.id
                             })
@@ -454,7 +528,10 @@ class ClinicVisits {
                         if (db) {
                             await db.collection('clinicVisits').doc(visitId).update({
                                 reason: newReason,
-                                notes: newNotes,
+                                medicalFindings: newFindings,
+                                treatmentGiven: newTreatment,
+                                recommendations: newRecommendations,
+                                additionalNotes: newAdditionalNotes,
                                 updatedAt: new Date().toISOString(),
                                 updatedBy: this.currentUser.id,
                                 updatedByName: this.currentUser.name
@@ -463,14 +540,23 @@ class ClinicVisits {
                             throw new Error('Database not available');
                         }
                     }
+                    
+                    // Update local data
                     visit.reason = newReason;
-                    visit.notes = newNotes;
+                    visit.medicalFindings = newFindings;
+                    visit.treatmentGiven = newTreatment;
+                    visit.recommendations = newRecommendations;
+                    visit.additionalNotes = newAdditionalNotes;
+                    
                     this.applyFilters();
                     this.showNotification('Clinic visit updated', 'success');
                     overlay.classList.add('hidden');
                 } catch (error) {
                     console.error('Error updating clinic visit:', error);
                     this.showError('Failed to update clinic visit');
+                } finally {
+                    saveBtnEl.disabled = false;
+                    saveBtnEl.textContent = 'Save';
                 }
             };
             overlay.classList.remove('hidden');

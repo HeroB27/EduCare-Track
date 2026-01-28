@@ -109,11 +109,15 @@ class AttendanceSettingsManager {
         // Logout
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
-            logoutBtn.addEventListener('click', async () => {
-                if (confirm('Are you sure you want to logout?')) {
-                    localStorage.removeItem('educareTrack_user');
-                    window.location.href = '../index.html';
-                }
+            logoutBtn.addEventListener('click', () => {
+                this.openConfirmationModal(
+                    'Sign Out',
+                    'Are you sure you want to sign out?',
+                    () => {
+                        localStorage.removeItem('educareTrack_user');
+                        window.location.href = '../index.html';
+                    }
+                );
             });
         }
 
@@ -175,6 +179,23 @@ class AttendanceSettingsManager {
             eventForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 this.saveEvent();
+            });
+        }
+
+        // Event Type Change
+        const eventTypeSelect = document.getElementById('eventType');
+        if (eventTypeSelect) {
+            eventTypeSelect.addEventListener('change', () => {
+                this.toggleLevelSelection();
+            });
+        }
+
+        // Emergency Form Submit
+        const emergencyForm = document.getElementById('emergencyForm');
+        if (emergencyForm) {
+            emergencyForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitEmergency();
             });
         }
     }
@@ -284,10 +305,10 @@ class AttendanceSettingsManager {
             } else {
                 await window.EducareTrack.db.collection('system_settings').doc('attendance_schedule').set(settings);
             }
-            alert('Schedule settings saved successfully!');
+            this.showNotification('Schedule settings saved successfully!', 'success');
         } catch (error) {
             console.error('Error saving schedule settings:', error);
-            alert('Error saving schedule settings: ' + error.message);
+            this.showNotification('Error saving schedule settings: ' + error.message, 'error');
         } finally {
             this.hideLoading();
         }
@@ -318,10 +339,10 @@ class AttendanceSettingsManager {
             this.calendarSettings = settings;
             this.renderCalendar(); // Re-render to reflect changes
             
-            alert('Calendar settings saved successfully!');
+            this.showNotification('Calendar settings saved successfully!', 'success');
         } catch (error) {
             console.error('Error saving calendar settings:', error);
-            alert('Error saving calendar settings: ' + error.message);
+            this.showNotification('Error saving calendar settings: ' + error.message, 'error');
         } finally {
             this.hideLoading();
         }
@@ -503,11 +524,32 @@ class AttendanceSettingsManager {
         if (eventForm) eventForm.reset();
         if (eventId) eventId.value = '';
         if (eventDate && date) eventDate.value = date;
+
+        // Reset levels
+        const allLevelsCb = document.getElementById('level_all');
+        if (allLevelsCb) {
+            allLevelsCb.checked = true;
+            this.toggleAllLevels(allLevelsCb);
+        }
+        this.toggleLevelSelection();
         
         const modal = document.getElementById('eventModal');
         if (modal) {
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+        }
+    }
+
+    toggleLevelSelection() {
+        const typeEl = document.getElementById('eventType');
+        const container = document.getElementById('affectedLevelsContainer');
+        if (!typeEl || !container) return;
+        
+        const type = typeEl.value;
+        if (type === 'suspension' || type === 'holiday') {
+            container.classList.remove('hidden');
+        } else {
+            container.classList.add('hidden');
         }
     }
 
@@ -605,6 +647,7 @@ class AttendanceSettingsManager {
             title: document.getElementById('eventTitle').value,
             type: document.getElementById('eventType').value,
             notes: notes,
+            created_by: this.currentUser ? this.currentUser.id : null
         };
 
         this.showLoading();
@@ -630,6 +673,220 @@ class AttendanceSettingsManager {
             alert('Error saving event: ' + error.message);
         } finally {
             this.hideLoading();
+        }
+    }
+
+    openConfirmationModal(title, message, onConfirm) {
+        const modal = document.getElementById('confirmationModal');
+        const titleEl = document.getElementById('confirmationTitle');
+        const messageEl = document.getElementById('confirmationMessage');
+        const okBtn = document.getElementById('confirmOkBtn');
+        const cancelBtn = document.getElementById('confirmCancelBtn');
+
+        if (!modal || !titleEl || !messageEl || !okBtn || !cancelBtn) return;
+
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+
+        // Remove old listeners to prevent multiple firings
+        const newOkBtn = okBtn.cloneNode(true);
+        okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+        
+        const newCancelBtn = cancelBtn.cloneNode(true);
+        cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+        newOkBtn.addEventListener('click', () => {
+            this.closeConfirmationModal();
+            if (onConfirm) onConfirm();
+        });
+
+        newCancelBtn.addEventListener('click', () => {
+            this.closeConfirmationModal();
+        });
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    closeConfirmationModal() {
+        const modal = document.getElementById('confirmationModal');
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+    }
+
+    syncHolidays() {
+        this.openConfirmationModal(
+            'Sync Holidays',
+            'This will sync holidays from the national calendar. Continue?',
+            async () => {
+                this.showLoading();
+                try {
+                    // In a real app, this would fetch from an API
+                    // For now, we'll just add some sample holidays if they don't exist
+                    const currentYear = new Date().getFullYear();
+                    const holidays = [
+                        { title: 'New Year\'s Day', date: `${currentYear}-01-01`, type: 'holiday' },
+                        { title: 'Independence Day', date: `${currentYear}-06-12`, type: 'holiday' },
+                        { title: 'Christmas Day', date: `${currentYear}-12-25`, type: 'holiday' },
+                        { title: 'Rizal Day', date: `${currentYear}-12-30`, type: 'holiday' }
+                    ];
+
+                    if (window.USE_SUPABASE && window.supabaseClient) {
+                        for (const holiday of holidays) {
+                            const { error } = await window.supabaseClient
+                                .from('school_calendar')
+                                .upsert({
+                                    title: holiday.title,
+                                    start_date: new Date(holiday.date).toISOString(),
+                                    end_date: new Date(holiday.date).toISOString(), // Single day
+                                    type: holiday.type,
+                                    created_by: this.currentUser ? this.currentUser.id : null, // Ensure created_by is set
+                                    created_at: new Date().toISOString()
+                                }, { onConflict: 'title,start_date' }); // Assuming unique constraint or just insert
+                        }
+                    }
+                    
+                    await this.loadEvents();
+                    this.showNotification('Holidays synced successfully!', 'success');
+                } catch (error) {
+                    console.error('Error syncing holidays:', error);
+                    this.showNotification('Error syncing holidays: ' + error.message, 'error');
+                } finally {
+                    this.hideLoading();
+                }
+            }
+        );
+    }
+
+    async declareEmergency() {
+        this.openEmergencyModal();
+    }
+
+    openEmergencyModal() {
+        const modal = document.getElementById('emergencyModal');
+        const form = document.getElementById('emergencyForm');
+        if (modal) {
+            if (form) form.reset();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            // Focus on reason input
+            setTimeout(() => {
+                const input = document.getElementById('emergencyReason');
+                if (input) input.focus();
+            }, 100);
+        }
+    }
+
+    closeEmergencyModal() {
+        const modal = document.getElementById('emergencyModal');
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+    }
+
+    async submitEmergency() {
+        const reasonInput = document.getElementById('emergencyReason');
+        const createAnnouncementCheckbox = document.getElementById('createEmergencyAnnouncement');
+        
+        if (!reasonInput || !reasonInput.value.trim()) {
+            alert('Please provide a reason for the emergency.');
+            return;
+        }
+
+        const reason = reasonInput.value.trim();
+        const createAnnouncement = createAnnouncementCheckbox ? createAnnouncementCheckbox.checked : true;
+
+        this.showLoading();
+        try {
+            const today = new Date();
+            const eventData = {
+                title: 'Emergency Suspension',
+                start_date: today.toISOString(),
+                end_date: today.toISOString(),
+                type: 'suspension',
+                notes: reason,
+                created_by: this.currentUser ? this.currentUser.id : null,
+                created_at: new Date().toISOString()
+            };
+
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { error } = await window.supabaseClient
+                    .from('school_calendar')
+                    .insert([eventData]);
+                if (error) throw error;
+            }
+            
+            await this.loadEvents();
+            this.closeEmergencyModal();
+            
+            if (createAnnouncement) {
+                if (window.EducareTrack && window.EducareTrack.createAnnouncement) {
+                    await window.EducareTrack.createAnnouncement({
+                        title: 'Emergency Suspension',
+                        message: `Classes are suspended due to: ${reason}`,
+                        audience: ['all'],
+                        isUrgent: true,
+                        expiryDate: new Date(today.getTime() + 24 * 60 * 60 * 1000) // 1 day expiry
+                    });
+                    this.showNotification('Emergency declared and announcement sent!', 'success');
+                } else {
+                    this.showNotification('Emergency declared!', 'success');
+                }
+            } else {
+                this.showNotification('Emergency declared!', 'success');
+            }
+        } catch (error) {
+            console.error('Error declaring emergency:', error);
+            alert('Error declaring emergency: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    showNotification(message, type = 'info') {
+        const toast = document.getElementById('notificationToast');
+        const content = document.getElementById('notificationContent');
+        const msgEl = document.getElementById('notificationMessage');
+        const iconEl = document.getElementById('notificationIcon');
+        
+        if (!toast || !content || !msgEl || !iconEl) {
+            alert(message);
+            return;
+        }
+
+        // Set content
+        msgEl.textContent = message;
+        
+        // Set styles based on type
+        content.className = 'bg-white rounded-lg shadow-lg border-l-4 p-4 flex items-center min-w-[300px]';
+        if (type === 'success') {
+            content.classList.add('border-green-500');
+            iconEl.innerHTML = '<i class="fas fa-check-circle text-green-500 text-xl"></i>';
+        } else if (type === 'error') {
+            content.classList.add('border-red-500');
+            iconEl.innerHTML = '<i class="fas fa-times-circle text-red-500 text-xl"></i>';
+        } else {
+            content.classList.add('border-blue-500');
+            iconEl.innerHTML = '<i class="fas fa-info-circle text-blue-500 text-xl"></i>';
+        }
+
+        // Show
+        toast.classList.remove('translate-y-20', 'opacity-0');
+        
+        // Hide after 3 seconds
+        setTimeout(() => {
+            this.hideNotification();
+        }, 3000);
+    }
+
+    hideNotification() {
+        const toast = document.getElementById('notificationToast');
+        if (toast) {
+            toast.classList.add('translate-y-20', 'opacity-0');
         }
     }
 

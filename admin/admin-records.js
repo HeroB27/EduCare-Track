@@ -117,10 +117,11 @@ class AdminRecords {
             ...record,
             studentId: record.studentId || record.student_id,
             classId: record.classId || record.class_id,
-            entryType: record.entryType || record.entry_type,
+            entryType: record.status === 'out' ? 'exit' : 'entry', // Derived from status
+            session: record.session, // Ensure session is preserved
             recordedBy: record.recordedBy || record.recorded_by,
-            recordedByName: record.recordedByName || record.recorded_by_name,
-            manualEntry: record.manualEntry ?? record.manual_entry,
+            // recordedByName removed
+            manualEntry: record.method === 'manual',
             timestamp: record.timestamp ? new Date(record.timestamp) : null
         };
     }
@@ -131,7 +132,7 @@ class AdminRecords {
             studentId: record.studentId || record.student_id,
             classId: record.classId || record.class_id,
             studentName: record.studentName || record.student_name,
-            checkIn: record.checkIn ?? record.check_in,
+            checkIn: record.checkIn ?? (record.outcome === 'checked_in' || record.status === 'in_clinic' || record.check_in),
             timestamp: record.timestamp ? new Date(record.timestamp) : (record.visit_time ? new Date(record.visit_time) : null)
         };
     }
@@ -1609,11 +1610,11 @@ class AdminRecords {
         // Initialize class stats
         this.classes.forEach(classObj => {
             classStats[classObj.id] = {
-                name: classObj.grade || classObj.id, // Use grade as display name, fallback to ID
+                name: classObj.name || classObj.grade || classObj.id || 'Unknown Class',
                 present: 0,
                 absent: 0,
                 late: 0,
-                total: 0
+                total: 0 // Will store total records (present + absent + late)
             };
         });
 
@@ -1628,6 +1629,10 @@ class AdminRecords {
                 studentsByClass[studentClassId].add(student.id);
             }
         });
+
+        // We don't use the static student count for "Total" in the table anymore,
+        // because we want "Total Attendance Records" to make the percentage calculation valid.
+        // However, we still need to initialize stats for all classes.
 
         // Set total students per class
         Object.keys(studentsByClass).forEach(classId => {
@@ -1656,11 +1661,14 @@ class AdminRecords {
             
             if (recordClassId && classStats[recordClassId]) {
                 if (record.status === 'present') {
-                    classStats[recordClassId].present++;
+                    classStats[record.classId].present++;
+                    classStats[record.classId].total++;
                 } else if (record.status === 'late') {
-                    classStats[recordClassId].late++;
+                    classStats[record.classId].late++;
+                    classStats[record.classId].total++;
                 } else if (record.status === 'absent') {
-                    classStats[recordClassId].absent++;
+                    classStats[record.classId].absent++;
+                    classStats[record.classId].total++;
                 }
             }
         });
@@ -1671,6 +1679,10 @@ class AdminRecords {
         const lateData = [];
 
         Object.values(classStats).forEach(stat => {
+            // Show classes even if they have 0 records, or filter?
+            // Existing logic filtered if total > 0. Let's keep that but now total means "has records".
+            // If we want to show all classes, we should remove the check. 
+            // But for the chart, empty classes are boring.
             if (stat.total > 0) {
                 labels.push(stat.name);
                 presentData.push(stat.present);
@@ -1704,6 +1716,8 @@ class AdminRecords {
         }
 
         tableBody.innerHTML = Object.values(classStats).map(stat => {
+            // Calculate rate based on Total Records (Present + Late + Absent)
+            // This prevents > 100% rates.
             const attendanceRate = stat.total > 0 ? 
                 Math.round(((stat.present + stat.late) / stat.total) * 100) : 0;
 
@@ -1712,7 +1726,7 @@ class AdminRecords {
                     <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                         ${stat.name}
                     </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900" title="Total Attendance Records">
                         ${stat.total}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
@@ -2148,9 +2162,7 @@ class AdminRecords {
                 .from('attendance')
                 .update({
                     timestamp: timestamp.toISOString(),
-                    time: timeStr,
-                    status: status,
-                    entry_type: entryType
+                    status: status
                 })
                 .eq('id', recordId);
             if (error) throw error;

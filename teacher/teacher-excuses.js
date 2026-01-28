@@ -245,16 +245,8 @@ async loadNotificationCount() {
                             </div>
                         </div>
                         <div class="flex space-x-2 ml-4">
-                            ${excuse.status === 'pending' ? `
-                                <button class="text-green-600 hover:text-green-900 approve-excuse" data-excuse-id="${excuse.id}">
-                                    <i class="fas fa-check-circle"></i>
-                                </button>
-                                <button class="text-red-600 hover:text-red-900 reject-excuse" data-excuse-id="${excuse.id}">
-                                    <i class="fas fa-times-circle"></i>
-                                </button>
-                            ` : ''}
                             <button class="text-blue-600 hover:text-blue-900 view-excuse" data-excuse-id="${excuse.id}">
-                                <i class="fas fa-eye"></i>
+                                <i class="fas fa-eye"></i> View Details
                             </button>
                         </div>
                     </div>
@@ -454,7 +446,7 @@ async loadNotificationCount() {
 
                         <div>
                             <p class="text-sm text-gray-600 mb-1">Reason</p>
-                            <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
                                 <p class="text-gray-800 whitespace-pre-wrap">${excuse.reason}</p>
                             </div>
                         </div>
@@ -462,7 +454,20 @@ async loadNotificationCount() {
                         ${excuse.notes ? `
                         <div>
                             <p class="text-sm text-gray-600 mb-1">Additional Notes</p>
-                            <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="bg-yellow-50 rounded-lg p-4 border border-yellow-100">
+                                <p class="text-gray-800 whitespace-pre-wrap">${excuse.notes}</p>
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        ${excuse.reviewerNotes ? `
+                        <div>
+                            <p class="text-sm text-gray-600 mb-1">Reviewer Feedback</p>
+                            <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                                <p class="text-blue-800 whitespace-pre-wrap"><i class="fas fa-comment-dots mr-2"></i>${excuse.reviewerNotes}</p>
+                            </div>
+                        </div>
+                        ` : ''}                            <div class="bg-gray-50 rounded-lg p-4">
                                 <p class="text-gray-800 whitespace-pre-wrap">${excuse.notes}</p>
                             </div>
                         </div>
@@ -524,6 +529,12 @@ async loadNotificationCount() {
 
     async approveExcuse(excuseId) {
         try {
+            const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                ? await window.EducareTrack.confirmAction('Are you sure you want to approve this excuse letter?', 'Confirm Approval', 'Approve', 'Cancel')
+                : confirm('Are you sure you want to approve this excuse letter?');
+
+            if (!ok) return;
+
             this.showLoading();
             
             const excuse = this.excuseLetters.find(e => e.id === excuseId);

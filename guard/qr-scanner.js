@@ -506,7 +506,6 @@ class QRScanner {
             
             let status = 'present';
             let remarks = '';
-            let dbSession = session === 'morning' ? 'AM' : 'PM';
             
             // Check for duplicates in the current session/type
             // If we are doing 'entry' in 'morning', check if we already have an 'AM' 'present'/'late' record.
@@ -516,11 +515,11 @@ class QRScanner {
             // Let's check strictly for the action being performed.
             
             if (entryType === 'entry') {
-                if (session === 'morning' && hasMorningEntry) {
+                if (session === 'AM' && hasMorningEntry) {
                     this.showResult('warning', 'Duplicate Scan', 'Student already tapped in for morning.');
                     return;
                 }
-                if (session === 'afternoon' && hasAfternoonEntry) {
+                if (session === 'PM' && hasAfternoonEntry) {
                      this.showResult('warning', 'Duplicate Scan', 'Student already tapped in for afternoon.');
                     return;
                 }
@@ -531,7 +530,7 @@ class QRScanner {
 
             if (entryType === 'entry') {
                 // Time In Logic
-                if (session === 'morning') {
+                if (session === 'AM') {
                     if (timeString > startTime) {
                         status = 'late';
                         remarks = `Late arrival (Scheduled: ${startTime})`;
@@ -539,7 +538,7 @@ class QRScanner {
                         status = 'present';
                         remarks = 'On time';
                     }
-                } else if (session === 'afternoon') {
+                } else if (session === 'PM') {
                     // Afternoon Entry
                     status = 'present'; // Default for afternoon entry
                     
@@ -576,7 +575,7 @@ class QRScanner {
                 // Special Case: Morning Entry -> Exit 12-1
                 // This is likely a lunch exit or early dismissal.
                 // If it's morning session exit (e.g. 11:30 AM)
-                if (session === 'morning') {
+                if (session === 'AM') {
                      remarks = `Morning exit (Time: ${timeString})`;
                 }
             }
@@ -585,7 +584,7 @@ class QRScanner {
             const { error: insertError } = await window.supabaseClient.from('attendance').insert({
                 student_id: studentId,
                 class_id: student.class_id || student.classId || null,
-                session: dbSession,
+                session: session,
                 status: status,
                 method: 'qr', // 'qr' or 'manual'
                 timestamp: timestamp.toISOString(),
@@ -624,94 +623,9 @@ class QRScanner {
             this.showResult('error', 'Error', 'Failed to record attendance: ' + error.message);
         }
     }
-                        remarks = 'On time arrival';
-                    } else {
-                        status = 'late';
-                        remarks = 'Late arrival';
-                    }
-                } else if (session === 'afternoon') {
-                    if (timeString <= '13:00') {
-                        status = 'present';
-                        remarks = 'On time after lunch';
-                    } else {
-                        status = 'late';
-                        remarks = 'Late after lunch';
-                    }
-                } else {
-                    status = 'present';
-                    remarks = 'Arrival recorded';
-                }
-            } else {
-                // Time Out logic
-                status = 'present';
-                
-                // Check if student was absent in morning but tapping out in afternoon
-                if (session === 'afternoon') {
-                    const morningAttendance = await this.getStudentMorningAttendance(studentId);
-                    if (!morningAttendance) {
-                        status = 'half_day';
-                        remarks = 'Absent morning, present afternoon (Half day)';
-                    } else {
-                        remarks = 'Dismissal recorded';
-                    }
-                } else {
-                    remarks = 'Dismissal recorded';
-                }
-                
-                // Special case: if student is tapping out during lunch (12:00-13:00)
-                if (timeString >= '12:00' && timeString < '13:00') {
-                    remarks = 'Lunch break departure';
-                }
-            }
 
-            // Create attendance record using Supabase
-            const { data, error } = await window.supabaseClient
-                .from('attendance')
-                .insert({
-                    student_id: studentId,
-                    class_id: student.class_id || student.classId || null,
-                    session: session === 'morning' ? 'AM' : 'PM',
-                    status: status,
-                    method: 'qr',
-                    timestamp: timestamp.toISOString(),
-                    recorded_by: this.currentUser.id,
-                    remarks: `qr_${entryType}` // Store entry type in remarks
-                });
-            
-            if (error) throw error;
-
-            // Send enhanced notifications to both parent and teacher
-            await this.sendEnhancedNotifications(student, entryType, timeString, status, remarks, data[0].id);
-
-            // Show success result
-            const actionText = entryType === 'entry' ? 'Time In' : 'Time Out';
-            const actionVerb = entryType === 'entry' ? 'arrived' : 'departed';
-            
-            this.showResult('success', 
-                `${actionText} Recorded`, 
-                `${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} ${actionVerb} at ${timeString} (${remarks})`,
-                studentId
-            );
-            
-            // Add to recent scans
-            this.addRecentScan({
-                studentName: student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim(),
-                time: timeString,
-                entryType: entryType,
-                status: status,
-                remarks: remarks,
-                classId: student.class_id || student.classId
-            });
-            
-            // Reload absent students list
-            this.loadAbsentStudents();
-            
-            this.playBeepSound();
-            
-        } catch (error) {
-            console.error('Error recording attendance:', error);
-            throw error;
-        }
+    getCurrentSession() {
+        return this.attendanceLogic.getCurrentSession();
     }
 
     // Enhanced notification system for teachers and parents

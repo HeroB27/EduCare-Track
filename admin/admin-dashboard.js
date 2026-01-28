@@ -1,78 +1,54 @@
-// Admin Dashboard JavaScript
-// Handles global analytics, real-time updates, and system status
-
 class AdminDashboard {
     constructor() {
         this.currentUser = null;
-        this.stats = {
-            students: 0,
-            teachers: 0,
-            parents: 0,
-            attendanceRate: 0
-        };
-        this.charts = {
-            attendance: null,
-            clinic: null,
-            absence: null
-        };
-        this.realTimeSubscription = null;
+        this.attendanceChart = null;
         this.init();
     }
 
     async init() {
         try {
+            this.showLoading();
+            
             // Wait for EducareTrack to be ready
             if (!window.EducareTrack) {
                 setTimeout(() => this.init(), 100);
                 return;
             }
 
-            // Check auth
+            // Check if user is logged in
             const savedUser = localStorage.getItem('educareTrack_user');
             if (!savedUser) {
                 window.location.href = '../index.html';
                 return;
             }
-
             this.currentUser = JSON.parse(savedUser);
             if (this.currentUser.role !== 'admin') {
-                window.location.href = '../index.html';
+                window.location.href = `../${this.currentUser.role}/${this.currentUser.role}-dashboard.html`;
                 return;
             }
 
             this.updateUI();
-            await this.loadStats();
-            await this.loadCharts();
-            await this.loadRecentActivity();
+            await this.loadDashboardData();
+            this.initEventListeners();
             
-            // Load dashboard widgets
-            await this.loadScheduleInfo();
-            await this.loadCalendarWidget();
-            await this.loadAtRiskStudents();
-            
-            this.setupRealtime();
-            
-            // Set up event listeners
-            this.setupEventListeners();
-            
-            // Set up auto-refresh
-            setInterval(() => this.loadStats(), 300000); // Every 5 mins
-
+            this.hideLoading();
         } catch (error) {
-            console.error('Admin Dashboard Init Error:', error);
+            console.error('Dashboard initialization failed:', error);
+            this.hideLoading();
         }
     }
 
     updateUI() {
-        // Update user info
-        const nameEl = document.getElementById('userName');
-        const roleEl = document.getElementById('userRole');
-        const initialsEl = document.getElementById('userInitials');
-        
-        if (nameEl) nameEl.textContent = this.currentUser.name;
-        if (roleEl) roleEl.textContent = this.currentUser.role;
-        if (initialsEl) {
-            initialsEl.textContent = this.currentUser.name
+        // Safely update user info elements
+        const userNameEl = document.getElementById('userName');
+        const userRoleEl = document.getElementById('userRole');
+        const userInitialsEl = document.getElementById('userInitials');
+        const currentTimeEl = document.getElementById('currentTime');
+
+        if (userNameEl) userNameEl.textContent = this.currentUser.name;
+        if (userRoleEl) userRoleEl.textContent = this.currentUser.role;
+        if (userInitialsEl) {
+            userInitialsEl.textContent = this.currentUser.name
                 .split(' ')
                 .map(n => n[0])
                 .join('')
@@ -80,16 +56,15 @@ class AdminDashboard {
                 .toUpperCase();
         }
 
-        // Update time
-        this.updateTime();
-        setInterval(() => this.updateTime(), 60000);
+        this.updateCurrentTime();
+        setInterval(() => this.updateCurrentTime(), 60000);
     }
 
-    updateTime() {
-        const timeEl = document.getElementById('currentTime');
-        if (timeEl) {
-            const now = new Date();
-            timeEl.textContent = now.toLocaleString('en-US', {
+    updateCurrentTime() {
+        const now = new Date();
+        const currentTimeEl = document.getElementById('currentTime');
+        if (currentTimeEl) {
+            currentTimeEl.textContent = now.toLocaleString('en-US', {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',
@@ -99,352 +74,126 @@ class AdminDashboard {
         }
     }
 
-    async loadStats() {
+    async loadDashboardData() {
         try {
-            // Parallel fetch for counts
-            const [students, teachers, parents] = await Promise.all([
-                window.supabaseClient.from('students').select('id', { count: 'exact', head: true }),
-                window.supabaseClient.from('teachers').select('id', { count: 'exact', head: true }),
-                window.supabaseClient.from('parents').select('id', { count: 'exact', head: true })
-            ]);
+            if (!window.EducareTrack) {
+                console.error('EducareTrack not available');
+                return;
+            }
 
-            this.stats.students = students.count || 0;
-            this.stats.teachers = teachers.count || 0;
-            this.stats.parents = parents.count || 0;
+            // Load system stats
+            const stats = await EducareTrack.getSystemStats();
+            this.updateStats(stats);
 
-            document.getElementById('totalStudents').textContent = this.stats.students;
-            document.getElementById('totalTeachers').textContent = this.stats.teachers;
-            document.getElementById('totalParents').textContent = this.stats.parents;
+            // Setup real-time updates for attendance rate
+            this.setupRealtimeUpdates();
 
-            // Calculate Attendance Rate for Today
+            // Load schedule and calendar widgets
+            await this.loadScheduleInfo();
+            await this.loadCalendarWidget();
+
+            // Load recent activity
+            await this.loadRecentActivity();
+
+            // Update active users count
+            await this.updateActiveUsers();
+
+            // Load real attendance data for chart
+            await this.loadRealAttendanceData();
+            await this.loadClinicAndAbsenceTrends();
+
+            // Load at-risk students list
+            await this.loadAtRiskStudents();
+            
+            // Load unread notifications count
+            await this.loadUnreadNotificationsCount();
+
+        } catch (error) {
+            console.error('Error loading dashboard data:', error);
+        }
+    }
+
+    setupRealtimeUpdates() {
+        if (window.USE_SUPABASE && window.supabaseClient) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             
-            const { data: attendanceToday } = await window.supabaseClient
-                .from('attendance')
-                .select('student_id, status')
-                .gte('timestamp', today.toISOString());
-
-            const uniquePresent = new Set(
-                (attendanceToday || [])
-                .filter(r => r.status === 'present' || r.status === 'late')
-                .map(r => r.student_id)
-            ).size;
-
-            // Avoid division by zero
-            const rate = this.stats.students > 0 
-                ? Math.round((uniquePresent / this.stats.students) * 100) 
-                : 0;
-            
-            this.stats.attendanceRate = rate;
-            document.getElementById('attendanceRate').textContent = `${rate}%`;
-
-        } catch (error) {
-            console.error('Error loading stats:', error);
-        }
-    }
-
-    async loadCharts() {
-        await this.loadAttendanceChart();
-        await this.loadClinicChart();
-        await this.loadAbsenceChart();
-    }
-
-    async loadAttendanceChart() {
-        const ctx = document.getElementById('attendanceChart');
-        if (!ctx) return;
-
-        // Fetch last 7 days data
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 6);
-        startDate.setHours(0, 0, 0, 0);
-
-        const { data: records } = await window.supabaseClient
-            .from('attendance')
-            .select('timestamp, status')
-            .gte('timestamp', startDate.toISOString())
-            .lte('timestamp', endDate.toISOString());
-
-        // Process data
-        const dailyStats = {};
-        // Initialize last 7 days
-        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateStr = d.toISOString().split('T')[0];
-            dailyStats[dateStr] = { present: 0, late: 0, absent: 0 };
-        }
-
-        (records || []).forEach(r => {
-            const dateStr = new Date(r.timestamp).toISOString().split('T')[0];
-            if (dailyStats[dateStr]) {
-                if (r.status === 'present') dailyStats[dateStr].present++;
-                if (r.status === 'late') dailyStats[dateStr].late++;
-                if (r.status === 'absent') dailyStats[dateStr].absent++;
-            }
-        });
-
-        const labels = Object.keys(dailyStats).map(d => new Date(d).toLocaleDateString('en-US', { weekday: 'short' }));
-        const presentData = Object.values(dailyStats).map(s => s.present);
-        const lateData = Object.values(dailyStats).map(s => s.late);
-
-        if (this.charts.attendance) this.charts.attendance.destroy();
-
-        this.charts.attendance = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'Present',
-                        data: presentData,
-                        backgroundColor: '#10B981'
-                    },
-                    {
-                        label: 'Late',
-                        data: lateData,
-                        backgroundColor: '#F59E0B'
+            // Listen for new attendance entries and notifications
+            window.supabaseClient
+                .channel('dashboard_updates')
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'attendance',
+                    filter: `timestamp=gte.${today.toISOString()}`
+                }, async (payload) => {
+                    // Update stats when new attendance comes in
+                    const stats = await EducareTrack.getSystemStats();
+                    this.updateStats(stats);
+                    // Also refresh the recent activity
+                    this.loadRecentActivity();
+                    // Refresh chart
+                    this.loadRealAttendanceData();
+                })
+                .on('postgres_changes', {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'notifications'
+                }, async (payload) => {
+                    // Check if notification is for this user
+                    if (payload.new && payload.new.target_users && payload.new.target_users.includes(this.currentUser.id)) {
+                        await this.loadUnreadNotificationsCount();
+                        this.showNotification(payload.new.title + ': ' + payload.new.message);
                     }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: { beginAtZero: true, stacked: true },
-                    x: { stacked: true }
-                }
-            }
-        });
-        
-        document.getElementById('chartInfo').textContent = 'Last 7 days activity';
-    }
-
-    async loadClinicChart() {
-        const ctx = document.getElementById('clinicReasonsChart');
-        if (!ctx) return;
-
-        // Fetch last 30 days data
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 30);
-        startDate.setHours(0, 0, 0, 0);
-
-        const { data: records } = await window.supabaseClient
-            .from('clinic_visits')
-            .select('reason')
-            .gte('visit_time', startDate.toISOString())
-            .lte('visit_time', endDate.toISOString());
-
-        // Process data
-        const reasons = {};
-        (records || []).forEach(r => {
-            const reason = r.reason || 'Unspecified';
-            reasons[reason] = (reasons[reason] || 0) + 1;
-        });
-
-        const sortedReasons = Object.entries(reasons)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5); // Top 5
-
-        const labels = sortedReasons.map(r => r[0]);
-        const data = sortedReasons.map(r => r[1]);
-
-        if (this.charts.clinic) this.charts.clinic.destroy();
-
-        this.charts.clinic = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Visits',
-                    data: data,
-                    backgroundColor: '#3B82F6',
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                indexAxis: 'y',
-                scales: {
-                    x: { beginAtZero: true }
-                },
-                plugins: {
-                    legend: { display: false },
-                    title: { display: true, text: 'Top Clinic Reasons (30 Days)' }
-                }
-            }
-        });
-    }
-
-    async loadAbsenceChart() {
-        // Load Absence Reasons Chart
-        const ctxReasons = document.getElementById('absenceReasonsChart');
-        const ctxDonut = document.getElementById('excusedDonut');
-        
-        if (!ctxReasons || !ctxDonut) return;
-
-        // Fetch last 30 days absence data
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 30);
-        startDate.setHours(0, 0, 0, 0);
-
-        const { data: records } = await window.supabaseClient
-            .from('attendance')
-            .select('status, remarks')
-            .gte('timestamp', startDate.toISOString())
-            .lte('timestamp', endDate.toISOString());
-
-        if (!records) return;
-
-        // 1. Process Reasons (from remarks where status is absent)
-        const reasonCounts = {};
-        const statusCounts = { present: 0, late: 0, absent: 0 };
-
-        records.forEach(record => {
-            // Count statuses for Donut
-            if (record.status === 'present') statusCounts.present++;
-            else if (record.status === 'late') statusCounts.late++;
-            else if (record.status === 'absent') {
-                statusCounts.absent++;
-
-                // Count reasons
-                const reason = record.remarks ? record.remarks.split('-')[0].trim() : 'Unspecified';
-                reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
-            }
-        });
-
-        // Render Reasons Chart
-        const sortedReasons = Object.entries(reasonCounts)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5);
-
-        if (this.charts.absence) this.charts.absence.destroy();
-
-        this.charts.absence = new Chart(ctxReasons, {
-            type: 'doughnut',
-            data: {
-                labels: sortedReasons.map(r => r[0]),
-                datasets: [{
-                    data: sortedReasons.map(r => r[1]),
-                    backgroundColor: ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    title: { display: true, text: 'Absence Reasons' },
-                    legend: { position: 'right' }
-                }
-            }
-        });
-
-        // Render Status Donut (Overall breakdown)
-        // Note: The HTML ID is 'excusedDonut', but let's make it a Status Overview for now as it's more useful
-        // Or strictly 'Excused vs Unexcused' if we had clear data. 
-        // Let's do 'Attendance Breakdown'
-        
-        const donutChart = new Chart(ctxDonut, {
-            type: 'doughnut',
-            data: {
-                labels: ['Present', 'Late', 'Absent'],
-                datasets: [{
-                    data: [statusCounts.present, statusCounts.late, statusCounts.absent],
-                    backgroundColor: ['#10B981', '#F59E0B', '#EF4444']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    title: { display: true, text: 'Status Distribution' },
-                    legend: { position: 'right' }
-                }
-            }
-        });
-    }
-
-    async loadRecentActivity() {
-        const container = document.getElementById('recentActivity');
-        if (!container) return;
-
-        // Fetch last 5 attendance/clinic events mixed
-        const { data: recent } = await window.supabaseClient
-            .from('attendance')
-            .select('*, students(full_name)')
-            .order('timestamp', { ascending: false })
-            .limit(5);
-
-        if (!recent || recent.length === 0) {
-            container.innerHTML = '<p class="text-gray-500 text-sm p-4">No recent activity.</p>';
-            return;
-        }
-
-        container.innerHTML = recent.map(r => `
-            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
-                <div class="flex items-center">
-                    <div class="w-8 h-8 ${this.getStatusColor(r.status)} rounded-full flex items-center justify-center mr-3">
-                        <i class="fas ${this.getStatusIcon(r.status)} text-white text-xs"></i>
-                    </div>
-                    <div>
-                        <p class="text-sm font-medium text-gray-800">${r.students?.full_name || 'Unknown Student'}</p>
-                        <p class="text-xs text-gray-500 capitalize">${r.status} - ${new Date(r.timestamp).toLocaleTimeString()}</p>
-                    </div>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    getStatusColor(status) {
-        switch(status) {
-            case 'present': return 'bg-green-500';
-            case 'late': return 'bg-yellow-500';
-            case 'absent': return 'bg-red-500';
-            default: return 'bg-gray-500';
+                })
+                .subscribe();
         }
     }
 
-    getStatusIcon(status) {
-        switch(status) {
-            case 'present': return 'fa-check';
-            case 'late': return 'fa-clock';
-            case 'absent': return 'fa-times';
-            default: return 'fa-circle';
+    async loadUnreadNotificationsCount() {
+        try {
+            if (!this.currentUser) return;
+            const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true);
+            const count = notifications.length;
+            const badge = document.getElementById('notificationBoxCount');
+            if (badge) {
+                badge.textContent = count;
+                badge.classList.remove('hidden');
+                if (count === 0) badge.classList.add('hidden');
+            }
+        } catch (error) {
+            console.error('Error loading unread notifications:', error);
         }
     }
 
-    setupRealtime() {
-        this.realTimeSubscription = window.supabaseClient
-            .channel('admin-dashboard-changes')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
-                this.loadStats();
-                this.loadRecentActivity();
-                this.loadAttendanceChart(); // Refresh chart on new data
-            })
-            .subscribe();
-    }
-
-    // Load Today's Schedule information
     async loadScheduleInfo() {
-        console.log('Loading schedule info...');
         const widget = document.getElementById('scheduleWidget');
-        if (!widget) {
-            console.log('Schedule widget not found');
-            return;
-        }
+        if (!widget) return;
 
         try {
-            // Default schedule settings
-            const settings = {
-                kinder_in: '07:30', kinder_out: '11:30',
-                g1_3_in: '07:30', g1_3_out: '13:00',
-                g4_6_in: '07:30', g4_6_out: '15:00',
-                jhs_in: '07:30', jhs_out: '16:00',
-                shs_in: '07:30', shs_out: '16:30'
-            };
+            // Load schedule settings
+            let settings = null;
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data } = await window.supabaseClient
+                    .from('system_settings')
+                    .select('value')
+                    .eq('key', 'attendance_schedule')
+                    .single();
+                if (data) settings = data.value;
+            }
 
+            // Default settings if none found
+            if (!settings) {
+                settings = {
+                    kinder_in: '07:30', kinder_out: '11:30',
+                    g1_3_in: '07:30', g1_3_out: '13:00',
+                    g4_6_in: '07:30', g4_6_out: '15:00',
+                    jhs_in: '07:30', jhs_out: '16:00',
+                    shs_in: '07:30', shs_out: '16:30'
+                };
+            }
+
+            // Determine current status and range
             const now = new Date();
             const currentTime = now.getHours() * 60 + now.getMinutes();
             
@@ -483,229 +232,897 @@ class AdminDashboard {
                 }
             });
 
-            let status = 'Before School Hours';
+            const formatTime = (minutes) => {
+                const h = Math.floor(minutes / 60);
+                const m = minutes % 60;
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            };
+
+            let statusHtml = '';
             let statusColor = 'text-gray-600';
-            
-            if (currentTime >= earliestStart && currentTime <= latestEnd) {
-                status = 'School in Session';
+            let statusIcon = 'fa-clock';
+
+            if (activeGrades.length > 0) {
+                statusHtml = 'Classes in Session';
                 statusColor = 'text-green-600';
-            } else if (currentTime > latestEnd) {
-                status = 'After School Hours';
+                statusIcon = 'fa-school';
+            } else if (currentTime < earliestStart) {
+                statusHtml = 'Before School';
+                statusColor = 'text-indigo-600';
+                statusIcon = 'fa-coffee';
+            } else if (currentTime >= latestEnd) {
+                statusHtml = 'Classes Ended';
                 statusColor = 'text-blue-600';
+                statusIcon = 'fa-moon';
+            } else {
+                // In between (e.g. if there's a gap, though unlikely with current logic)
+                statusHtml = 'No Active Classes';
+                statusColor = 'text-gray-600';
+                statusIcon = 'fa-pause';
             }
 
+            // Build Schedule List
+            const scheduleList = grades.map(grade => {
+                const start = settings[`${grade.id}_in`] || '--:--';
+                const end = settings[`${grade.id}_out`] || '--:--';
+                return `
+                    <div class="flex justify-between text-xs py-1 border-b border-gray-100 last:border-0">
+                        <span class="text-gray-600">${grade.name}</span>
+                        <span class="font-medium text-gray-800">${start} - ${end}</span>
+                    </div>
+                `;
+            }).join('');
+
             widget.innerHTML = `
-                <div class="space-y-3">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm font-medium text-gray-700">Current Status:</span>
-                        <span class="text-sm font-semibold ${statusColor}">${status}</span>
+                <div class="flex items-center p-4 bg-gray-50 rounded-lg mb-4">
+                    <div class="p-3 rounded-full bg-white shadow-sm mr-4 ${statusColor}">
+                        <i class="fas ${statusIcon} text-xl"></i>
                     </div>
-                    ${activeGrades.length > 0 ? `
-                        <div class="text-xs text-gray-600">
-                            <div class="font-medium mb-1">Active Grades:</div>
-                            <div class="flex flex-wrap gap-1">
-                                ${activeGrades.map(grade => `<span class="px-2 py-1 bg-green-100 text-green-700 rounded">${grade}</span>`).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-                    <div class="text-xs text-gray-500">
-                        ${earliestStart !== 24 * 60 ? `School: ${Math.floor(earliestStart/60).toString().padStart(2,'0')}:${(earliestStart%60).toString().padStart(2,'0')} - ${Math.floor(latestEnd/60).toString().padStart(2,'0')}:${(latestEnd%60).toString().padStart(2,'0')}` : 'No schedule configured'}
+                    <div>
+                        <h4 class="font-semibold text-gray-800">${statusHtml}</h4>
+                        <p class="text-sm text-gray-500">${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                     </div>
+                </div>
+                
+                <div class="bg-white rounded border border-gray-100 p-3">
+                    <h5 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Grade Schedules</h5>
+                    <div class="space-y-1">
+                        ${scheduleList}
+                    </div>
+                </div>
+                
+                <div class="mt-3 text-xs text-center text-gray-500">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    School Hours: ${formatTime(earliestStart)} - ${formatTime(latestEnd)}
                 </div>
             `;
 
         } catch (error) {
             console.error('Error loading schedule info:', error);
-            widget.innerHTML = '<div class="text-red-500 text-sm">Error loading schedule</div>';
+            widget.innerHTML = '<p class="text-red-500 text-sm">Error loading schedule</p>';
         }
     }
 
-    // Load School Calendar widget
     async loadCalendarWidget() {
-        console.log('Loading calendar widget...');
         const widget = document.getElementById('calendarWidget');
-        if (!widget) {
-            console.log('Calendar widget not found');
-            return;
+        if (!widget) return;
+
+        // Load calendar settings
+        let settings = { enableSaturdayClasses: false, enableSundayClasses: false };
+        if (window.USE_SUPABASE && window.supabaseClient) {
+            const { data } = await window.supabaseClient
+                .from('system_settings')
+                .select('value')
+                .eq('key', 'calendar_settings')
+                .single();
+            if (data) settings = data.value;
         }
+
+        // Simple calendar render
+        const today = new Date();
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
+        
+        const firstDay = new Date(currentYear, currentMonth, 1);
+        const lastDay = new Date(currentYear, currentMonth + 1, 0);
+        
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        
+        let html = `
+            <div class="text-center font-semibold mb-2 text-gray-700">
+                ${monthNames[currentMonth]} ${currentYear}
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center text-xs mb-1">
+                <div class="text-gray-400">Su</div>
+                <div class="text-gray-400">Mo</div>
+                <div class="text-gray-400">Tu</div>
+                <div class="text-gray-400">We</div>
+                <div class="text-gray-400">Th</div>
+                <div class="text-gray-400">Fr</div>
+                <div class="text-gray-400">Sa</div>
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center text-sm">
+        `;
+
+        // Empty cells for days before first day of month
+        for (let i = 0; i < firstDay.getDay(); i++) {
+            html += `<div></div>`;
+        }
+
+        // Days
+        for (let i = 1; i <= lastDay.getDate(); i++) {
+            const date = new Date(currentYear, currentMonth, i);
+            const dayOfWeek = date.getDay();
+            const isToday = i === today.getDate();
+            
+            // Check if day is disabled (weekend and not enabled)
+            let isWeekendDisabled = false;
+            if (dayOfWeek === 6 && !settings.enableSaturdayClasses) isWeekendDisabled = true;
+            if (dayOfWeek === 0) isWeekendDisabled = true; // Always disable Sunday
+
+            let classes = '';
+            if (isToday) {
+                classes = 'bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto';
+            } else if (isWeekendDisabled) {
+                classes = 'w-8 h-8 flex items-center justify-center mx-auto text-gray-300 bg-gray-50 rounded-full cursor-not-allowed';
+            } else {
+                classes = 'w-8 h-8 flex items-center justify-center mx-auto text-gray-700 hover:bg-gray-100 rounded-full cursor-pointer';
+            }
+            
+            html += `<div class="${classes}">${i}</div>`;
+        }
+
+        html += `</div>`;
+        
+        // Add upcoming events section
+        html += `
+            <div class="mt-4 pt-4 border-t border-gray-100">
+                <h5 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Upcoming Events</h5>
+                <div id="upcomingEventsList" class="space-y-2">
+                    <p class="text-xs text-gray-400 italic">Loading events...</p>
+                </div>
+            </div>
+        `;
+
+        widget.innerHTML = html;
+
+        // Load events asynchronously
+        this.loadUpcomingEvents();
+    }
+
+    async loadUpcomingEvents() {
+        const list = document.getElementById('upcomingEventsList');
+        if (!list) return;
 
         try {
             const today = new Date();
-            const currentMonth = today.getMonth();
-            const currentYear = today.getFullYear();
+            today.setHours(0,0,0,0);
             
-            // Generate calendar for current month
-            const firstDay = new Date(currentYear, currentMonth, 1).getDay();
-            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-            
-            let calendarHTML = `
-                <div class="text-center mb-3">
-                    <h4 class="font-semibold text-gray-800">${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h4>
-                </div>
-                <div class="grid grid-cols-7 gap-1 text-xs">
-                    <div class="text-center font-semibold text-gray-600">Sun</div>
-                    <div class="text-center font-semibold text-gray-600">Mon</div>
-                    <div class="text-center font-semibold text-gray-600">Tue</div>
-                    <div class="text-center font-semibold text-gray-600">Wed</div>
-                    <div class="text-center font-semibold text-gray-600">Thu</div>
-                    <div class="text-center font-semibold text-gray-600">Fri</div>
-                    <div class="text-center font-semibold text-gray-600">Sat</div>
-            `;
-            
-            // Empty cells for days before month starts
-            for (let i = 0; i < firstDay; i++) {
-                calendarHTML += '<div></div>';
+            let events = [];
+            if (window.USE_SUPABASE && window.supabaseClient) {
+                const { data } = await window.supabaseClient
+                    .from('school_calendar')
+                    .select('*')
+                    .gte('start_date', today.toISOString())
+                    .order('start_date', { ascending: true })
+                    .limit(3);
+                if (data) events = data;
             }
-            
-            // Days of the month
-            for (let day = 1; day <= daysInMonth; day++) {
-                const date = new Date(currentYear, currentMonth, day);
-                const dateStr = date.toISOString().split('T')[0];
-                const isToday = day === today.getDate();
-                const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-                
-                let cellClass = 'text-center p-1 rounded ';
-                if (isToday) cellClass += 'bg-blue-500 text-white font-bold ';
-                else if (isWeekend) cellClass += 'bg-gray-100 text-gray-400 ';
-                else cellClass += 'text-gray-700 ';
-                
-                calendarHTML += `<div class="${cellClass}">${day}</div>`;
+
+            if (events.length === 0) {
+                list.innerHTML = '<p class="text-xs text-gray-400">No upcoming events</p>';
+                return;
             }
-            
-            calendarHTML += '</div>';
-            
-            // Add some sample events
-            const sampleEvents = [
-                { title: 'PTA Meeting', date: 15 },
-                { title: 'Science Fair', date: 22 },
-                { title: 'Holiday', date: 25 }
-            ];
-            
-            calendarHTML += `
-                <div class="mt-3 pt-3 border-t border-gray-200">
-                    <div class="text-xs font-semibold text-gray-700 mb-2">Upcoming Events:</div>
-                    <div class="space-y-1">
-                        ${sampleEvents.map(event => `
-                            <div class="text-xs text-gray-600">
-                                <span class="inline-block w-2 h-2 bg-red-400 rounded-full mr-1"></span>
-                                ${event.title} - ${event.date}
-                            </div>
-                        `).join('')}
+
+            list.innerHTML = events.map(event => `
+                <div class="flex items-start space-x-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5"></div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-800">${event.title}</p>
+                        <p class="text-xs text-gray-500">${new Date(event.start_date).toLocaleDateString()}</p>
                     </div>
                 </div>
-            `;
-            
-            widget.innerHTML = calendarHTML;
+            `).join('');
 
         } catch (error) {
-            console.error('Error loading calendar widget:', error);
-            widget.innerHTML = '<div class="text-red-500 text-sm">Error loading calendar</div>';
+            console.error('Error loading events:', error);
+            list.innerHTML = '<p class="text-xs text-red-400">Error loading events</p>';
         }
     }
 
-    // Load At-Risk Students
-    async loadAtRiskStudents() {
-        console.log('Loading at-risk students...');
-        const container = document.getElementById('atRiskList');
-        if (!container) {
-            console.log('At-risk list container not found');
+    updateStats(stats) {
+        const totalStudentsEl = document.getElementById('totalStudents');
+        const totalTeachersEl = document.getElementById('totalTeachers');
+        const totalParentsEl = document.getElementById('totalParents');
+        const attendanceRateEl = document.getElementById('attendanceRate');
+
+        if (totalStudentsEl) totalStudentsEl.textContent = stats.totalStudents || 0;
+        if (totalTeachersEl) totalTeachersEl.textContent = stats.totalTeachers || 0;
+        if (totalParentsEl) totalParentsEl.textContent = stats.totalParents || 0;
+        if (attendanceRateEl) attendanceRateEl.textContent = (stats.attendanceRate || 0) + '%';
+    }
+
+    async loadRecentActivity() {
+        try {
+            const container = document.getElementById('recentActivity');
+            if (!container) {
+                console.error('Recent activity container not found');
+                return;
+            }
+
+            const activity = await EducareTrack.getRecentActivity(5);
+            
+            if (activity.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-4 text-gray-500">
+                        <i class="fas fa-inbox text-2xl mb-2"></i>
+                        <p>No recent activity</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = activity.map(item => {
+                let time = 'N/A';
+                if (item.timestamp) {
+                    if (typeof item.timestamp.toDate === 'function') {
+                        time = this.formatTime(item.timestamp.toDate());
+                    } else if (item.timestamp instanceof Date) {
+                        time = this.formatTime(item.timestamp);
+                    } else if (typeof item.timestamp === 'string') {
+                        time = this.formatTime(new Date(item.timestamp));
+                    } else {
+                        time = this.formatTime(new Date());
+                    }
+                }
+                const activityTime = item.time || 'Unknown time';
+                
+                const entryType = item.entry_type || (item.status === 'out' ? 'exit' : 'entry');
+                return `
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center">
+                            <div class="w-8 h-8 ${this.getActivityColor(entryType)} rounded-full flex items-center justify-center mr-3">
+                                <i class="${this.getActivityIcon(entryType)} text-sm"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium">${item.studentName || 'Unknown Student'}</p>
+                                <p class="text-xs text-gray-500">${entryType === 'entry' ? 'Entered' : 'Exited'} at ${activityTime}</p>
+                            </div>
+                        </div>
+                        <span class="text-xs text-gray-500">${activityTime}</span>
+                    </div>
+                `;
+            }).join('');
+        } catch (error) {
+            console.error('Error loading recent activity:', error);
+            const container = document.getElementById('recentActivity');
+            if (container) {
+                container.innerHTML = `
+                    <div class="text-center py-4 text-gray-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>Error loading activity</p>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    startRealTimeUpdates() {
+        // Poll every 60 seconds to keep stats fresh
+        if (this.pollInterval) clearInterval(this.pollInterval);
+        this.pollInterval = setInterval(() => {
+            console.log('Refreshing admin dashboard data...');
+            this.updateActiveUsers();
+            this.loadRealAttendanceData(); 
+        }, 60000);
+    }
+
+    async updateActiveUsers() {
+        try {
+            const users = await EducareTrack.getUsers();
+            const activeUsers = users.filter(user => user.is_active !== false).length;
+            const activeUsersEl = document.getElementById('activeUsers');
+            if (activeUsersEl) {
+                activeUsersEl.textContent = activeUsers;
+            }
+        } catch (error) {
+            console.error('Error loading active users:', error);
+        }
+    }
+
+    async loadRealAttendanceData() {
+        const chartTimeRange = document.getElementById('chartTimeRange');
+        const days = chartTimeRange ? parseInt(chartTimeRange.value) : 7;
+        await this.loadAttendanceDataForPeriod(days);
+    }
+
+    createRealAttendanceChart(attendanceData) {
+        const ctx = document.getElementById('attendanceChart');
+        if (!ctx) {
+            console.error('Attendance chart canvas not found');
             return;
         }
+        
+        const chartCtx = ctx.getContext('2d');
+        
+        // Destroy existing chart if it exists
+        if (this.attendanceChart) {
+            this.attendanceChart.destroy();
+        }
 
+        this.attendanceChart = new Chart(chartCtx, {
+            type: 'bar',
+            data: {
+                labels: attendanceData.labels,
+                datasets: [
+                    {
+                        label: 'Present',
+                        data: attendanceData.datasets.present,
+                        backgroundColor: '#10B981',
+                        borderColor: '#047857',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Absent',
+                        data: attendanceData.datasets.absent,
+                        backgroundColor: '#EF4444',
+                        borderColor: '#DC2626',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Late',
+                        data: attendanceData.datasets.late,
+                        backgroundColor: '#F59E0B',
+                        borderColor: '#D97706',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Clinic',
+                        data: attendanceData.datasets.clinic,
+                        backgroundColor: '#3B82F6',
+                        borderColor: '#1D4ED8',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Number of Students'
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return value;
+                            }
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Date'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Weekly Attendance Overview'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y;
+                                return `${label}: ${value} students`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    createSampleAttendanceChart() {
+        const ctx = document.getElementById('attendanceChart');
+        if (!ctx) {
+            console.error('Attendance chart canvas not found');
+            return;
+        }
+        
+        const chartCtx = ctx.getContext('2d');
+        
+        // Get current date and generate labels for the past 7 days
+        const labels = [];
+        const presentData = [];
+        const absentData = [];
+        const lateData = [];
+        const clinicData = [];
+        
+        for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            labels.push(date.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                month: 'short', 
+                day: 'numeric' 
+            }));
+            
+            // Zero data (no random data)
+            presentData.push(0);
+            lateData.push(0);
+            clinicData.push(0);
+            absentData.push(0);
+        }
+
+        if (this.attendanceChart) {
+            this.attendanceChart.destroy();
+        }
+
+        this.attendanceChart = new Chart(chartCtx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Present',
+                        data: presentData,
+                        backgroundColor: '#10B981',
+                        borderColor: '#047857',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Absent',
+                        data: absentData,
+                        backgroundColor: '#EF4444',
+                        borderColor: '#DC2626',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Late',
+                        data: lateData,
+                        backgroundColor: '#F59E0B',
+                        borderColor: '#D97706',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Clinic',
+                        data: clinicData,
+                        backgroundColor: '#3B82F6',
+                        borderColor: '#1D4ED8',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Number of Students'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Date'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Weekly Attendance Overview (No Data Available)'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y;
+                                return `${label}: ${value} students`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async loadAttendanceDataForPeriod(days) {
         try {
-            // For now, show a placeholder message
-            // In a real implementation, this would query the database for at-risk students
-            container.innerHTML = `
-                <div class="text-green-600 text-sm">
-                    <div class="flex items-center mb-2">
-                        <i class="fas fa-check-circle mr-2"></i>
-                        No at-risk students found in the last 14 days
-                    </div>
-                    <div class="text-xs text-gray-500">
-                        Students with 3+ absences or 5+ late arrivals would appear here
-                    </div>
-                </div>
-            `;
+            this.showLoading();
+            
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - days);
 
+            const attendanceData = await EducareTrack.getAttendanceTrend(startDate, endDate, 'day');
+            
+            const chartInfoEl = document.getElementById('chartInfo');
+            
+            if (attendanceData && attendanceData.labels && attendanceData.datasets) {
+                this.createRealAttendanceChart(attendanceData);
+                if (chartInfoEl) chartInfoEl.textContent = `Showing attendance data for the past ${days} days`;
+            } else {
+                this.createSampleAttendanceChart();
+                if (chartInfoEl) chartInfoEl.textContent = 'No attendance data available for this period';
+            }
+            
+            this.hideLoading();
         } catch (error) {
-            console.error('Error loading at-risk students:', error);
-            container.innerHTML = '<div class="text-red-500 text-sm">Error loading at-risk students</div>';
+            console.error('Error loading attendance data for period:', error);
+            this.createSampleAttendanceChart();
+            const chartInfoEl = document.getElementById('chartInfo');
+            if (chartInfoEl) chartInfoEl.textContent = 'Error loading data';
+            this.hideLoading();
         }
     }
 
-    // Setup event listeners for interactive elements
-    setupEventListeners() {
+    getActivityColor(entry_type) {
+        return entry_type === 'entry' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600';
+    }
+
+    getActivityIcon(entry_type) {
+        return entry_type === 'entry' ? 'fas fa-sign-in-alt' : 'fas fa-sign-out-alt';
+    }
+
+    formatTime(date) {
+        if (!date) return 'N/A';
+        try {
+            return new Date(date).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (error) {
+            return 'Invalid Time';
+        }
+    }
+
+    initEventListeners() {
+        // Sidebar toggle
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        if (sidebarToggle) {
+            sidebarToggle.addEventListener('click', () => {
+                this.toggleSidebar();
+            });
+        }
+
+        // Logout
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async () => {
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                    : true;
+                if (ok) {
+                    localStorage.removeItem('educareTrack_user');
+                    window.location.href = '../index.html';
+                }
+            });
+        }
+
+        const logoutBtnHeader = document.getElementById('logoutBtnHeader');
+        if (logoutBtnHeader) {
+            logoutBtnHeader.addEventListener('click', async () => {
+                const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
+                    ? await window.EducareTrack.confirmAction('Are you sure you want to logout?', 'Confirm Logout', 'Logout', 'Cancel')
+                    : true;
+                if (ok) {
+                    localStorage.removeItem('educareTrack_user');
+                    window.location.href = '../index.html';
+                }
+            });
+        }
+
         // Refresh chart button
         const refreshChart = document.getElementById('refreshChart');
         if (refreshChart) {
             refreshChart.addEventListener('click', () => {
-                this.loadAttendanceChart();
+                this.loadRealAttendanceData();
             });
         }
 
-        // Chart time range selector
+        // Time range selector
         const chartTimeRange = document.getElementById('chartTimeRange');
         if (chartTimeRange) {
-            chartTimeRange.addEventListener('change', () => {
-                this.loadAttendanceChart();
+            chartTimeRange.addEventListener('change', (e) => {
+                const days = parseInt(e.target.value);
+                this.loadAttendanceDataForPeriod(days);
             });
         }
 
-        // Clinic trend range selector
         const clinicTrendRange = document.getElementById('clinicTrendRange');
         if (clinicTrendRange) {
-            clinicTrendRange.addEventListener('change', () => {
-                this.loadClinicChart();
-            });
+            clinicTrendRange.addEventListener('change', () => this.loadClinicAndAbsenceTrends());
         }
-
-        // Absence trend range selector
         const absenceTrendRange = document.getElementById('absenceTrendRange');
         if (absenceTrendRange) {
-            absenceTrendRange.addEventListener('change', () => {
-                this.loadAbsenceChart();
-            });
+            absenceTrendRange.addEventListener('change', () => this.loadClinicAndAbsenceTrends());
         }
 
-        // Refresh at-risk students button
         const refreshAtRisk = document.getElementById('refreshAtRisk');
         if (refreshAtRisk) {
-            refreshAtRisk.addEventListener('click', () => {
-                this.loadAtRiskStudents();
-            });
+            refreshAtRisk.addEventListener('click', () => this.loadAtRiskStudents());
         }
 
-        // Logout buttons
-        const logoutBtn = document.getElementById('logoutBtn');
-        const logoutBtnHeader = document.getElementById('logoutBtnHeader');
-        
-        const handleLogout = () => {
-            localStorage.removeItem('educareTrack_user');
-            window.location.href = '../index.html';
-        };
+        // Escape key to close modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.closeAnyOpenModal();
+            }
+        });
+    }
 
-        if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
-        if (logoutBtnHeader) logoutBtnHeader.addEventListener('click', handleLogout);
+    async loadClinicAndAbsenceTrends() {
+        try {
+            const clinicRangeEl = document.getElementById('clinicTrendRange');
+            const absenceRangeEl = document.getElementById('absenceTrendRange');
+            const clinicDays = clinicRangeEl ? parseInt(clinicRangeEl.value) : 30;
+            const absenceDays = absenceRangeEl ? parseInt(absenceRangeEl.value) : 90;
+            const end = new Date();
+            const clinicStart = new Date(end.getTime() - clinicDays * 24 * 60 * 60 * 1000);
+            const absenceStart = new Date(end.getTime() - absenceDays * 24 * 60 * 60 * 1000);
+            const clinicTrend = await EducareTrack.getClinicReasonTrend(clinicStart, end, 6);
+            const absenceTrend = await EducareTrack.getAbsenceReasonTrend(absenceStart, end, 8);
+            const excusedData = await EducareTrack.getExcusedVsUnexcusedAbsences(absenceStart, end);
+            const clinicCtxEl = document.getElementById('clinicReasonsChart');
+            const absenceCtxEl = document.getElementById('absenceReasonsChart');
+            const donutCtxEl = document.getElementById('excusedDonut');
+            const self = this;
+            if (clinicCtxEl) {
+                if (this.clinicReasonsChart) {
+                    this.clinicReasonsChart.destroy();
+                }
+                const ctx = clinicCtxEl.getContext('2d');
+                this.clinicReasonsChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels: clinicTrend.labels, datasets: [{ label: 'Visits', data: clinicTrend.counts, backgroundColor: '#3B82F6' }] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        onClick: function(evt, elements, chart) {
+                            if (elements && elements.length > 0) {
+                                const index = elements[0].index;
+                                const label = chart.data.labels[index];
+                                self.openDrilldown('clinic', label, clinicStart, end);
+                            }
+                        }
+                    }
+                });
+            }
+            if (absenceCtxEl) {
+                if (this.absenceReasonsChart) {
+                    this.absenceReasonsChart.destroy();
+                }
+                const ctx = absenceCtxEl.getContext('2d');
+                this.absenceReasonsChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels: absenceTrend.labels, datasets: [{ label: 'Absences', data: absenceTrend.counts, backgroundColor: '#F59E0B' }] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        onClick: function(evt, elements, chart) {
+                            if (elements && elements.length > 0) {
+                                const index = elements[0].index;
+                                const label = chart.data.labels[index];
+                                self.openDrilldown('absence', label, absenceStart, end);
+                            }
+                        }
+                    }
+                });
+            }
+            if (donutCtxEl) {
+                if (this.excusedDonutChart) {
+                    this.excusedDonutChart.destroy();
+                }
+                const ctx = donutCtxEl.getContext('2d');
+                this.excusedDonutChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels: ['Excused', 'Unexcused', 'Pending'], datasets: [{ data: [excusedData.approved, excusedData.rejected, excusedData.pending], backgroundColor: ['#10B981', '#EF4444', '#9CA3AF'] }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+                });
+            }
+        } catch (error) {
+            console.error('Error loading clinic/absence trends:', error);
+        }
+    }
 
-        // Sidebar toggle (for mobile)
-        const sidebarToggle = document.getElementById('sidebarToggle');
+    async openDrilldown(type, label, startDate, endDate) {
+        try {
+            const modal = document.getElementById('drilldownModal');
+            const titleEl = document.getElementById('drilldownTitle');
+            const subtitleEl = document.getElementById('drilldownSubtitle');
+            const metaEl = document.getElementById('drilldownMeta');
+            const contentEl = document.getElementById('drilldownContent');
+            const pivotEl = document.getElementById('pivotSelect');
+            if (!modal || !titleEl || !subtitleEl || !contentEl || !pivotEl) return;
+
+            titleEl.textContent = type === 'clinic' ? 'Clinic Visits' : 'Absence Excuse Letters';
+            subtitleEl.textContent = `Reason: ${label}`;
+            metaEl.textContent = `${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`;
+            contentEl.innerHTML = '<div class="text-gray-500 text-sm">Loading...</div>';
+            modal.classList.remove('hidden');
+
+            const fetchData = async () => {
+                let items = [];
+                if (type === 'clinic') {
+                    items = await EducareTrack.getClinicReasonDetails({ startDate, endDate, reason: label });
+                } else {
+                    items = await EducareTrack.getAbsenceReasonDetails({ startDate, endDate, reason: label });
+                }
+                this.renderDrilldown(items, type);
+            };
+
+            await fetchData();
+
+            const closeBtn = document.getElementById('closeDrilldown');
+            if (closeBtn) {
+                closeBtn.onclick = () => { modal.classList.add('hidden'); };
+            }
+
+            pivotEl.onchange = async (e) => {
+                const pivot = e.target.value;
+                let items = [];
+                if (type === 'clinic') {
+                    items = await EducareTrack.getClinicReasonDetails({ startDate, endDate, reason: label });
+                } else {
+                    items = await EducareTrack.getAbsenceReasonDetails({ startDate, endDate, reason: label });
+                }
+                if (pivot === 'none') {
+                    this.renderDrilldown(items, type);
+                } else {
+                    const groups = {};
+                    items.forEach(it => {
+                        const key = it[pivot] || 'Unknown';
+                        groups[key] = groups[key] || [];
+                        groups[key].push(it);
+                    });
+                    const html = Object.keys(groups).sort().map(key => {
+                        const list = groups[key];
+                        return `
+                            <div class="border border-gray-200 rounded-md">
+                                <div class="px-3 py-2 bg-gray-50 text-gray-700 text-sm flex items-center justify-between">
+                                    <span>${pivot === 'class_id' ? 'Class' : 'Grade'}: ${key}</span>
+                                    <span class="text-gray-500">${list.length} records</span>
+                                </div>
+                                <div class="divide-y divide-gray-100">
+                                    ${list.map(it => this.renderDrilldownItem(it, type)).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    contentEl.innerHTML = html || '<div class="text-gray-500 text-sm">No records found</div>';
+                }
+            };
+        } catch (error) {
+            console.error('Error opening drilldown:', error);
+        }
+    }
+
+    renderDrilldown(items, type) {
+        const contentEl = document.getElementById('drilldownContent');
+        if (!contentEl) return;
+        if (!items || items.length === 0) {
+            contentEl.innerHTML = '<div class="text-gray-500 text-sm">No records found</div>';
+            return;
+        }
+        contentEl.innerHTML = items.map(it => this.renderDrilldownItem(it, type)).join('');
+    }
+
+    renderDrilldownItem(it, type) {
+        const dateText = (() => {
+            const t = type === 'clinic' ? it.timestamp : it.submittedAt;
+            if (!t) return '';
+            return t.toDate ? t.toDate().toLocaleString() : new Date(t).toLocaleString();
+        })();
+        const rightTag = type === 'clinic'
+            ? `<span class="text-xs px-2 py-1 rounded ${it.teacherValidationStatus === 'approved' ? 'bg-green-100 text-green-700' : it.teacherValidationStatus === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}">${it.teacherValidationStatus || 'pending'}</span>`
+            : `<span class="text-xs px-2 py-1 rounded ${it.status === 'approved' ? 'bg-green-100 text-green-700' : it.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}">${it.status || 'pending'}</span>`;
+        return `
+            <div class="flex items-center justify-between p-3">
+                <div>
+                    <div class="text-sm font-medium text-gray-800">${it.studentName || it.student_id}</div>
+                    <div class="text-xs text-gray-500">${type === 'clinic' ? (it.notes || '') : ''}</div>
+                    <div class="text-xs text-gray-400">${dateText}</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">${it.class_id || ''}${it.grade ? ` • ${it.grade}` : ''}</div>
+                    ${rightTag}
+                </div>
+            </div>
+        `;
+    }
+
+    async loadAtRiskStudents() {
+        try {
+            const end = new Date();
+            const start = new Date(end.getTime() - 14 * 24 * 60 * 60 * 1000);
+            const list = await EducareTrack.getAtRiskStudentsReport({ startDate: start, endDate: end, limit: 20 });
+            const container = document.getElementById('atRiskList');
+            if (!container) return;
+            if (!list || list.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-sm">No at-risk students found</div>';
+                return;
+            }
+            container.innerHTML = list.map(item => `
+                <div class="flex items-center justify-between border border-gray-200 rounded-md p-3">
+                    <div>
+                        <div class="text-sm font-medium text-gray-800">${item.studentName}</div>
+                        <div class="text-xs text-gray-500">Class: ${item.class_id}</div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-xs px-2 py-1 rounded bg-red-100 text-red-700">${item.absentDays} absences</span>
+                        <span class="text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-700">${item.lateDays} lates</span>
+                        <span class="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700">Risk ${item.riskScore}</span>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Error loading at-risk students:', error);
+        }
+    }
+
+    toggleSidebar() {
         const sidebar = document.querySelector('.sidebar');
         const mainContent = document.querySelector('.main-content');
         
-        if (sidebarToggle && sidebar && mainContent) {
-            sidebarToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('collapsed');
-                if (sidebar.classList.contains('collapsed')) {
-                    mainContent.style.marginLeft = '70px';
-                } else {
-                    mainContent.style.marginLeft = '256px';
-                }
-            });
+        if (sidebar && mainContent) {
+            if (sidebar.classList.contains('collapsed')) {
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('ml-16');
+                mainContent.classList.add('ml-64');
+            } else {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.remove('ml-64');
+                mainContent.classList.add('ml-16');
+            }
+        }
+    }
+
+    closeAnyOpenModal() {
+        const modals = document.querySelectorAll('.fixed.inset-0');
+        modals.forEach(modal => {
+            if (!modal.classList.contains('hidden')) {
+                modal.classList.add('hidden');
+            }
+        });
+    }
+
+    showLoading() {
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        if (loadingSpinner) {
+            loadingSpinner.classList.remove('hidden');
+        }
+    }
+
+    hideLoading() {
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        if (loadingSpinner) {
+            loadingSpinner.classList.add('hidden');
+        }
+    }
+
+    showNotification(message, type = 'info') {
+        if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+            window.EducareTrack.showNormalNotification({ title: type === 'error' ? 'Error' : 'Info', message, type });
         }
     }
 }
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
-    window.adminDashboard = new AdminDashboard();
+// Initialize dashboard when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    window.dashboard = new AdminDashboard();
 });

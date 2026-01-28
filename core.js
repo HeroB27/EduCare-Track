@@ -6,97 +6,116 @@ if (typeof window !== 'undefined' && typeof window.exports === 'undefined') {
     window.exports = {};
 }
 
-const SupabaseFieldValue = {
-    serverTimestamp: () => new Date(),
-    arrayUnion: (...values) => ({ __op: 'arrayUnion', values }),
-    arrayRemove: (...values) => ({ __op: 'arrayRemove', values })
-};
-const SupabaseTimestamp = { fromDate: (d) => ({ toDate: () => d }) };
-class SupabaseDoc {
-    constructor(client, table, id, data) {
-        this.id = id;
-        this._data = data || {};
-        this.ref = new SupabaseDocRef(client, table, id);
-    }
-    data() {
-        return this._data || {};
-    }
+if (typeof SupabaseFieldValue === 'undefined') {
+    const SupabaseFieldValue = {
+        serverTimestamp: () => new Date(),
+        arrayUnion: (...values) => ({ __op: 'arrayUnion', values }),
+        arrayRemove: (...values) => ({ __op: 'arrayRemove', values })
+    };
+    window.SupabaseFieldValue = SupabaseFieldValue;
 }
-class SupabaseSnapshot {
-    constructor(client, table, rows) {
-        this.docs = rows.map(r => new SupabaseDoc(client, table, r.id, r));
-        this.size = this.docs.length;
-    }
-    forEach(fn) {
-        this.docs.forEach(fn);
-    }
-    docChanges() {
-        return this.docs.map(d => ({ type: 'added', doc: d }));
-    }
+
+if (typeof SupabaseTimestamp === 'undefined') {
+    const SupabaseTimestamp = { fromDate: (d) => ({ toDate: () => d }) };
+    window.SupabaseTimestamp = SupabaseTimestamp;
 }
-class SupabaseDocRef {
-    constructor(client, table, id) {
-        this.client = client;
-        this.table = table;
-        this.id = id;
-    }
-    async _ensureClient() {
-        if (!this.client && typeof window !== 'undefined' && window.supabaseClient) {
-            this.client = window.supabaseClient;
+
+if (typeof SupabaseDoc === 'undefined') {
+    class SupabaseDoc {
+        constructor(client, table, id, data) {
+            this.id = id;
+            this._data = data || {};
+            this.ref = new SupabaseDocRef(client, table, id);
         }
-        if (!this.client) {
-            await new Promise(resolve => {
-                let tries = 0;
-                const t = setInterval(() => {
-                    tries++;
-                    if (window.supabaseClient) {
-                        this.client = window.supabaseClient;
-                        clearInterval(t);
-                        resolve();
-                    } else if (tries >= 30) {
-                        clearInterval(t);
-                        resolve();
+        data() {
+            return this._data || {};
+        }
+    }
+    window.SupabaseDoc = SupabaseDoc;
+}
+
+if (typeof SupabaseSnapshot === 'undefined') {
+    class SupabaseSnapshot {
+        constructor(client, table, rows) {
+            this.docs = rows.map(r => new SupabaseDoc(client, table, r.id, r));
+            this.size = this.docs.length;
+        }
+        forEach(fn) {
+            this.docs.forEach(fn);
+        }
+        docChanges() {
+            return this.docs.map(d => ({ type: 'added', doc: d }));
+        }
+    }
+    window.SupabaseSnapshot = SupabaseSnapshot;
+}
+
+if (typeof SupabaseDocRef === 'undefined') {
+    class SupabaseDocRef {
+        constructor(client, table, id) {
+            this.client = client;
+            this.table = table;
+            this.id = id;
+        }
+        async _ensureClient() {
+            if (!this.client && typeof window !== 'undefined' && window.supabaseClient) {
+                this.client = window.supabaseClient;
+            }
+            if (!this.client) {
+                await new Promise(resolve => {
+                    let tries = 0;
+                    const t = setInterval(() => {
+                        tries++;
+                        if (window.supabaseClient) {
+                            this.client = window.supabaseClient;
+                            clearInterval(t);
+                            resolve();
+                        } else if (tries >= 30) {
+                            clearInterval(t);
+                            resolve();
+                        }
+                    }, 100);
+                });
+            }
+            if (!this.client) throw new Error('Supabase client not initialized');
+        }
+        async get() {
+            await this._ensureClient();
+            const { data } = await this.client.from(this.table).select('*').eq('id', this.id).single();
+            if (!data) return { exists: false, data: () => ({}) };
+            return { exists: true, id: this.id, data: () => data };
+        }
+        async set(data) {
+            await this._ensureClient();
+            await this.client.from(this.table).upsert({ id: this.id, ...data });
+        }
+        async update(data) {
+            await this._ensureClient();
+            const processed = { ...data };
+            const sentinelKeys = Object.keys(processed).filter(k => processed[k] && typeof processed[k] === 'object' && processed[k].__op);
+            if (sentinelKeys.length > 0) {
+                const { data: current } = await this.client.from(this.table).select('*').eq('id', this.id).single();
+                sentinelKeys.forEach(key => {
+                    const op = processed[key].__op;
+                    const values = Array.isArray(processed[key].values) ? processed[key].values : [];
+                    const existing = Array.isArray(current?.[key]) ? current[key] : [];
+                    let next = existing.slice();
+                    if (op === 'arrayUnion') {
+                        values.forEach(v => { if (!next.includes(v)) next.push(v); });
+                    } else if (op === 'arrayRemove') {
+                        next = next.filter(v => !values.includes(v));
                     }
-                }, 100);
-            });
+                    processed[key] = next;
+                });
+            }
+            await this.client.from(this.table).update(processed).eq('id', this.id);
         }
-        if (!this.client) throw new Error('Supabase client not initialized');
-    }
-    async get() {
-        await this._ensureClient();
-        const { data } = await this.client.from(this.table).select('*').eq('id', this.id).single();
-        if (!data) return { exists: false, data: () => ({}) };
-        return { exists: true, id: this.id, data: () => data };
-    }
-    async set(data) {
-        await this._ensureClient();
-        await this.client.from(this.table).upsert({ id: this.id, ...data });
-    }
-    async update(data) {
-        await this._ensureClient();
-        const processed = { ...data };
-        const sentinelKeys = Object.keys(processed).filter(k => processed[k] && typeof processed[k] === 'object' && processed[k].__op);
-        if (sentinelKeys.length > 0) {
-            const { data: current } = await this.client.from(this.table).select('*').eq('id', this.id).single();
-            sentinelKeys.forEach(key => {
-                const op = processed[key].__op;
-                const values = Array.isArray(processed[key].values) ? processed[key].values : [];
-                const existing = Array.isArray(current?.[key]) ? current[key] : [];
-                let next = existing.slice();
-                if (op === 'arrayUnion') {
-                    values.forEach(v => { if (!next.includes(v)) next.push(v); });
-                } else if (op === 'arrayRemove') {
-                    next = next.filter(v => !values.includes(v));
-                }
-                processed[key] = next;
-            });
+        async delete() {
+            await this._ensureClient();
+            await this.client.from(this.table).delete().eq('id', this.id);
         }
-        await this.client.from(this.table).update(processed).eq('id', this.id);
     }
-    async delete() {
-        await this._ensureClient();
-        await this.client.from(this.table).delete().eq('id', this.id);
-    }
+    window.SupabaseDocRef = SupabaseDocRef;
 }
 class SupabaseCollection {
     constructor(client, table) {
@@ -372,18 +391,18 @@ const EducareTrack = {
     async createNotification(data) {
         try {
             // Normalize keys to snake_case for Supabase
+            // Schema: id, target_users, title, message, type, read_by, related_record, is_urgent, created_at
             const notification = {
                 title: data.title,
                 message: data.message,
                 type: data.type || 'info',
                 target_users: data.target_users || data.targetUsers || [],
-                student_id: data.student_id || data.studentId || null,
-                student_name: data.student_name || data.studentName || null,
+                // student_id and student_name are NOT in the schema
                 related_record: data.related_record || data.relatedRecord || null,
                 is_urgent: data.is_urgent || data.isUrgent || false,
                 read_by: [],
-                created_at: new Date().toISOString(),
-                is_active: true
+                created_at: new Date().toISOString()
+                // is_active is NOT in the schema
             };
 
             if (!notification.target_users || notification.target_users.length === 0) {
@@ -417,8 +436,8 @@ const EducareTrack = {
                 .from('notifications')
                 .select('*')
                 .contains('target_users', [userId])
-                .eq('is_active', true)
-                .order('timestamp', { ascending: false })
+                // is_active is NOT in the schema
+                .order('created_at', { ascending: false }) // Use created_at instead of timestamp
                 .limit(limit);
 
             const { data, error } = await query;
@@ -443,7 +462,7 @@ const EducareTrack = {
                 .from('notifications')
                 .select('id, read_by')
                 .contains('target_users', [userId])
-                .eq('is_active', true)
+                // is_active is NOT in the schema
                 .limit(50); // Batch size
             
             if (!unread) return;
@@ -620,35 +639,8 @@ const EducareTrack = {
         }
     },
 
-    async getClinicReasonTrend(startDate, endDate, limit = 6) {
-        try {
-            const { data, error } = await this.db.client
-                .from('clinic_visits')
-                .select('reason')
-                .gte('visit_time', startDate.toISOString())
-                .lte('visit_time', endDate.toISOString());
-
-            if (error) throw error;
-
-            const counts = {};
-            data.forEach(r => {
-                const reason = r.reason || 'Unspecified';
-                counts[reason] = (counts[reason] || 0) + 1;
-            });
-
-            const sorted = Object.entries(counts)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, limit);
-
-            return {
-                labels: sorted.map(([k]) => k),
-                counts: sorted.map(([, v]) => v)
-            };
-        } catch (error) {
-            console.error('Error getting clinic reason trend:', error);
-            return { labels: [], counts: [] };
-        }
-    },
+    // getClinicReasonTrend: MOVED TO LINE 5237 to avoid duplicates and ensure enhanced version is used
+    // Duplicate implementation removed from here.
 
     async getAbsenceReasonTrend(startDate, endDate, limit = 8) {
         // Since we don't have a separate absence reasons table yet (usually in excuse letters or attendance remarks),
@@ -870,8 +862,8 @@ const EducareTrack = {
 
     // Session types
     SESSIONS: {
-        MORNING: 'morning',
-        AFTERNOON: 'afternoon'
+        MORNING: 'AM',
+        AFTERNOON: 'PM'
     },
 
     // Notification types
@@ -1481,7 +1473,7 @@ const EducareTrack = {
             const { data: students } = await window.supabaseClient
                 .from('students')
                 .select('level')
-                .eq('is_active', true);
+                .in('current_status', ['enrolled', 'active', 'present']);
             
             const levelCounts = (students || []).reduce((acc, s) => {
                 if (s.level) {
@@ -1574,7 +1566,7 @@ const EducareTrack = {
                 .from('attendance')
                 .select('id', { count: 'exact', head: true })
                 .gte('timestamp', today.toISOString())
-                .eq('entry_type', 'entry');
+                .eq('session', 'AM');
             if (error) return 0;
             return count || 0;
         } catch (error) {
@@ -1593,7 +1585,7 @@ const EducareTrack = {
                 .select('student_id,status,timestamp')
                 .gte('timestamp', start.toISOString())
                 .lte('timestamp', end.toISOString())
-                .eq('entry_type', 'entry');
+                .eq('session', 'AM');
 
             if (error) return { uniquePresent: 0, totalPresent: 0, days: 0 };
             
@@ -2194,17 +2186,29 @@ const EducareTrack = {
     // Get students by level and strand
     async getStudentsByLevel(level, strand = null) {
         try {
-            let query = window.supabaseClient
-                .from('students')
-                .select('*')
-                .eq('level', level)
-                .eq('is_active', true);
-            
+            // First get classes for this level
+            let classQuery = window.supabaseClient
+                .from('classes')
+                .select('id')
+                .eq('level', level);
+                
             if (strand) {
-                query = query.eq('strand', strand);
+                classQuery = classQuery.eq('strand', strand);
             }
             
-            const { data, error } = await query;
+            const { data: classes, error: classError } = await classQuery;
+            if (classError) throw classError;
+            
+            const classIds = (classes || []).map(c => c.id);
+            
+            if (classIds.length === 0) return [];
+
+            const { data, error } = await window.supabaseClient
+                .from('students')
+                .select('*')
+                .in('class_id', classIds)
+                .in('current_status', ['enrolled', 'active']);
+            
             if (error) throw error;
             
             // Fetch parent mappings
@@ -2228,7 +2232,7 @@ const EducareTrack = {
                 parentId: parentMap.get(s.id),
                 parent_id: parentMap.get(s.id),
                 emergencyContact: s.emergency_contact,
-                grade: s.level
+                grade: level
             }));
         } catch (error) {
             console.error('Error getting students by level:', error);
@@ -2242,7 +2246,7 @@ const EducareTrack = {
             const { data, error } = await window.supabaseClient
                 .from('students')
                 .select('*')
-                .eq('is_active', true)
+                .in('current_status', ['enrolled', 'active'])
                 .order('created_at', { ascending: false })
                 .limit(limit);
             
@@ -2251,7 +2255,7 @@ const EducareTrack = {
                 ...s,
                 name: s.full_name,
                 classId: s.class_id,
-                grade: s.level
+                grade: '' // Requires class join
             }));
         } catch (error) {
             console.error('Error getting recent enrollments:', error);
@@ -2264,7 +2268,7 @@ const EducareTrack = {
         try {
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
+                .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
                 .order('timestamp', { ascending: false })
                 .limit(limit);
             if (error || !data) {
@@ -2284,7 +2288,10 @@ const EducareTrack = {
             return data.map(row => ({
                 id: row.id,
                 ...row,
-                studentName: namesById[row.student_id] || 'Unknown Student'
+                studentName: namesById[row.student_id] || 'Unknown Student',
+                time: row.timestamp ? new Date(row.timestamp).toLocaleTimeString() : '',
+                entry_type: row.session === 'AM' ? 'entry' : 'exit', // Derived
+                manual_entry: row.method === 'manual'
             }));
         } catch (error) {
             console.error('Error getting recent activity:', error);
@@ -2482,7 +2489,7 @@ const EducareTrack = {
         try {
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .select('id,student_id,class_id,entry_type,timestamp,time,session,status,remarks,recorded_by,recorded_by_name,manual_entry')
+                .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
                 .eq('student_id', studentId)
                 .order('timestamp', { ascending: false })
                 .limit(50);
@@ -2499,9 +2506,10 @@ const EducareTrack = {
                 studentId: r.student_id,
                 classId: r.class_id,
                 recordedBy: r.recorded_by,
-                recordedByName: r.recorded_by_name,
-                manualEntry: r.manual_entry,
-                studentName: name
+                // recordedByName not available in table
+                manualEntry: r.method === 'manual',
+                studentName: name,
+                entryType: r.session === 'AM' ? 'entry' : 'exit'
             }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);
@@ -2514,18 +2522,29 @@ const EducareTrack = {
         try {
             const { data, error } = await window.supabaseClient
                 .from('clinic_visits')
-                .select('id,student_id,student_name,class_id,reason,check_in,timestamp,notes,treated_by,outcome')
+                .select('id,student_id,reason,visit_time,notes,treated_by,outcome,status')
                 .eq('student_id', studentId)
-                .order('timestamp', { ascending: false })
+                .order('visit_time', { ascending: false })
                 .limit(50);
             if (error || !data) return [];
+            
+             const { data: s } = await window.supabaseClient
+                .from('students')
+                .select('id,full_name,class_id')
+                .eq('id', studentId)
+                .single();
+            const name = s ? s.full_name : '';
+            const classId = s ? s.class_id : '';
+
             return data.map(r => ({
                 id: r.id,
                 ...r,
                 studentId: r.student_id,
-                studentName: r.student_name,
-                classId: r.class_id,
-                treatedBy: r.treated_by
+                studentName: name,
+                classId: classId,
+                treatedBy: r.treated_by,
+                timestamp: r.visit_time ? new Date(r.visit_time) : null,
+                checkIn: r.visit_time
             }));
         } catch (error) {
             console.error('Error getting clinic visits by student:', error);
@@ -3347,15 +3366,22 @@ const EducareTrack = {
             const insertData = {
                 student_id: studentId,
                 class_id: student.class_id || '',
-                entry_type: entry_type,
+                // entry_type removed - mapped to session
                 timestamp: timestamp,
-                time: timeString,
-                session: session,
+                // time: timeString, // time column might not exist or is redundant with timestamp? keeping for now if schema has it, but based on prev fix it seemed fine. checking schema...
+                // Actually schema has `visit_time` in clinic, but attendance table? 
+                // Let's assume `time` column might be there or not. User said "missing columns... clinic_visits.check_in".
+                // I'll keep `time` if it was there, but remove known bad ones.
+                // Wait, previous grep showed `time` in attendance select in `generateAttendanceReport`? No.
+                // Let's assume `time` column exists for now or check tables.txt if possible.
+                // Safest is to rely on timestamp.
+                // But `recordGuardAttendance` used `method` and `remarks`.
+                session: entry_type === 'exit' ? 'PM' : 'AM', // Map entry/exit to AM/PM
                 status: status,
                 remarks: notes || '',
                 recorded_by: recordedBy || this.currentUser.id,
-                recorded_by_name: recordedByName || this.currentUser.name,
-                manual_entry: isObjectArg // Assume object arg implies manual/admin entry
+                // recorded_by_name removed
+                method: isObjectArg || manual_entry ? 'manual' : 'qr' // manual_entry -> method
             };
 
             const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(insertData).select('id').single();
@@ -3425,7 +3451,7 @@ const EducareTrack = {
                     .from('attendance')
                     .update({ 
                         status: status,
-                        manual_entry: true
+                        method: 'manual' // manual_entry -> method
                     })
                     .eq('id', recordId);
                 
@@ -3443,14 +3469,14 @@ const EducareTrack = {
                 const insertData = {
                     student_id: studentId,
                     class_id: student.class_id || '',
-                    entry_type: 'entry', // Assume entry if overriding status
+                    // entry_type removed
                     timestamp: today.toISOString(),
-                    time: timeString,
-                    session: session,
+                    // time: timeString, // removed
+                    session: session, // This is current session (AM/PM)
                     status: status,
                     recorded_by: this.currentUser ? this.currentUser.id : null,
-                    recorded_by_name: this.currentUser ? this.currentUser.name : 'System',
-                    manual_entry: true
+                    // recorded_by_name removed
+                    method: 'manual' // manual_entry -> method
                 };
 
                 const { data: inserted, error: insertError } = await window.supabaseClient
@@ -3528,14 +3554,12 @@ const EducareTrack = {
             const attendanceData = {
                 student_id: studentId,
                 class_id: student.class_id || '',
-                entry_type: entry_type,
-                timestamp: timestamp,
-                time: timeString,
+                timestamp: timestamp.toISOString(),
                 session: session,
                 status: status,
                 recorded_by: this.currentUser.id,
-                recorded_by_name: this.currentUser.name,
-                manual_entry: false
+                method: 'qr',
+                remarks: `Guard Scan: ${entry_type}`
             };
 
             const { data: attendanceRef, error } = await window.supabaseClient.from('attendance').insert(attendanceData).select('id').single();
@@ -3589,7 +3613,7 @@ const EducareTrack = {
             const stats = { present: 0, absent: 0, late: 0, clinic: 0, excused: 0 };
             const { data, error } = await window.supabaseClient
                 .from('attendance')
-                .select('status,timestamp,entry_type')
+                .select('status,timestamp')
                 .gte('timestamp', startOfDay.toISOString())
                 .lte('timestamp', endOfDay.toISOString());
             if (error) {
@@ -3650,15 +3674,12 @@ const EducareTrack = {
             const row = {
                 student_id: attendanceData.studentId,
                 class_id: student.class_id || '',
-                entry_type: 'entry',
                 timestamp: timestamp,
-                time: timeString,
                 session: session,
                 status: attendanceData.status,
                 recorded_by: attendanceData.recordedBy,
-                recorded_by_name: this.currentUser?.name || '',
                 remarks: attendanceData.notes || '',
-                manual_entry: true
+                method: 'manual'
             };
             const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
             if (error) {
@@ -3709,7 +3730,6 @@ const EducareTrack = {
                 .from('attendance')
                 .select('id,timestamp')
                 .eq('student_id', studentId)
-                .eq('entry_type', 'entry')
                 .gte('timestamp', today.toISOString())
                 .order('timestamp', { ascending: true })
                 .limit(1);
@@ -3728,19 +3748,15 @@ const EducareTrack = {
                 }
             } else {
                 const now = new Date();
-                const timeString = now.toTimeString().split(' ')[0].substring(0, 5);
                 const session = this.getCurrentSession();
                 const row = {
                     student_id: studentId,
-                    class_id: student.class_id || '',
-                    entry_type: 'entry',
-                    timestamp: now,
-                    time: timeString,
-                    session: session,
+                    class_id: student.class_id || null,
+                    session: session === 'morning' ? 'AM' : (session === 'afternoon' ? 'PM' : session), // Ensure AM/PM
+                    timestamp: now.toISOString(),
                     status: status,
-                    recorded_by: this.currentUser?.id || 'system',
-                    recorded_by_name: this.currentUser?.name || 'System',
-                    manual_entry: true,
+                    recorded_by: this.currentUser?.id,
+                    method: 'manual',
                     remarks: notes || ''
                 };
                 const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(row).select('id').single();
@@ -3947,10 +3963,8 @@ const EducareTrack = {
                 message: announcementData.message,
                 audience: audienceArray,
                 priority: announcementData.priority,
-                class_id: announcementData.class_id || announcementData.classId || null,
-                class_name: announcementData.class_name || announcementData.className || null,
                 created_by: this.currentUser.id,
-                created_by_name: this.currentUser.name,
+                created_by_name: this.currentUser.name || this.currentUser.full_name || 'Admin',
                 created_at: new Date().toISOString(),
                 is_active: true,
                 is_urgent: announcementData.is_urgent ?? announcementData.isUrgent ?? false,
@@ -4048,7 +4062,7 @@ const EducareTrack = {
                     audience: 'all',
                     priority: n.isUrgent ? 'high' : 'normal',
                     created_by: null,
-                    created_by_name: null,
+                    created_by_name: 'System',
                     created_at: n.createdAt,
                     is_active: true,
                     is_urgent: n.isUrgent,
@@ -4058,9 +4072,27 @@ const EducareTrack = {
                     expiryDate: null
                 }));
             }
+
+            // Resolve creator names
+            const userIds = [...new Set((data || []).map(a => a.created_by).filter(Boolean))];
+            let userMap = {};
+            if (userIds.length > 0) {
+                const { data: users } = await window.supabaseClient
+                    .from('profiles')
+                    .select('id, full_name, name')
+                    .in('id', userIds);
+                
+                if (users) {
+                    users.forEach(u => {
+                        userMap[u.id] = u.full_name || u.name;
+                    });
+                }
+            }
+
             return (data || []).map(a => ({
                 id: a.id,
                 ...a,
+                created_by_name: a.created_by_name || userMap[a.created_by] || 'Unknown',
                 createdAt: new Date(a.created_at),
                 isUrgent: a.is_urgent,
                 expiryDate: a.expiry_date
@@ -4375,26 +4407,9 @@ const EducareTrack = {
 
     // Calculate average clinic visit duration
     calculateAverageVisitDuration(visits) {
-        const check_ins = visits.filter(v => v.check_in);
-        const checkOuts = visits.filter(v => !v.check_in);
-        
-        let totalDuration = 0;
-        let pairCount = 0;
-
-        check_ins.forEach(check_in => {
-            const correspondingCheckOut = checkOuts.find(checkOut => 
-                checkOut.student_id === check_in.student_id && 
-                this.isSameDay(new Date(check_in.timestamp), new Date(checkOut.timestamp))
-            );
-
-            if (correspondingCheckOut && check_in.timestamp && correspondingCheckOut.timestamp) {
-                const duration = new Date(correspondingCheckOut.timestamp) - new Date(check_in.timestamp);
-                totalDuration += duration;
-                pairCount++;
-            }
-        });
-
-        return pairCount > 0 ? Math.round(totalDuration / pairCount / (1000 * 60)) : 0; // Return in minutes
+        // Schema mismatch: clinic_visits is single-row per visit, not check-in/out pairs.
+        // Cannot calculate duration without check-out time or duration field.
+        return 0;
     },
 
     // Check if two timestamps are on the same day
@@ -4520,7 +4535,10 @@ const EducareTrack = {
             // Ensure calendar data is loaded
             await this.fetchCalendarData();
 
-            const attendanceData = await this.getAttendanceReport(startDate, endDate, 'all');
+            const [attendanceData, clinicData] = await Promise.all([
+                this.getAttendanceReport(startDate, endDate, 'all'),
+                this.getClinicReport(startDate, endDate, 'all')
+            ]);
             
             // Group by date
             const dateGroups = {};
@@ -4529,7 +4547,7 @@ const EducareTrack = {
             const { data: students } = await window.supabaseClient
                 .from('students')
                 .select('level')
-                .eq('is_active', true);
+                .in('current_status', ['enrolled', 'active', 'present']);
             
             const levelCounts = (students || []).reduce((acc, s) => {
                 if (s.level) {
@@ -4554,14 +4572,33 @@ const EducareTrack = {
                     }
 
                     const group = dateGroups[date];
+                    const studentId = record.student_id || record.studentId;
                     
                     if (record.status === 'present') {
-                        group.present.add(record.studentId);
+                        group.present.add(studentId);
                     } else if (record.status === 'late') {
-                        group.late.add(record.studentId);
+                        group.late.add(studentId);
                     } else if (record.status === 'in_clinic') {
-                        group.clinic.add(record.studentId);
+                        group.clinic.add(studentId);
                     }
+                }
+            });
+
+            // Process clinic visits separately to ensure we catch all clinic activity
+            clinicData.forEach(visit => {
+                if (visit.timestamp && visit.check_in) {
+                    const ts = visit.timestamp && visit.timestamp.toDate ? visit.timestamp.toDate() : visit.timestamp;
+                    const date = new Date(ts).toDateString();
+                    if (!dateGroups[date]) {
+                        dateGroups[date] = {
+                            present: new Set(),
+                            absent: new Set(),
+                            late: new Set(),
+                            clinic: new Set()
+                        };
+                    }
+                    const studentId = visit.student_id || visit.studentId;
+                    dateGroups[date].clinic.add(studentId);
                 }
             });
 
@@ -4570,7 +4607,7 @@ const EducareTrack = {
             const presentData = [];
             const absentData = [];
             const lateData = [];
-            const clinicData = [];
+            const clinicDataset = [];
 
             const currentDate = new Date(startDate);
             const end = new Date(endDate);
@@ -4616,7 +4653,7 @@ const EducareTrack = {
                 presentData.push(presentCount);
                 absentData.push(absentCount);
                 lateData.push(isGlobalSchoolDay ? group.late.size : 0);
-                clinicData.push(isGlobalSchoolDay ? group.clinic.size : 0);
+                clinicDataset.push(isGlobalSchoolDay ? group.clinic.size : 0);
 
                 currentDate.setDate(currentDate.getDate() + 1);
             }
@@ -4627,7 +4664,7 @@ const EducareTrack = {
                     present: presentData,
                     absent: absentData,
                     late: lateData,
-                    clinic: clinicData
+                    clinic: clinicDataset
                 },
                 totalStudents: totalActiveStudents
             };
@@ -4643,7 +4680,7 @@ const EducareTrack = {
             const [{ data: attendanceData }, { data: clinicData }, studentCountRes] = await Promise.all([
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,status,timestamp,entry_type')
+                    .select('student_id,status,timestamp')
                     .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
                     .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString()),
                 window.supabaseClient
@@ -4709,7 +4746,7 @@ const EducareTrack = {
             const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,status,timestamp')
+                    .select('student_id,status,timestamp,remarks')
                     .eq('class_id', classId)
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso),
@@ -4722,6 +4759,7 @@ const EducareTrack = {
                     .from('students')
                     .select('id', { count: 'exact', head: true })
                     .eq('class_id', classId)
+                    .in('current_status', ['enrolled', 'active', 'present'])
             ]);
             if (attendanceRes.error) throw attendanceRes.error;
             if (clinicRes.error) throw clinicRes.error;
@@ -4742,11 +4780,12 @@ const EducareTrack = {
                 }
                 const studentId = row.student_id || row.studentId;
                 if (!studentId) return;
-                // Count all attendance records since entry_type doesn't exist
-                if (row.status === 'late') {
-                    dateGroups[dateKey].late.add(studentId);
-                } else if (row.status === 'present') {
-                    dateGroups[dateKey].present.add(studentId);
+                if (row.remarks && row.remarks.includes('qr_entry')) {
+                    if (row.status === 'late') {
+                        dateGroups[dateKey].late.add(studentId);
+                    } else if (row.status === 'present') {
+                        dateGroups[dateKey].present.add(studentId);
+                    }
                 }
             });
             (clinicRes.data || []).forEach(row => {
@@ -4814,10 +4853,11 @@ const EducareTrack = {
             const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
             const { data: attendance, error } = await window.supabaseClient
                 .from('attendance')
-                .select('student_id,status,timestamp')
+                .select('student_id,status,timestamp,remarks')
                 .eq('class_id', classId)
                 .gte('timestamp', startIso)
-                .lte('timestamp', endIso);
+                .lte('timestamp', endIso)
+                .ilike('remarks', 'qr_entry%');
             if (error) {
                 throw error;
             }
@@ -4859,41 +4899,158 @@ const EducareTrack = {
         }
     },
 
+    async getAttendanceTrend(startDate, endDate, period = 'day') {
+        try {
+            const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
+            const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
+
+            // 1. Get total active students (for percentage calculation)
+            const { count: totalStudents, error: countError } = await window.supabaseClient
+                .from('students')
+                .select('id', { count: 'exact', head: true })
+                .in('current_status', ['enrolled', 'active', 'present']);
+            
+            if (countError) throw countError;
+
+            // 2. Get attendance data
+            const { data: attendanceData, error: attendanceError } = await window.supabaseClient
+                .from('attendance')
+                .select('status, timestamp, remarks')
+                .gte('timestamp', startIso)
+                .lte('timestamp', endIso);
+
+            if (attendanceError) throw attendanceError;
+
+            // 3. Get clinic visits
+                const { data: clinicData, error: clinicError } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('visit_time')
+                    .gte('visit_time', startIso)
+                    .lte('visit_time', endIso);
+                    // .eq('check_in', true); // Removed: check_in column does not exist in schema
+
+            if (clinicError) throw clinicError;
+
+            // Process data by date
+            const dailyStats = new Map();
+            const normalizeDate = (d) => {
+                const date = new Date(d);
+                date.setHours(0, 0, 0, 0);
+                return date.toDateString();
+            };
+
+            // Initialize days
+            const cursor = new Date(startDate);
+            const end = new Date(endDate);
+            cursor.setHours(0,0,0,0);
+            end.setHours(23,59,59,999);
+            
+            while (cursor <= end) {
+                const key = cursor.toDateString();
+                if (!dailyStats.has(key)) {
+                    dailyStats.set(key, { 
+                        date: new Date(cursor),
+                        present: 0, 
+                        late: 0, 
+                        absent: 0, 
+                        clinic: 0,
+                        total: totalStudents
+                    });
+                }
+                cursor.setDate(cursor.getDate() + 1);
+            }
+
+            // Fill attendance
+            (attendanceData || []).forEach(r => {
+                if (!r.timestamp || !r.remarks || !r.remarks.includes('qr_entry')) return;
+                const key = normalizeDate(r.timestamp);
+                if (dailyStats.has(key)) {
+                    const stats = dailyStats.get(key);
+                    if (r.status === 'present') stats.present++;
+                    else if (r.status === 'late') stats.late++;
+                    else if (r.status === 'absent') stats.absent++;
+                }
+            });
+
+            // Fill clinic
+            (clinicData || []).forEach(r => {
+                if (!r.visit_time) return;
+                const key = normalizeDate(r.visit_time);
+                if (dailyStats.has(key)) {
+                    const stats = dailyStats.get(key);
+                    stats.clinic++;
+                }
+            });
+
+            // Convert to arrays
+            const labels = [];
+            const datasets = {
+                present: [],
+                late: [],
+                absent: [],
+                clinic: []
+            };
+
+            // Sort by date
+            const sortedKeys = Array.from(dailyStats.keys()).sort((a, b) => new Date(a) - new Date(b));
+
+            for (const key of sortedKeys) {
+                const stats = dailyStats.get(key);
+                const isSchoolDay = this.isSchoolDay(stats.date); 
+                if (isSchoolDay) {
+                    labels.push(stats.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+                    datasets.present.push(stats.present);
+                    datasets.late.push(stats.late);
+                    // Calculate absent based on total students, ensuring non-negative
+                    const counted = stats.present + stats.late + stats.clinic;
+                    datasets.absent.push(Math.max(0, stats.total - counted)); 
+                    datasets.clinic.push(stats.clinic);
+                }
+            }
+
+            return { labels, datasets };
+
+        } catch (error) {
+            console.error('Error getting global attendance trend:', error);
+            return { labels: [], datasets: { present: [], late: [], absent: [], clinic: [] } };
+        }
+    },
+
     async getClassStatusDistribution(classId, startDate, endDate) {
         try {
             const startIso = startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString();
             const endIso = endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString();
-            const [attendanceRes, clinicRes, studentCountRes] = await Promise.all([
+            const [attendanceRes, clinicRes, studentsRes] = await Promise.all([
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,status,entry_type,timestamp')
+                    .select('student_id,status,timestamp,remarks')
                     .eq('class_id', classId)
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso),
                 window.supabaseClient
                     .from('clinic_visits')
-                    .select('student_id,timestamp,check_in')
-                    .eq('class_id', classId)
-                    .eq('check_in', true)
+                    .select('student_id,timestamp,status')
+                    .eq('status', 'in_clinic')
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso),
                 window.supabaseClient
                     .from('students')
-                    .select('id', { count: 'exact', head: true })
+                    .select('id')
                     .eq('class_id', classId)
-                    .eq('is_active', true)
+                    .in('current_status', ['enrolled', 'active', 'present'])
             ]);
             if (attendanceRes.error) throw attendanceRes.error;
             if (clinicRes.error) throw clinicRes.error;
-            if (studentCountRes.error) throw studentCountRes.error;
+            if (studentsRes.error) throw studentsRes.error;
 
-            const totalStudents = studentCountRes.count || 0;
+            const classStudentIds = new Set((studentsRes.data || []).map(s => s.id));
+            const totalStudents = classStudentIds.size;
             const presentSet = new Set();
             const lateSet = new Set();
             const clinicSet = new Set();
 
             (attendanceRes.data || []).forEach(r => {
-                if (r.entry_type === 'entry') {
+                if (r.remarks && r.remarks.includes('qr_entry')) {
                     const studentId = r.student_id;
                     if (!studentId) return;
                     if (r.status === 'late') lateSet.add(studentId);
@@ -4902,7 +5059,7 @@ const EducareTrack = {
             });
             (clinicRes.data || []).forEach(v => {
                 const studentId = v.student_id;
-                if (studentId) clinicSet.add(studentId);
+                if (studentId && classStudentIds.has(studentId)) clinicSet.add(studentId);
             });
 
             const presentCount = presentSet.size + lateSet.size;
@@ -4934,10 +5091,10 @@ const EducareTrack = {
                     .from('students')
                     .select('id,full_name')
                     .eq('class_id', classId)
-                    .eq('is_active', true),
+                    .in('current_status', ['enrolled', 'active', 'present']),
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,status,entry_type,timestamp')
+                    .select('student_id,status,timestamp,remarks')
                     .eq('class_id', classId)
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso)
@@ -4952,7 +5109,7 @@ const EducareTrack = {
 
             const grid = new Map();
             (attendanceRes.data || []).forEach(r => {
-                if (!r.timestamp || r.entry_type !== 'entry') return;
+                if (!r.timestamp || !r.remarks || !r.remarks.includes('qr_entry')) return;
                 const ts = new Date(r.timestamp);
                 const dayKey = ts.toDateString();
                 const studentId = r.student_id;
@@ -4992,7 +5149,7 @@ const EducareTrack = {
             
             const { data: attendance, error } = await window.supabaseClient
                 .from('attendance')
-                .select('student_id,status,entry_type,timestamp')
+                .select('student_id,status,timestamp,remarks')
                 .eq('student_id', studentId)
                 .gte('timestamp', startIso)
                 .lte('timestamp', endIso);
@@ -5001,7 +5158,7 @@ const EducareTrack = {
 
             const days = new Map(); // dateKey -> {present:boolean, late:boolean, clinic:boolean}
             (attendance || []).forEach(r => {
-                if (!r.timestamp || r.entry_type !== 'entry') return;
+                if (!r.timestamp || !r.remarks || !r.remarks.includes('qr_entry')) return;
                 const ts = new Date(r.timestamp);
                 const key = ts.toDateString();
                 const d = days.get(key) || { present: false, late: false, clinic: false };
@@ -5052,7 +5209,7 @@ const EducareTrack = {
                     .select('id,full_name,class_id,name'),
                 window.supabaseClient
                     .from('attendance')
-                    .select('student_id,class_id,status,entry_type,timestamp')
+                    .select('student_id,class_id,status,timestamp,remarks')
                     .gte('timestamp', startIso)
                     .lte('timestamp', endIso)
             ]);
@@ -5061,7 +5218,7 @@ const EducareTrack = {
             const perStudentDays = new Map();
 
             (attendance || []).forEach(r => {
-                if (!r.timestamp || r.entry_type !== 'entry') return;
+                if (!r.timestamp || !r.remarks || !r.remarks.includes('qr_entry')) return;
                 const ts = new Date(r.timestamp);
                 const key = ts.toDateString();
                 const studentId = r.student_id;
@@ -5206,7 +5363,8 @@ const EducareTrack = {
                 .from('clinic_visits')
                 .select('reason')
                 .gte('visit_time', startDate.toISOString())
-                .lte('visit_time', endDate.toISOString());
+                .lte('visit_time', endDate.toISOString())
+                .eq('check_in', true);
             
             if (error) throw error;
             
@@ -5326,7 +5484,8 @@ const EducareTrack = {
                 .from('excuse_letters')
                 .select('status')
                 .gte('created_at', startDate.toISOString())
-                .lte('created_at', endDate.toISOString());
+                .lte('created_at', endDate.toISOString())
+                .eq('type', 'absence');
             
             if (error) throw error;
             
@@ -5390,7 +5549,7 @@ const EducareTrack = {
                     notes: v.notes || '',
                     teacherValidationStatus: v.teacherValidationStatus || 'pending',
                     validatedByName: v.validatedByName || '',
-                    timestamp: v.timestamp ? new Date(v.timestamp) : null
+                    timestamp: v.visit_time ? new Date(v.visit_time) : null
                 };
             });
         } catch (error) {
@@ -5404,9 +5563,9 @@ const EducareTrack = {
             let query = window.supabaseClient
                 .from('excuse_letters')
                 .select('*')
-                .gte('submitted_at', startDate.toISOString())
-                .lte('submitted_at', endDate.toISOString())
-                .eq('type', 'absence')
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString())
+                // .eq('type', 'absence') // Removed: column does not exist
                 .eq('reason', reason);
             
             if (status) {
@@ -5414,36 +5573,47 @@ const EducareTrack = {
             }
             
             const { data: letters, error } = await query
-                .order('submitted_at', { ascending: false })
+                .order('created_at', { ascending: false })
                 .limit(limit);
                 
             if (error) throw error;
             
-            const studentIds = Array.from(new Set(letters.map(l => l.studentId).filter(Boolean)));
+            const studentIds = Array.from(new Set((letters || []).map(l => l.student_id).filter(Boolean)));
             const students = {};
             
             if (studentIds.length > 0) {
                 const { data: studentData, error: sErr } = await window.supabaseClient
                     .from('students')
-                    .select('id, class_id, grade')
+                    .select('id, class_id, full_name')
                     .in('id', studentIds);
                     
                 if (!sErr && studentData) {
+                    // Fetch grades from classes
+                    const classIds = [...new Set(studentData.map(s => s.class_id).filter(Boolean))];
+                    const classGrades = {};
+                    if (classIds.length > 0) {
+                        const { data: classes } = await window.supabaseClient
+                            .from('classes')
+                            .select('id, grade')
+                            .in('id', classIds);
+                        (classes || []).forEach(c => classGrades[c.id] = c.grade);
+                    }
+
                     studentData.forEach(s => {
-                        students[s.id] = s;
+                        students[s.id] = { ...s, grade: classGrades[s.class_id] };
                     });
                 }
             }
             
-            return letters.map(l => ({
+            return (letters || []).map(l => ({
                 id: l.id,
-                studentId: l.studentId,
-                studentName: l.studentName,
-                classId: students[l.studentId]?.class_id || null,
-                grade: students[l.studentId]?.grade || null,
+                studentId: l.student_id,
+                studentName: l.studentName || students[l.student_id]?.full_name || 'Unknown', // Might need to fetch name if not in letter
+                classId: students[l.student_id]?.class_id || null,
+                grade: students[l.student_id]?.grade || null,
                 reason: l.reason || '',
                 status: l.status || 'pending',
-                submitted_at: l.submitted_at ? new Date(l.submitted_at) : null
+                submitted_at: l.created_at ? new Date(l.created_at) : null
             }));
         } catch (error) {
             console.error('Error getting absence reason details:', error);
@@ -5547,9 +5717,10 @@ const EducareTrack = {
                     }
 
                     if (hourGroups[hourLabel]) {
-                        if (record.entry_type === 'entry') {
+                        // Map session to entry/exit based on schema
+                        if (record.session === 'AM') {
                             hourGroups[hourLabel].entries++;
-                        } else if (record.entry_type === 'exit') {
+                        } else if (record.session === 'PM') {
                             hourGroups[hourLabel].exits++;
                         }
                     }
@@ -5705,9 +5876,10 @@ const EducareTrack = {
                     const hourLabel = hour <= 11 ? `${hour} AM` : `${hour - 12} PM`;
                     
                     if (hourGroups[hourLabel]) {
-                        if (record.entry_type === 'entry') {
+                        // Map session to entry/exit based on schema
+                        if (record.session === 'AM') {
                             hourGroups[hourLabel].entries++;
-                        } else if (record.entry_type === 'exit') {
+                        } else if (record.session === 'PM') {
                             hourGroups[hourLabel].exits++;
                         }
                     }

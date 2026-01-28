@@ -121,7 +121,7 @@ class AttendanceLogic {
             // Transform data to match expected format
             const transformedRecords = (records || []).map(r => ({
                 ...r,
-                entryType: r.session === 'AM' ? 'entry' : 'exit',
+                entryType: r.status === 'out' ? 'exit' : 'entry', // Map status to entryType
                 time: new Date(r.timestamp).toTimeString().substring(0, 5)
             }));
             
@@ -142,12 +142,12 @@ class AttendanceLogic {
         const lateThreshold = morningStart; // Strictly late if after start time
 
         const morningRecords = records.filter(record => 
-            record.session === 'morning' || 
+            record.session === 'AM' || 
             (record.time >= morningStart && record.time < morningEnd)
         );
 
         const afternoonRecords = records.filter(record => 
-            record.session === 'afternoon' || 
+            record.session === 'PM' || 
             (record.time >= afternoonStart && record.time < afternoonEnd)
         );
 
@@ -323,7 +323,7 @@ class AttendanceLogic {
         try {
             let query = window.supabaseClient
                 .from('attendance')
-                .select('id, student_id, session, status, method, timestamp, recorded_by')
+                .select('id, student_id, session, status, method, timestamp, recorded_by, students(full_name)')
                 .gte('timestamp', startDate.toISOString())
                 .lte('timestamp', endDate.toISOString())
                 .order('timestamp', { ascending: false });
@@ -340,6 +340,7 @@ class AttendanceLogic {
             const records = (data || []).map(r => ({
                 id: r.id,
                 student_id: r.student_id,
+                student_name: r.students?.full_name,
                 entryType: r.session === 'AM' ? 'entry' : 'exit',
                 entry_type: r.session === 'AM' ? 'entry' : 'exit',
                 timestamp: new Date(r.timestamp),
@@ -482,12 +483,12 @@ class AttendanceLogic {
         const currentTime = now.getHours() + ':' + now.getMinutes().toString().padStart(2, '0');
         
         if (currentTime >= '7:30' && currentTime < '12:00') {
-            return 'morning';
+            return 'AM';
         } else if (currentTime >= '13:00' && currentTime < '16:00') {
-            return 'afternoon';
+            return 'PM';
         }
         
-        return 'general';
+        return 'AM'; // Default to AM if unsure, or maybe handle null
     }
 
     isLate(time, grade = null, level = null) {

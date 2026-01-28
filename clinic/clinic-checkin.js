@@ -964,8 +964,6 @@ class ClinicCheckin {
                     title: notificationTitle,
                     message: message,
                     type: 'clinic',
-                    student_id: student.id,
-                    student_name: student.name || student.full_name || 'Unknown',
                     related_record: visitId,
                     is_urgent: notificationData.is_urgent,
                     read_by: [], // Initialize as empty array

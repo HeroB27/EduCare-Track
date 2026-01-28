@@ -409,17 +409,17 @@ class ParentClinic {
             const child = this.children.find(c => c.id === visit.studentId);
             const visitDate = this.getVisitDate(visit);
 
-            // Check if urgent
-            const isUrgent = visit.recommendations && 
-                (visit.recommendations === 'fetch_child' || 
-                 visit.recommendations === 'immediate_pickup' || 
-                 visit.recommendations === 'medical_attention');
+            // Check if urgent (combine reason-based urgency and recommendation-based urgency)
+            const isUrgent = (visit.urgency === 'urgent') || 
+                           (visit.reason && visit.reason.toLowerCase().includes('urgent')) ||
+                           (visit.recommendations && 
+                            ['fetch_child', 'immediate_pickup', 'medical_attention'].includes(visit.recommendations));
 
             const urgentSection = isUrgent ? `
-                <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 animate-pulse">
                     <div class="flex items-center">
                         <i class="fas fa-exclamation-triangle text-red-600 mr-2"></i>
-                        <span class="text-red-800 font-semibold">URGENT CASE</span>
+                        <span class="text-red-800 font-bold">URGENT CASE</span>
                     </div>
                     <p class="text-red-700 text-sm mt-1">
                         This case requires immediate attention. Please review the recommendations below.
@@ -433,118 +433,141 @@ class ParentClinic {
                     <div class="flex items-center justify-between">
                         <div class="flex items-center">
                             <div class="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mr-4">
-                                <i class="fas fa-heartbeat text-red-600"></i>
+                                <i class="fas fa-heartbeat text-red-600 text-xl"></i>
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold text-gray-800">Clinic Visit</h3>
-                                <p class="text-gray-600">${this.formatDate(visitDate)} at ${this.formatTime(visitDate)}</p>
+                                <p class="text-gray-600 text-sm">${this.formatDate(visitDate)} at ${this.formatTime(visitDate)}</p>
                             </div>
                         </div>
-                        <span class="px-3 py-1 rounded-full text-sm font-medium ${
-                            visit.checkIn ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
-                        }">
-                            ${visit.checkIn ? 'Check-in' : 'Check-out'}
-                        </span>
+                        <div class="flex items-center space-x-2">
+                            <span class="px-3 py-1 rounded-full text-sm font-medium ${
+                                visit.checkIn ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                            }">
+                                ${visit.checkIn ? 'Check-in' : 'Check-out'}
+                            </span>
+                            <button onclick="parentClinic.closeVisitDetailsModal()" class="text-gray-400 hover:text-gray-600 focus:outline-none p-2 rounded-full hover:bg-gray-100 transition-colors">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
                     </div>
 
                     ${urgentSection}
 
                     <!-- Student Information -->
-                    <div class="bg-gray-50 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
-                            <i class="fas fa-user-graduate mr-2"></i>
+                    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <h4 class="font-semibold text-gray-700 mb-2 flex items-center text-sm uppercase tracking-wide">
+                            <i class="fas fa-user-graduate mr-2 text-indigo-500"></i>
                             Student Information
                         </h4>
                         <div class="grid grid-cols-2 gap-4 text-sm">
                             <div>
-                                <span class="text-gray-600">Name:</span>
-                                <p class="font-medium">${child ? child.name : 'Unknown'}</p>
+                                <span class="text-gray-500 text-xs uppercase">Name</span>
+                                <p class="font-medium text-gray-900">${child ? child.name : 'Unknown'}</p>
                             </div>
                             <div>
-                                <span class="text-gray-600">Grade & Level:</span>
-                                <p class="font-medium">${child ? `${child.grade} • ${child.level}` : 'N/A'}</p>
+                                <span class="text-gray-500 text-xs uppercase">Grade & Level</span>
+                                <p class="font-medium text-gray-900">${child ? `${child.grade} • ${child.level}` : 'N/A'}</p>
                             </div>
                             <div>
-                                <span class="text-gray-600">Class:</span>
-                                <p class="font-medium">${child ? child.classId || 'Not assigned' : 'N/A'}</p>
+                                <span class="text-gray-500 text-xs uppercase">Class</span>
+                                <p class="font-medium text-gray-900">${child ? child.classId || 'Not assigned' : 'N/A'}</p>
                             </div>
                             <div>
-                                <span class="text-gray-600">Student ID:</span>
-                                <p class="font-medium">${child ? child.studentId || 'N/A' : 'N/A'}</p>
+                                <span class="text-gray-500 text-xs uppercase">Student ID</span>
+                                <p class="font-medium text-gray-900">${child ? child.studentId || 'N/A' : 'N/A'}</p>
                             </div>
                         </div>
                     </div>
 
                     <!-- Visit Details -->
-                    <div class="bg-gray-50 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
-                            <i class="fas fa-clipboard-list mr-2"></i>
-                            Visit Details
-                        </h4>
-                        <div class="space-y-3">
+                    <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                            <h4 class="font-semibold text-gray-700 flex items-center text-sm uppercase tracking-wide">
+                                <i class="fas fa-clipboard-list mr-2 text-blue-500"></i>
+                                Visit Details
+                            </h4>
+                        </div>
+                        <div class="p-4 space-y-4">
                             <div>
-                                <span class="text-gray-600 block text-sm mb-1">Reason for Visit:</span>
-                                <p class="font-medium">${visit.reason || 'Not specified'}</p>
+                                <span class="flex items-center text-xs font-bold text-gray-500 uppercase mb-1">
+                                    Reason for Visit
+                                </span>
+                                <p class="font-medium bg-gray-50 p-3 rounded border border-gray-200 text-gray-800">${visit.reason || 'Not specified'}</p>
                             </div>
                             ${visit.medicalFindings ? `
                             <div>
-                                <span class="text-gray-600 block text-sm mb-1">Medical Findings:</span>
-                                <p class="text-gray-700 bg-white p-3 rounded border">${visit.medicalFindings}</p>
+                                <span class="flex items-center text-xs font-bold text-green-600 uppercase mb-1">
+                                    <i class="fas fa-stethoscope mr-1"></i> Medical Findings
+                                </span>
+                                <div class="bg-green-50 text-green-800 p-3 rounded-md border border-green-200">
+                                    ${visit.medicalFindings}
+                                </div>
                             </div>
                             ` : ''}
                             ${visit.treatmentGiven ? `
                             <div>
-                                <span class="text-gray-600 block text-sm mb-1">Treatment Given:</span>
-                                <p class="text-gray-700 bg-white p-3 rounded border">${visit.treatmentGiven}</p>
+                                <span class="flex items-center text-xs font-bold text-purple-600 uppercase mb-1">
+                                    <i class="fas fa-pills mr-1"></i> Treatment Given
+                                </span>
+                                <div class="bg-purple-50 text-purple-800 p-3 rounded-md border border-purple-200">
+                                    ${visit.treatmentGiven}
+                                </div>
                             </div>
                             ` : ''}
                             ${visit.recommendations ? `
                             <div>
-                                <span class="text-gray-600 block text-sm mb-1">Recommendations:</span>
-                                <p class="text-gray-700 bg-white p-3 rounded border font-medium ${
-                                    isUrgent ? 'text-red-600' : ''
-                                }">${this.getRecommendationText(visit.recommendations)}</p>
+                                <span class="flex items-center text-xs font-bold text-orange-600 uppercase mb-1">
+                                    <i class="fas fa-user-md mr-1"></i> Recommendations
+                                </span>
+                                <div class="bg-orange-50 text-orange-800 p-3 rounded-md border border-orange-200">
+                                    ${this.getRecommendationText(visit.recommendations)}
+                                </div>
                             </div>
                             ` : ''}
                             ${visit.additionalNotes ? `
                             <div>
-                                <span class="text-gray-600 block text-sm mb-1">Additional Notes:</span>
-                                <p class="text-gray-700 bg-white p-3 rounded border">${visit.additionalNotes}</p>
+                                <span class="flex items-center text-xs font-bold text-gray-500 uppercase mb-1">
+                                    <i class="fas fa-sticky-note mr-1"></i> Additional Notes
+                                </span>
+                                <div class="bg-gray-50 text-gray-600 p-3 rounded-md border border-gray-200 text-sm italic">
+                                    ${visit.additionalNotes}
+                                </div>
                             </div>
                             ` : ''}
-                            <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div class="border-t border-gray-100 pt-3 mt-2 grid grid-cols-2 gap-4 text-xs text-gray-500">
                                 <div>
-                                    <span class="text-gray-600">Recorded by:</span>
-                                    <p class="font-medium">${visit.staffName || 'Unknown'}</p>
+                                    <span>Recorded by:</span>
+                                    <span class="font-medium text-gray-700 ml-1">${visit.staffName || 'Unknown'}</span>
                                 </div>
                                 <div>
-                                    <span class="text-gray-600">Time:</span>
-                                    <p class="font-medium">${this.formatTime(visitDate)}</p>
+                                    <span>Time:</span>
+                                    <span class="font-medium text-gray-700 ml-1">${this.formatTime(visitDate)}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Related Information -->
+                    <!-- Status Banner -->
                     ${visit.checkIn ? `
-                    <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                        <div class="flex items-center">
-                            <i class="fas fa-info-circle text-blue-600 mr-2"></i>
-                            <span class="text-blue-800 font-medium">Check-in Record</span>
+                    <div class="bg-blue-50 rounded-lg p-4 border border-blue-200 flex items-start">
+                        <i class="fas fa-info-circle text-blue-600 mt-1 mr-3"></i>
+                        <div>
+                            <span class="text-blue-800 font-bold block mb-1">Check-in Active</span>
+                            <p class="text-blue-700 text-sm">
+                                Your child is currently in the clinic. You will receive a notification when they are checked out.
+                            </p>
                         </div>
-                        <p class="text-blue-700 text-sm mt-1">
-                            Your child was checked into the clinic. You will receive another notification when they check out.
-                        </p>
                     </div>
                     ` : `
-                    <div class="bg-green-50 rounded-lg p-4 border border-green-200">
-                        <div class="flex items-center">
-                            <i class="fas fa-check-circle text-green-600 mr-2"></i>
-                            <span class="text-green-800 font-medium">Check-out Complete</span>
+                    <div class="bg-green-50 rounded-lg p-4 border border-green-200 flex items-start">
+                        <i class="fas fa-check-circle text-green-600 mt-1 mr-3"></i>
+                        <div>
+                            <span class="text-green-800 font-bold block mb-1">Check-out Complete</span>
+                            <p class="text-green-700 text-sm">
+                                Your child has been checked out from the clinic and returned to class.
+                            </p>
                         </div>
-                        <p class="text-green-700 text-sm mt-1">
-                            Your child has been checked out from the clinic and returned to class.
-                        </p>
                     </div>
                     `}
                 </div>

@@ -555,6 +555,8 @@ const DataInitializer = {
 
             const startDate = new Date('2025-11-01');
             const endDate = new Date(); // Today
+            this.log(`Generating attendance from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}...`, 'info');
+            
             const records = [];
 
             // Get an admin ID for recorded_by
@@ -592,7 +594,7 @@ const DataInitializer = {
 
             // Batch upsert
             await this.upsertRows('attendance', records);
-            this.log('✅ Seeded attendance', 'success');
+            this.log(`✅ Seeded attendance (${records.length} records)`, 'success');
         } catch (error) {
              console.error('Error seeding attendance:', error);
         }
@@ -724,26 +726,28 @@ const DataInitializer = {
             const visits = [];
 
             // Create some random visits
-            for (let i = 0; i < 10; i++) {
+            for (let i = 0; i < 20; i++) {
                 const s = students[i % students.length];
                 if (!s) break;
 
                 const id = await this.generateDeterministicUUID(`clinic-${s.id}-${i}`);
                 const visitTime = new Date(now.getTime() - i * 3600000 * 24).toISOString(); // Spread over days
+                const isUrgent = i % 5 === 0; // Every 5th visit is urgent
                 
                 visits.push({
                     id: id,
                     student_id: s.id,
-                    reason: i % 2 === 0 ? 'Headache' : 'Fever',
+                    reason: isUrgent ? 'High Fever' : (i % 2 === 0 ? 'Headache' : 'Stomach ache'),
                     visit_time: visitTime,
-                    notes: 'Sent back to class after rest',
+                    notes: isUrgent ? 'Immediate attention required. Parent notified.' : 'Sent back to class after rest',
                     treated_by: clinicId,
-                    outcome: 'Resolved'
+                    outcome: isUrgent ? 'Sent Home' : 'Resolved',
+                    urgency: isUrgent ? 'urgent' : 'normal'
                 });
             }
 
             await this.upsertRows('clinic_visits', visits);
-            this.log('✅ Seeded clinic_visits', 'success');
+            this.log('✅ Seeded clinic_visits (with Urgency)', 'success');
         } catch (error) {
             console.error('Error seeding clinic visits:', error);
         }

@@ -194,7 +194,7 @@ class TeacherAttendance {
                 id: record.id,
                 ...record,
                 studentId: record.student_id,
-                entryType: record.entry_type,
+                entryType: record.session === 'PM' ? 'exit' : 'entry',
                 classId: record.class_id,
                 timestamp: new Date(record.timestamp)
             }));

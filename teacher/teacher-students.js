@@ -152,8 +152,7 @@ class TeacherStudents {
                     const { data, error } = await window.supabaseClient
                         .from('students')
                         .select('*')
-                        .eq('class_id', this.currentUser.classId)
-                        .eq('is_active', true);
+                        .eq('class_id', this.currentUser.classId);
 
                     if (error) throw error;
                     
@@ -163,7 +162,8 @@ class TeacherStudents {
                         classId: s.class_id,
                         parentId: s.parent_id,
                         emergencyContact: s.emergency_contact,
-                        grade: s.level || s.grade
+                        grade: this.currentClass?.grade || s.grade || 'N/A',
+                        level: this.currentClass?.level || s.level || 'N/A'
                     }));
                     console.log('Loaded students via direct query (Supabase):', students);
                 } catch (error) {
@@ -579,11 +579,12 @@ class TeacherStudents {
                 id: record.id,
                 ...record,
                 studentId: record.student_id,
-                entryType: record.entry_type,
+                entryType: record.status === 'out' ? 'exit' : 'entry', // Map status to entryType
+                time: new Date(record.timestamp).toTimeString().substring(0, 5), // Ensure time property exists
                 classId: record.class_id,
                 timestamp: new Date(record.timestamp),
-                recordedBy: record.recorded_by,
-                recordedByName: record.recorded_by_name
+                recordedBy: record.recorded_by
+                // recordedByName removed
             }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);

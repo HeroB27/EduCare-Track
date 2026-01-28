@@ -348,6 +348,10 @@ class TeacherClinicDashboard {
             const disposition = dispositionInput.value;
             const notes = modal.querySelector('#teacherNotes').value;
             
+            if (!confirm('Are you sure you want to submit this decision?')) {
+                return;
+            }
+
             this.showToast('Submitting decision...', 'info');
             
             const visit = this.activeVisits.find(v => v.id === visitId);
@@ -399,22 +403,97 @@ class TeacherClinicDashboard {
         }
     }
 
+    openDecisionModal(visitId) {
+        try {
+            const visit = this.activeVisits.find(v => v.id === visitId);
+            if (!visit) {
+                this.showToast('Visit not found', 'error');
+                return;
+            }
+
+            const student = this.students.find(s => s.id === visit.studentId);
+            
+            let overlay = document.getElementById('decisionModal');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'decisionModal';
+                overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4';
+                overlay.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl max-w-lg w-full">
+                        <div class="px-6 py-4 border-b flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-800">Clinic Decision</h3>
+                            <button onclick="window.clinicDashboard.closeDecisionModal()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="px-6 py-4" id="decisionModalBody">
+                            <!-- Dynamic Content -->
+                        </div>
+                        <div class="px-6 py-4 border-t flex justify-end space-x-2">
+                            <button onclick="window.clinicDashboard.closeDecisionModal()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Cancel</button>
+                            <button id="submitDecisionBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Submit Decision</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(overlay);
+            }
+
+            const body = document.getElementById('decisionModalBody');
+            body.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <div class="flex items-center mb-2">
+                            <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                                <span class="text-blue-600 font-bold">${student ? student.name.charAt(0) : '?'}</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-gray-800">${student ? student.name : 'Unknown Student'}</h4>
+                                <p class="text-sm text-gray-600">Arrived: ${new Date(visit.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                            </div>
+                        </div>
+                        <div class="text-sm text-gray-700">
+                            <p><strong>Reason:</strong> ${visit.reason}</p>
+                            ${visit.nurseRecommendation ? `<p class="mt-1 text-yellow-800 bg-yellow-100 p-2 rounded"><strong><i class="fas fa-user-nurse mr-1"></i> Recommendation:</strong> ${visit.nurseRecommendation}</p>` : ''}
+                        </div>
+                    </div>
+
+                    <form id="decisionForm">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Disposition</label>
+                        <div class="space-y-2">
+                            <label class="flex items-center p-3 border rounded hover:bg-gray-50 cursor-pointer">
+                                <input type="radio" name="disposition" value="return_to_class" class="h-4 w-4 text-blue-600 focus:ring-blue-500" checked>
+                                <span class="ml-3 block text-sm font-medium text-gray-700">Return to Class</span>
+                            </label>
+                            <label class="flex items-center p-3 border rounded hover:bg-gray-50 cursor-pointer">
+                                <input type="radio" name="disposition" value="send_home" class="h-4 w-4 text-red-600 focus:ring-red-500">
+                                <span class="ml-3 block text-sm font-medium text-gray-700">Send Home</span>
+                            </label>
+                        </div>
+
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                            <textarea id="teacherNotes" class="w-full border rounded px-3 py-2 h-24 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Optional notes..."></textarea>
+                        </div>
+                    </form>
+                </div>
+            `;
+
+            document.getElementById('submitDecisionBtn').onclick = () => this.saveDecision(visitId);
+            
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+        } catch (error) {
+            console.error('Error opening decision modal:', error);
+            this.showToast('Error opening decision modal', 'error');
+        }
+    }
+
     closeDecisionModal() {
-        // Since there is no modal in the HTML provided, we might be using an inline panel or a modal that needs to be created.
-        // Looking at the debris, it seems there might have been a 'clearDecisionPanel' or similar.
-        // However, looking at the HTML structure, there isn't an obvious modal container.
-        // Let's assume we need to implement a modal or check if I missed reading part of the HTML.
-        // For now, I'll implement a basic hidden toggle if an element exists, or just log it.
-        // Actually, let's look at how active visits are rendered. If they have a "Respond" button, it might open a modal.
         const modal = document.getElementById('decisionModal');
         if (modal) {
             modal.classList.add('hidden');
             modal.classList.remove('flex');
         }
-        
-        // Also clear form
-        const form = document.getElementById('decisionForm');
-        if (form) form.reset();
     }
 
     updateStats() {
@@ -459,6 +538,28 @@ class TeacherClinicDashboard {
                             <p class="text-sm text-gray-600 mt-1">
                                 <span class="font-semibold">Reason:</span> ${visit.reason || 'Not specified'}
                             </p>
+                            ${visit.medicalFindings ? `
+                                <div class="mt-2 p-2 bg-green-50 rounded text-sm text-green-800 border border-green-100">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-stethoscope mr-2 mt-1"></i>
+                                        <div>
+                                            <strong>Medical Findings:</strong><br/>
+                                            ${visit.medicalFindings}
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${visit.treatmentGiven ? `
+                                <div class="mt-2 p-2 bg-purple-50 rounded text-sm text-purple-800 border border-purple-100">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-pills mr-2 mt-1"></i>
+                                        <div>
+                                            <strong>Treatment Given:</strong><br/>
+                                            ${visit.treatmentGiven}
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
                             ${visit.nurseRecommendation ? `
                                 <div class="mt-2 p-2 bg-yellow-100 rounded text-sm text-yellow-800 border border-yellow-200">
                                     <div class="flex items-start">
@@ -481,64 +582,7 @@ class TeacherClinicDashboard {
         }).join('');
     }
 
-    openDecisionModal(visitId) {
-        const visit = this.activeVisits.find(v => v.id === visitId);
-        if (!visit) return;
-        
-        // We need to inject the modal into the DOM if it doesn't exist, or use an existing one.
-        // Let's create the modal dynamically if it doesn't exist to ensure it works with the HTML.
-        let modal = document.getElementById('decisionModal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'decisionModal';
-            modal.className = 'fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50';
-            modal.innerHTML = `
-                <div class="bg-white rounded-lg w-full max-w-md p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-bold text-gray-800">Teacher Decision</h3>
-                        <button onclick="window.clinicDashboard.closeDecisionModal()" class="text-gray-500 hover:text-gray-700">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                    <div class="mb-4">
-                        <p class="text-sm text-gray-600 mb-2">Student: <span id="modalStudentName" class="font-semibold"></span></p>
-                        <p class="text-sm text-gray-600 mb-4">Reason: <span id="modalReason"></span></p>
-                        
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Disposition</label>
-                        <div class="space-y-2 mb-4">
-                            <label class="flex items-center space-x-2 p-2 border rounded hover:bg-gray-50 cursor-pointer">
-                                <input type="radio" name="disposition" value="return_to_class" class="text-blue-600" checked>
-                                <span>Return to Class</span>
-                            </label>
-                            <label class="flex items-center space-x-2 p-2 border rounded hover:bg-gray-50 cursor-pointer">
-                                <input type="radio" name="disposition" value="send_home" class="text-red-600">
-                                <span>Send Home (Urgent)</span>
-                            </label>
-                        </div>
-                        
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Notes / Instructions</label>
-                        <textarea id="teacherNotes" class="w-full border border-gray-300 rounded-lg p-2 h-24" placeholder="Enter notes for the clinic staff and parents..."></textarea>
-                    </div>
-                    <div class="flex justify-end space-x-3">
-                        <button onclick="window.clinicDashboard.closeDecisionModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                        <button onclick="window.clinicDashboard.saveDecision('${visitId}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Submit Decision</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        } else {
-             // Update the save button's onclick
-             const saveBtn = modal.querySelector('button[onclick^="window.clinicDashboard.saveDecision"]');
-             if (saveBtn) saveBtn.setAttribute('onclick', `window.clinicDashboard.saveDecision('${visitId}')`);
-        }
-        
-        const student = this.students.find(s => s.id === visit.studentId);
-        modal.querySelector('#modalStudentName').textContent = student ? student.name : 'Unknown';
-        modal.querySelector('#modalReason').textContent = visit.reason || 'Not specified';
-        
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-    }
+    // Old modal removed to avoid duplication
 
     async notifyParents(studentId, decision, studentName, notes, visitId) {
         try {

@@ -273,8 +273,7 @@ class TeacherAnnouncements {
                 priority,
                 created_by: this.currentUser.id,
                 created_by_name: this.currentUser.name,
-                is_active: true,
-                class_id: this.currentUser.classId // Helper for simpler queries if needed
+                is_active: true
             };
 
             const { data, error } = await window.supabaseClient

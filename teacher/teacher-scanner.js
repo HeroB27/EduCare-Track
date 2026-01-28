@@ -466,7 +466,7 @@ class TeacherScanner {
             
             if (entryType === 'entry') {
                 // Time In logic
-                if (session === 'morning') {
+                if (session === 'AM') {
                     if (timeString <= '07:30') {
                         status = 'present';
                         remarks = 'On time arrival';
@@ -474,7 +474,7 @@ class TeacherScanner {
                         status = 'late';
                         remarks = 'Late arrival';
                     }
-                } else if (session === 'afternoon') {
+                } else if (session === 'PM') {
                     if (timeString <= '13:00') {
                         status = 'present';
                         remarks = 'On time after lunch';
@@ -488,10 +488,10 @@ class TeacherScanner {
                 }
             } else {
                 // Time Out logic
-                status = 'present';
+                status = 'out';
                 
                 // Check if student was absent in morning but tapping out in afternoon
-                if (session === 'afternoon') {
+                if (session === 'PM') {
                     const morningAttendance = await this.getStudentMorningAttendance(studentId);
                     if (!morningAttendance) {
                         status = 'half_day';
@@ -513,7 +513,7 @@ class TeacherScanner {
             const record = {
                 student_id: studentId,
                 class_id: student.class_id || student.classId || null,
-                session: session === 'morning' ? 'AM' : 'PM',
+                session: session,
                 status: status,
                 method: 'qr',
                 timestamp: timestamp.toISOString(),
@@ -673,7 +673,7 @@ class TeacherScanner {
             .select('id')
             .eq('student_id', studentId)
             .gte('timestamp', today.toISOString())
-            .eq('session', 'morning')
+            .eq('session', 'AM')
             .limit(1);
             
         return !error && data && data.length > 0;

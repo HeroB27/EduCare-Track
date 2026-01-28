@@ -49,7 +49,7 @@
         </div>
         
         <!-- Navigation Menu -->
-<nav class="flex-1 p-4">
+<nav class="flex-1 p-4 overflow-y-auto">
     <ul class="space-y-2">
         <li>
             <a href="admin-dashboard.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
@@ -98,12 +98,6 @@
             <a href="add-parent-student.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
                 <i class="fas fa-user-plus w-5 h-5 mr-3"></i>
                 <span class="sidebar-text">Enroll Student</span>
-            </a>
-        </li>
-        <li>
-            <a href="school-calendar.html" class="nav-item flex items-center p-3 text-gray-700 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition duration-200">
-                <i class="fas fa-calendar-alt w-5 h-5 mr-3"></i>
-                <span class="sidebar-text">School Calendar</span>
             </a>
         </li>
         <li>
@@ -252,16 +246,24 @@
                     </div>
                     
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Audience *</label>
-                            <select id="announcementAudience" required
-                                   class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="all">All Users</option>
-                                <option value="parents">Parents Only</option>
-                                <option value="teachers">Teachers Only</option>
-                                <option value="students">Students Only</option>
-                            </select>
+                        <div class="col-span-1 md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Audience *</label>
+                        <div class="flex flex-wrap gap-4 p-3 border border-gray-300 rounded-md bg-white">
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input type="checkbox" id="audienceAll" class="rounded text-blue-600 focus:ring-blue-500" onchange="toggleAllAudiences(this)">
+                                <span class="text-sm text-gray-700">All Users</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input type="checkbox" name="audience" value="parents" class="audience-checkbox rounded text-blue-600 focus:ring-blue-500" onchange="checkAudienceState()">
+                                <span class="text-sm text-gray-700">Parents</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input type="checkbox" name="audience" value="teachers" class="audience-checkbox rounded text-blue-600 focus:ring-blue-500" onchange="checkAudienceState()">
+                                <span class="text-sm text-gray-700">Teachers</span>
+                            </label>
                         </div>
+                        <p class="text-xs text-gray-500 mt-1">Select at least one audience group</p>
+                    </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
@@ -341,6 +343,20 @@
     
     <!-- Announcements Script -->
     <script>
+        function toggleAllAudiences(source) {
+            const checkboxes = document.querySelectorAll('.audience-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = source.checked;
+            });
+        }
+
+        function checkAudienceState() {
+            const allCheckbox = document.getElementById('audienceAll');
+            const checkboxes = document.querySelectorAll('.audience-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            allCheckbox.checked = allChecked;
+        }
+
         class AnnouncementsManager {
             constructor() {
                 this.currentUser = null;
@@ -701,12 +717,34 @@
 
             async submitAnnouncement() {
                 try {
-                    const title = document.getElementById('announcementTitle').value;
-                    const message = document.getElementById('announcementMessage').value;
-                    const audience = document.getElementById('announcementAudience').value;
-                    const expiryDate = document.getElementById('announcementExpiry').value;
-                    const isUrgent = document.getElementById('announcementUrgent').checked;
+                    const titleEl = document.getElementById('announcementTitle');
+                    const messageEl = document.getElementById('announcementMessage');
+                    const expiryDateEl = document.getElementById('announcementExpiry');
+                    const isUrgentEl = document.getElementById('announcementUrgent');
+                    
+                    if (!titleEl || !messageEl) {
+                         console.error('Form elements not found');
+                         this.showError('Form initialization error. Please refresh.');
+                         return;
+                    }
 
+                    const title = titleEl.value;
+                    const message = messageEl.value;
+                    const expiryDate = expiryDateEl ? expiryDateEl.value : null;
+                    const isUrgent = isUrgentEl ? isUrgentEl.checked : false;
+
+                    // Get selected audiences
+                    const audienceCheckboxes = document.querySelectorAll('.audience-checkbox:checked');
+                    const audience = Array.from(audienceCheckboxes).map(cb => cb.value);
+
+                    // If 'All' is checked or all individual checkboxes are checked
+                    const allCheckbox = document.getElementById('audienceAll');
+                    
+                    if (audience.length === 0 && (!allCheckbox || !allCheckbox.checked)) {
+                        this.showError('Please select at least one audience group');
+                        return;
+                    }
+                    
                     if (!title || !message) {
                         this.showError('Please fill in all required fields');
                         return;
@@ -719,15 +757,22 @@
 
                     // Show loading
                     const submitBtn = document.querySelector('#createAnnouncementModal button[onclick="submitAnnouncement()"]');
-                    const originalText = submitBtn.innerHTML;
-                    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Publishing...';
-                    submitBtn.disabled = true;
+                    if (submitBtn) {
+                        const originalText = submitBtn.innerHTML;
+                        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Publishing...';
+                        submitBtn.disabled = true;
+                    }
 
                     // Prepare announcement data
+                    let finalAudience = audience;
+                    if (allCheckbox && allCheckbox.checked) {
+                         finalAudience = ['parents', 'teachers'];
+                    }
+
                     const announcementData = {
                         title: title,
                         message: message,
-                        audience: audience,
+                        audience: finalAudience,
                         isUrgent: isUrgent,
                         expiryDate: expiryDate ? new Date(expiryDate) : null
                     };
@@ -741,6 +786,12 @@
                     
                     // Refresh announcements
                     await this.loadAnnouncements();
+                    
+                    // Reset button if it exists
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<i class="fas fa-bullhorn mr-2"></i>Publish Announcement';
+                        submitBtn.disabled = false;
+                    }
 
                 } catch (error) {
                     console.error('Announcement creation error:', error);
@@ -748,8 +799,10 @@
                     
                     // Reset button
                     const submitBtn = document.querySelector('#createAnnouncementModal button[onclick="submitAnnouncement()"]');
-                    submitBtn.innerHTML = '<i class="fas fa-bullhorn mr-2"></i>Publish Announcement';
-                    submitBtn.disabled = false;
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<i class="fas fa-bullhorn mr-2"></i>Publish Announcement';
+                        submitBtn.disabled = false;
+                    }
                 }
             }
 
