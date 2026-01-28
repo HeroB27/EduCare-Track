@@ -277,7 +277,7 @@ class TeacherNotifications {
         window.addEventListener('educareTrack:navigateToClinic', (e) => {
             const studentId = e.detail && e.detail.studentId;
             if (studentId) {
-                window.location.href = `clinic-visits.html?studentId=${studentId}`;
+                window.location.href = `teacher-clinic.html?studentId=${studentId}`;
             }
         });
     }
@@ -299,6 +299,9 @@ class TeacherNotifications {
         const map = {
             'attendance': 'fas fa-user-check',
             'clinic': 'fas fa-clinic-medical',
+            'clinic_findings': 'fas fa-user-md',
+            'clinic_decision': 'fas fa-notes-medical',
+            'clinic_new_visit': 'fas fa-ambulance',
             'announcement': 'fas fa-bullhorn',
             'excuse': 'fas fa-file-alt',
             'system': 'fas fa-cog'

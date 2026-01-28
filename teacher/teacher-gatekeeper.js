@@ -30,10 +30,20 @@ class TeacherGatekeeper {
             return false;
         }
         this.currentUser = JSON.parse(savedUser);
+        
+        // Verify teacher role
         if (this.currentUser.role !== 'teacher') {
             window.location.href = '../index.html';
             return false;
         }
+
+        // Verify gatekeeper assignment
+        if (!this.currentUser.is_gatekeeper) {
+            alert('Access Denied: You are not assigned as a Gatekeeper.');
+            window.location.href = 'teacher-dashboard.html';
+            return false;
+        }
+
         return true;
     }
 
@@ -97,6 +107,22 @@ class TeacherGatekeeper {
 
     async submitManualEntry() {
         if (!this.selectedStudent) return alert('Select a student');
+        
+        // Check for school day
+        if (window.EducareTrack && typeof window.EducareTrack.isSchoolDay === 'function') {
+             // We need student level/grade. The search result might not have it fully.
+             // We'll fetch it if missing or just rely on general check first.
+             // Best effort check:
+             const now = new Date();
+             if (!window.EducareTrack.isSchoolDay(now)) {
+                  // If strictly no school for anyone, warn. 
+                  // If we want level specific, we'd need to fetch student details.
+                  // Since manual entry is an override, a warning is appropriate.
+                  if (!confirm('Warning: Today is marked as a non-school day. Do you want to proceed?')) {
+                      return;
+                  }
+             }
+        }
         
         const type = document.getElementById('entryType').value; // entry/exit
         const time = document.getElementById('manualTime').value;
@@ -285,7 +311,33 @@ class TeacherGatekeeper {
             // 3. Determine Entry/Exit (Auto-logic or prompt)
             // For now, let's just use the manual entry type selector or default to entry if not set
             // Better: Check last attendance record for today
-            const today = new Date().toISOString().split('T')[0];
+            const today = new Date().toLocaleDateString('en-CA');
+            
+            // Warn if not a school day
+            if (window.EducareTrack && typeof window.EducareTrack.isSchoolDay === 'function') {
+                const now = new Date();
+                // We need student level to be accurate, but we haven't fetched class info fully yet (just class_id from student table)
+                // Let's fetch class info first (moved up)
+                if (student.class_id && (!student.level || !student.grade)) {
+                     const { data: classInfo } = await window.supabaseClient
+                        .from('classes')
+                        .select('grade, level')
+                        .eq('id', student.class_id)
+                        .single();
+                    if (classInfo) {
+                        student.grade = classInfo.grade;
+                        student.level = classInfo.level;
+                    }
+                }
+                
+                if (!window.EducareTrack.isSchoolDay(now, student.level)) {
+                    if (!confirm(`Warning: Today appears to be a non-school day for ${student.full_name}. Continue?`)) {
+                        this.isScanning = false;
+                        return;
+                    }
+                }
+            }
+
             const { data: lastRecord } = await window.supabaseClient
                 .from('attendance')
                 .select('*')
@@ -294,6 +346,19 @@ class TeacherGatekeeper {
                 .order('timestamp', { ascending: false })
                 .limit(1)
                 .single();
+
+            // Fetch class info for late calculation (Already fetched above if needed, but keep fallback)
+            if (student.class_id && (!student.grade || !student.level)) {
+                const { data: classInfo } = await window.supabaseClient
+                    .from('classes')
+                    .select('grade, level')
+                    .eq('id', student.class_id)
+                    .single();
+                if (classInfo) {
+                    student.grade = classInfo.grade;
+                    student.level = classInfo.level;
+                }
+            }
 
             let type = 'entry';
             if (lastRecord) {
@@ -315,7 +380,18 @@ class TeacherGatekeeper {
             const timeStr = now.toTimeString().slice(0, 5);
             
             if (type === 'entry') {
-                if (timeStr > '07:30') status = 'late';
+                // Use centralized logic if available
+                if (this.attendanceLogic && typeof this.attendanceLogic.isLate === 'function') {
+                    // Ensure settings are loaded (best effort)
+                    if (this.attendanceLogic.settingsLoaded) await this.attendanceLogic.settingsLoaded;
+                    
+                    if (this.attendanceLogic.isLate(timeStr, student.grade, student.level)) {
+                        status = 'late';
+                    }
+                } else {
+                    // Fallback
+                    if (timeStr > '07:30') status = 'late';
+                }
             }
 
             const remarks = `qr_${type}_by_teacher`;

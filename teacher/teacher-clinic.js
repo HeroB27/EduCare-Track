@@ -163,7 +163,7 @@ class TeacherClinicDashboard {
             teacherDecision: visit.outcome,
             teacherNotes: visit.remarks,
             isUrgent: visit.is_urgent,
-            nurseRecommendation: visit.nurse_recommendation,
+            nurseRecommendation: visit.recommendations,
             staffId: visit.treated_by,
             timestamp: new Date(visit.visit_time)
         };
@@ -189,6 +189,149 @@ class TeacherClinicDashboard {
             if (notifyError) throw notifyError;
         } catch (error) {
             console.error('Error notifying clinic staff:', error);
+        }
+    }
+
+    // --- Create Pass Functionality ---
+
+    openCreatePassModal() {
+        let modal = document.getElementById('createPassModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'createPassModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg w-full max-w-md p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">Create Clinic Pass</h3>
+                        <button onclick="window.clinicDashboard.closeCreatePassModal()" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <form id="createPassForm" onsubmit="event.preventDefault(); window.clinicDashboard.createPass();">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Select Student</label>
+                            <select id="passStudentId" class="w-full border border-gray-300 rounded px-3 py-2" required>
+                                <option value="">-- Select Student --</option>
+                                ${this.students.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Reason for Visit</label>
+                            <textarea id="passReason" class="w-full border border-gray-300 rounded px-3 py-2 h-24" required placeholder="e.g. Headache, Stomach ache..."></textarea>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button type="button" onclick="window.clinicDashboard.closeCreatePassModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Create Pass</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        // Refresh student list in case it changed
+        const select = modal.querySelector('#passStudentId');
+        if (select) {
+             select.innerHTML = '<option value="">-- Select Student --</option>' + 
+                                this.students.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+        }
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    closeCreatePassModal() {
+        const modal = document.getElementById('createPassModal');
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            document.getElementById('createPassForm').reset();
+        }
+    }
+
+    async createPass() {
+        try {
+            const studentId = document.getElementById('passStudentId').value;
+            const reason = document.getElementById('passReason').value;
+            
+            if (!studentId || !reason) {
+                this.showToast('Please fill in all fields', 'error');
+                return;
+            }
+
+            this.showToast('Creating clinic pass...', 'info');
+            
+            // Insert new clinic visit
+            const { data, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .insert({
+                    student_id: studentId,
+                    visit_time: new Date().toISOString(),
+                    reason: reason,
+                    status: 'active', // or 'en_route' if supported
+                    referred_by: this.teacher.id,
+                    remarks: 'Referred by teacher'
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            // Notify Clinic Staff (All clinic staff)
+            // First get clinic staff IDs
+            const { data: clinicStaff } = await window.supabaseClient
+                .from('profiles')
+                .select('id')
+                .in('role', ['clinic', 'nurse']); // Assuming roles
+            
+            const student = this.students.find(s => s.id === studentId);
+
+            if (clinicStaff && clinicStaff.length > 0) {
+                const targetUsers = clinicStaff.map(s => s.id);
+                
+                await window.supabaseClient
+                    .from('notifications')
+                    .insert({
+                        target_users: targetUsers,
+                        title: 'New Clinic Pass',
+                        message: `Teacher ${this.teacher.name} created a pass for ${student ? student.name : 'student'}. Reason: ${reason}`,
+                        type: 'clinic_new_visit',
+                        student_id: studentId,
+                        student_name: student ? student.name : 'Unknown',
+                        related_record: data.id,
+                        created_at: new Date().toISOString()
+                    });
+            }
+
+            // Notify Parents
+            const { data: parentRelations } = await window.supabaseClient
+                .from('parent_students')
+                .select('parent_id')
+                .eq('student_id', studentId);
+            
+            if (parentRelations && parentRelations.length > 0) {
+                const parentIds = parentRelations.map(r => r.parent_id);
+                await window.supabaseClient.from('notifications').insert({
+                    target_users: parentIds,
+                    title: 'Clinic Referral',
+                    message: `Teacher ${this.teacher.name} has referred ${student ? student.name : 'your child'} to the clinic. Reason: ${reason}`,
+                    type: 'clinic_new_visit',
+                    student_id: studentId,
+                    student_name: student ? student.name : 'Unknown',
+                    related_record: data.id,
+                    is_urgent: false,
+                    created_at: new Date().toISOString()
+                });
+            }
+
+            this.showToast('Clinic pass created successfully', 'success');
+            this.closeCreatePassModal();
+            this.loadInitialData(); // Refresh list
+
+        } catch (error) {
+            console.error('Error creating pass:', error);
+            this.showToast('Error creating clinic pass: ' + error.message, 'error');
         }
     }
 
@@ -244,7 +387,7 @@ class TeacherClinicDashboard {
             
             // Notify Parents
             const student = this.students.find(s => s.id === visit.studentId);
-            await this.notifyParents(visit.studentId, disposition, student ? student.name : 'Student', notes);
+            await this.notifyParents(visit.studentId, disposition, student ? student.name : 'Student', notes, visit.id);
 
             this.showToast('Decision submitted successfully', 'success');
             this.closeDecisionModal();
@@ -307,8 +450,8 @@ class TeacherClinicDashboard {
             
             return `
                 <div class="border rounded-lg p-4 mb-4 bg-blue-50">
-                    <div class="flex justify-between items-start">
-                        <div>
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div class="flex-1">
                             <h3 class="font-bold text-lg text-blue-800">${student ? student.name : 'Unknown Student'}</h3>
                             <p class="text-sm text-gray-600">
                                 <i class="far fa-clock mr-1"></i> Arrived: ${visitTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} (${duration})
@@ -317,15 +460,20 @@ class TeacherClinicDashboard {
                                 <span class="font-semibold">Reason:</span> ${visit.reason || 'Not specified'}
                             </p>
                             ${visit.nurseRecommendation ? `
-                                <div class="mt-2 p-2 bg-yellow-100 rounded text-sm text-yellow-800">
-                                    <i class="fas fa-user-nurse mr-1"></i>
-                                    <strong>Nurse Recommendation:</strong> ${visit.nurseRecommendation}
+                                <div class="mt-2 p-2 bg-yellow-100 rounded text-sm text-yellow-800 border border-yellow-200">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-user-nurse mr-2 mt-1"></i>
+                                        <div>
+                                            <strong>Nurse Recommendation:</strong><br/>
+                                            ${visit.nurseRecommendation}
+                                        </div>
+                                    </div>
                                 </div>
                             ` : ''}
                         </div>
                         <button onclick="window.clinicDashboard.openDecisionModal('${visit.id}')" 
-                                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm text-sm font-medium transition">
-                            Respond
+                                class="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm text-sm font-medium transition flex items-center justify-center">
+                            <i class="fas fa-reply mr-2"></i> Respond
                         </button>
                     </div>
                 </div>
@@ -392,7 +540,7 @@ class TeacherClinicDashboard {
         modal.classList.add('flex');
     }
 
-    async notifyParents(studentId, decision, studentName, notes) {
+    async notifyParents(studentId, decision, studentName, notes, visitId) {
         try {
             // Get parents
             const { data: relations, error: relError } = await window.supabaseClient
@@ -424,6 +572,7 @@ class TeacherClinicDashboard {
                     type: 'clinic_update',
                     student_id: studentId,
                     student_name: studentName,
+                    related_record: visitId,
                     is_urgent: decision === 'send_home',
                     created_at: new Date().toISOString()
                 });
@@ -440,7 +589,7 @@ class TeacherClinicDashboard {
         this.showToast(notification.message, 'info');
         
         // If it's about a student currently in clinic, refresh the active visits
-        if (notification.type === 'clinic') {
+        if (['clinic', 'clinic_findings', 'clinic_new_visit', 'clinic_decision'].includes(notification.type)) {
             this.loadInitialData();
         }
     }
@@ -520,7 +669,10 @@ class TeacherClinicDashboard {
                 title: 'Clinic Visit Update',
                 message: `Your child ${studentName} visited the clinic for ${visit.reason}. Outcome: ${visit.outcome}. Notes: ${visit.teacherNotes || 'None'}.`,
                 type: 'clinic',
-                student_id: visit.studentId
+                student_id: visit.studentId,
+                student_name: studentName,
+                related_record: visit.id,
+                created_at: new Date().toISOString()
             });
 
             alert('Parents notified successfully');

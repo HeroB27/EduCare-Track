@@ -327,10 +327,51 @@ class ParentDashboard {
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
                 if (payload.new.target_users && payload.new.target_users.includes(this.currentUser.id)) {
                     this.loadNotificationCount();
-                    // Optionally show toast
+                    this.checkAndShowNotification(payload.new);
                 }
             })
             .subscribe();
+    }
+
+    checkAndShowNotification(notification) {
+        try {
+            // Load settings
+            const settingsKey = `educareTrack_notification_settings_${this.currentUser.id}`;
+            const savedSettings = localStorage.getItem(settingsKey);
+            let settings = {
+                attendance: true,
+                clinic: true,
+                announcement: true,
+                excuse: true
+            };
+
+            if (savedSettings) {
+                try {
+                    settings = { ...settings, ...JSON.parse(savedSettings) };
+                } catch (e) {
+                    console.error('Error parsing notification settings', e);
+                }
+            }
+
+            // Determine type category
+            let typeCategory = notification.type;
+            if (notification.type.startsWith('clinic')) {
+                typeCategory = 'clinic';
+            }
+
+            // Check if enabled
+            if (settings[typeCategory]) {
+                if (window.EducareTrack && typeof window.EducareTrack.showNormalNotification === 'function') {
+                    window.EducareTrack.showNormalNotification({
+                        title: notification.title,
+                        message: notification.message,
+                        type: notification.is_urgent ? 'error' : 'info' // Use error style for urgent
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error showing notification:', error);
+        }
     }
 
     initEventListeners() {

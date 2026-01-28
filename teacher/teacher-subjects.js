@@ -95,7 +95,7 @@ class TeacherSubjects {
             this.students = students;
 
             // Get existing attendance for today
-            const today = new Date().toISOString().split('T')[0];
+            const today = new Date().toLocaleDateString('en-CA');
             const { data: attendance, error: aErr } = await window.supabaseClient
                 .from('subject_attendance')
                 .select('student_id, status')
@@ -138,7 +138,17 @@ class TeacherSubjects {
 
     async markStatus(studentId, status) {
         try {
-            const today = new Date().toISOString().split('T')[0];
+            // Check if today is a school day
+            const todayDate = new Date();
+            const classLevel = this.selectedSchedule?.classes?.level;
+            const isSchoolDay = window.EducareTrack ? window.EducareTrack.isSchoolDay(todayDate, classLevel) : true;
+            if (!isSchoolDay) {
+                if (!confirm('Today is marked as a non-school day (Holiday/Weekend/Break) for this level. Are you sure you want to mark attendance?')) {
+                    return;
+                }
+            }
+
+            const today = todayDate.toLocaleDateString('en-CA');
             
             // Check if record exists
             const { data: existing } = await window.supabaseClient

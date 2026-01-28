@@ -443,17 +443,187 @@ class QRScanner {
         try {
             const timestamp = new Date();
             const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
-            const session = this.getCurrentSession();
+            const session = this.getCurrentSession(); // 'morning' or 'afternoon' or 'general'
             
-            // Use Attendance Logic for advanced status calculation
+            // Ensure settings are loaded
+            if (this.attendanceLogic.settingsLoaded) {
+                await this.attendanceLogic.settingsLoaded;
+            }
+
+            // Fetch class info if missing to determine grade/level for late/early checks
+            if ((!student.grade || !student.level) && (student.class_id || student.classId)) {
+                try {
+                     const { data: classInfo } = await window.supabaseClient
+                        .from('classes')
+                        .select('grade, level')
+                        .eq('id', student.class_id || student.classId)
+                        .single();
+                     if (classInfo) {
+                         student.grade = classInfo.grade;
+                         student.level = classInfo.level;
+                     }
+                } catch (e) {
+                    console.error('Error fetching class info:', e);
+                }
+            }
+
+            // Get Schedule for student
+            const schedule = this.attendanceLogic.getScheduleForStudent(student.level, student.grade);
+            const dismissalTime = schedule.out || '16:00';
+            const startTime = schedule.in || '07:30';
+
+            // Check for existing records for today to prevent duplicates
+            const startOfDay = new Date(timestamp);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(timestamp);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const { data: existingRecords } = await window.supabaseClient
+                .from('attendance')
+                .select('*')
+                .eq('student_id', studentId)
+                .gte('timestamp', startOfDay.toISOString())
+                .lte('timestamp', endOfDay.toISOString());
+
+            const hasMorningEntry = existingRecords?.some(r => r.session === 'AM' && (r.status === 'present' || r.status === 'late'));
+            const hasAfternoonEntry = existingRecords?.some(r => r.session === 'PM' && (r.status === 'present' || r.status === 'late'));
+            const hasMorningExit = existingRecords?.some(r => r.session === 'AM' && r.status === 'out'); // Assuming 'out' is status for exit? Or separate record?
+            // The current system seems to use 'session' AM/PM. 
+            // entryType passed to this function is 'entry' or 'exit'.
+            // But the DB structure (from qr-attendance-logic) seems to imply:
+            // session='AM' means morning session. status='present'/'late'.
+            // How is exit recorded? 
+            // Looking at qr-attendance-logic: entryType: r.session === 'AM' ? 'entry' : 'exit' <-- This looks wrong in logic file.
+            // Let's assume we store entry/exit in a field or infer it?
+            // The table has 'method', 'status', 'session'.
+            // Usually: 
+            // AM Entry -> session: 'AM', status: 'present'/'late'
+            // AM Exit -> session: 'AM', status: 'out' ?? 
+            // The previous code didn't explicitly handle 'exit' storage distinct from 'entry' well in the insert part (which I need to write).
+            
+            // Let's refine the DB insert to be clear.
+            // We'll use 'status' to indicate state.
+            
             let status = 'present';
             let remarks = '';
+            let dbSession = session === 'morning' ? 'AM' : 'PM';
+            
+            // Check for duplicates in the current session/type
+            // If we are doing 'entry' in 'morning', check if we already have an 'AM' 'present'/'late' record.
+            // If we are doing 'exit' in 'afternoon', check if we already have a 'PM' 'out' record?
+            
+            // NOTE: The user wants "duplicate scan detected".
+            // Let's check strictly for the action being performed.
             
             if (entryType === 'entry') {
-                // Time In logic
+                if (session === 'morning' && hasMorningEntry) {
+                    this.showResult('warning', 'Duplicate Scan', 'Student already tapped in for morning.');
+                    return;
+                }
+                if (session === 'afternoon' && hasAfternoonEntry) {
+                     this.showResult('warning', 'Duplicate Scan', 'Student already tapped in for afternoon.');
+                    return;
+                }
+            } 
+            // For exit, we might allow multiple exits? Or strictly one? Let's assume strictly one for now to avoid spam.
+            
+            // --- ATTENDANCE LOGIC ---
+
+            if (entryType === 'entry') {
+                // Time In Logic
                 if (session === 'morning') {
-                    if (timeString <= '07:30') {
+                    if (timeString > startTime) {
+                        status = 'late';
+                        remarks = `Late arrival (Scheduled: ${startTime})`;
+                    } else {
                         status = 'present';
+                        remarks = 'On time';
+                    }
+                } else if (session === 'afternoon') {
+                    // Afternoon Entry
+                    status = 'present'; // Default for afternoon entry
+                    
+                    // Check if Morning Absent (No morning entry)
+                    if (!hasMorningEntry) {
+                        remarks = 'Morning absent. Please prepare excuse letter.';
+                        // We might want to explicitly mark morning as absent if not already?
+                        // But here we just record the afternoon entry with a remark.
+                    } else {
+                        remarks = 'Afternoon entry';
+                    }
+                }
+            } else {
+                // Time Out Logic
+                status = 'out'; // Base status for exit
+                
+                // Parse times for comparison
+                const currentMinutes = parseInt(timeString.split(':')[0]) * 60 + parseInt(timeString.split(':')[1]);
+                const dismissalMinutes = parseInt(dismissalTime.split(':')[0]) * 60 + parseInt(dismissalTime.split(':')[1]);
+                
+                if (currentMinutes < dismissalMinutes) {
+                    // Early Out
+                    remarks = `Early exit (Dismissal: ${dismissalTime})`;
+                    // Maybe change status to 'early_out' if DB supports it, or keep 'out' and rely on remarks.
+                    // User prompt: "student exited the school (early)"
+                } else if (currentMinutes > dismissalMinutes + 30) {
+                    // Late Out
+                    remarks = `Late exit (Dismissal: ${dismissalTime})`;
+                    // User prompt: "student exits the school (late)"
+                } else {
+                    remarks = 'Regular exit';
+                }
+                
+                // Special Case: Morning Entry -> Exit 12-1
+                // This is likely a lunch exit or early dismissal.
+                // If it's morning session exit (e.g. 11:30 AM)
+                if (session === 'morning') {
+                     remarks = `Morning exit (Time: ${timeString})`;
+                }
+            }
+
+            // Insert into Database
+            const { error: insertError } = await window.supabaseClient.from('attendance').insert({
+                student_id: studentId,
+                class_id: student.class_id || student.classId || null,
+                session: dbSession,
+                status: status,
+                method: 'qr', // 'qr' or 'manual'
+                timestamp: timestamp.toISOString(),
+                recorded_by: this.currentUser.id,
+                remarks: remarks
+            });
+
+            if (insertError) throw insertError;
+
+            // Send Notification
+            // "Your child, [Student Name], has entered the school premises at 7:15 AM."
+            // "Your child has exited the school at 4:05 PM."
+            let notifMessage = '';
+            const formattedTime = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            if (entryType === 'entry') {
+                notifMessage = `Your child, ${student.first_name}, has entered the school premises at ${formattedTime}.`;
+                if (status === 'late') notifMessage += ` (Late)`;
+                if (remarks.includes('Morning absent')) notifMessage += ` Note: Morning absent.`;
+            } else {
+                notifMessage = `Your child, ${student.first_name}, has exited the school at ${formattedTime}.`;
+                if (remarks.includes('Early exit')) notifMessage += ` (Early)`;
+                if (remarks.includes('Late exit')) notifMessage += ` (Late departure)`;
+            }
+
+            await this.sendNotification(student, notifMessage);
+
+            // Show Success UI
+            this.showResult('success', 
+                entryType === 'entry' ? 'Welcome!' : 'Goodbye!', 
+                `${student.name} - ${remarks}`
+            );
+
+        } catch (error) {
+            console.error('Error recording attendance:', error);
+            this.showResult('error', 'Error', 'Failed to record attendance: ' + error.message);
+        }
+    }
                         remarks = 'On time arrival';
                     } else {
                         status = 'late';

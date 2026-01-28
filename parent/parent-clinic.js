@@ -38,6 +38,10 @@ class ParentClinic {
             this.updateUI();
             await this.loadChildren();
             await this.loadClinicData();
+            
+            // Check for deep links
+            await this.checkUrlParams();
+
             this.initEventListeners();
             this.initRealTimeListeners();
             
@@ -199,12 +203,75 @@ class ParentClinic {
                 reason: v.reason || '',
                 notes: v.notes || '',
                 treatment: v.outcome || '',
-                recommendations: '', // Not in new schema
+                recommendations: v.recommendations || '',
+                medicalFindings: v.medical_findings || '',
+                treatmentGiven: v.treatment || '',
+                additionalNotes: v.notes || '',
                 urgency: v.reason && v.reason.toLowerCase().includes('urgent') ? 'urgent' : 'normal'
             }));
         } catch (error) {
             console.error('Error getting child clinic visits:', error);
             return [];
+        }
+    }
+
+    async checkUrlParams() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const visitId = urlParams.get('visitId');
+        
+        if (visitId) {
+            await this.handleDeepLink(visitId);
+        }
+    }
+
+    async handleDeepLink(visitId) {
+        // Try to find in current list
+        let visit = this.clinicVisits.find(v => v.id === visitId);
+        
+        // If not found, fetch it specifically
+        if (!visit) {
+            visit = await this.fetchSingleVisit(visitId);
+            if (visit) {
+                // Add to list so viewVisitDetails can find it
+                this.clinicVisits.push(visit);
+                this.filteredVisits.push(visit);
+            }
+        }
+        
+        if (visit) {
+            this.viewVisitDetails(visitId);
+        }
+    }
+
+    async fetchSingleVisit(visitId) {
+        try {
+            const { data: visit, error } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('*')
+                .eq('id', visitId)
+                .single();
+            
+            if (error || !visit) return null;
+            
+            return {
+                id: visit.id,
+                studentId: visit.student_id,
+                studentName: null, 
+                classId: visit.class_id,
+                checkIn: !visit.check_out,
+                timestamp: new Date(visit.visit_time),
+                reason: visit.reason || '',
+                notes: visit.notes || '',
+                treatment: visit.outcome || '',
+                recommendations: visit.recommendations || '',
+                medicalFindings: visit.medical_findings || '',
+                treatmentGiven: visit.treatment_given || '',
+                additionalNotes: visit.additional_notes || '',
+                urgency: visit.reason && visit.reason.toLowerCase().includes('urgent') ? 'urgent' : 'normal'
+            };
+        } catch (error) {
+            console.error('Error fetching single visit:', error);
+            return null;
         }
     }
 
@@ -628,6 +695,14 @@ class ParentClinic {
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 this.closeVisitDetailsModal();
+            }
+        });
+
+        // Listen for navigation events
+        window.addEventListener('educareTrack:navigateToClinic', async (e) => {
+            const { visitId } = e.detail;
+            if (visitId) {
+                await this.handleDeepLink(visitId);
             }
         });
     }

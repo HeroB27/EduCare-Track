@@ -202,21 +202,33 @@ class ClassManagement {
     async loadClasses() {
         try {
             // Use Supabase client
+            // Fetch classes AND their schedules for conflict detection
             const { data, error } = await window.supabaseClient
                 .from('classes')
-                .select('*')
+                .select('*, class_schedules(*)')
                 .order('created_at', { ascending: false });
                 
             if (error) throw error;
 
             this.allClasses = data.map(d => {
-                // Map adviser_id to teacher_id for internal consistency if needed
+                // Map adviser_id to teacher_id for internal consistency
                 const row = { 
                     ...d, 
                     teacher_id: d.adviser_id,
                     teacherId: d.adviser_id
                 };
-                return this.normalizeClassRow(row);
+                
+                // Map schedules for conflict detection
+                const schedules = (d.class_schedules || []).map(s => ({
+                    ...s,
+                    time: s.schedule_text // Normalize for checkConflict
+                }));
+
+                const normalized = this.normalizeClassRow(row);
+                return {
+                    ...normalized,
+                    schedule: schedules
+                };
             });
             document.getElementById('totalClasses').textContent = this.allClasses.length;
             await this.updateStudentsCount();
@@ -839,42 +851,49 @@ class ClassManagement {
 
         if (!teacherId || !time) {
             if (warningIcon) warningIcon.classList.add('hidden');
+            timeInput.classList.remove('border-red-500');
             return;
         }
 
-        // Check for conflicts across ALL classes
         let hasConflict = false;
         let conflictDetails = '';
 
-        for (const cls of this.allClasses) {
-            // Skip current class's current row check (if we are editing existing, 
-            // but here we are checking against saved data. 
-            // We should also check against other rows in the current modal!)
-            
-            if (!cls.schedule) continue;
+        // 1. Check for conflicts within the current modal (other rows)
+        const currentRows = document.querySelectorAll('#scheduleTableBody tr');
+        currentRows.forEach(otherRow => {
+            if (otherRow === row) return; // Skip self
 
-            for (const item of cls.schedule) {
-                if (item.teacher_id === teacherId) {
-                    // Check if time overlaps
-                    // Simple string match for now as parsing time is complex without a strict format
-                    // TODO: Implement strict time parsing (e.g., "Mon 9:00-10:00")
-                    if (this.isTimeOverlap(time, item.time)) {
-                        // If it's the same class and same subject, it might be the same entry (but we are editing it)
-                        // Ideally we ignore the entry we are currently editing if it matches exactly.
-                        // But since we are editing, we compare against *other* classes or *other* slots.
-                        
-                        if (cls.id === this.selectedClassId && item.subject === row.querySelector('.subject-select').value) {
-                             // Likely the same slot being edited, ignore
-                             continue;
-                        }
+            const otherTeacherId = otherRow.querySelector('.teacher-select').value;
+            const otherTime = otherRow.querySelector('.time-input').value.trim();
+            const otherSubject = otherRow.querySelector('.subject-select').value;
 
-                        hasConflict = true;
-                        conflictDetails = `Conflict with ${cls.name} (${item.subject})`;
-                        break;
-                    }
+            if (otherTeacherId === teacherId) {
+                if (this.isTimeOverlap(time, otherTime)) {
+                    hasConflict = true;
+                    conflictDetails = `Conflict with this class (${otherSubject})`;
                 }
             }
-            if (hasConflict) break;
+        });
+
+        // 2. Check for conflicts across ALL other classes (from cached data)
+        if (!hasConflict) {
+            for (const cls of this.allClasses) {
+                // Skip current class (we are editing it)
+                if (cls.id === this.selectedClassId) continue;
+                
+                if (!cls.schedule) continue;
+
+                for (const item of cls.schedule) {
+                    if (item.teacher_id === teacherId) {
+                        if (this.isTimeOverlap(time, item.time)) {
+                            hasConflict = true;
+                            conflictDetails = `Conflict with ${cls.name} (${item.subject})`;
+                            break;
+                        }
+                    }
+                }
+                if (hasConflict) break;
+            }
         }
 
         if (hasConflict) {
@@ -899,12 +918,11 @@ class ClassManagement {
 
         // Helper to parse "Day Time-Time"
         const parse = (t) => {
-            // Check for day patterns: M, T, W, Th, F, S, Su or Mon, Tue...
             // Extract time range: H:MM-H:MM
             const timeMatch = t.match(/(\d{1,2}:\d{2})\s*(?:-|\sto\s)\s*(\d{1,2}:\d{2})/);
             if (!timeMatch) return null;
 
-            const daysPart = t.substring(0, timeMatch.index).trim();
+            const daysPart = t.substring(0, timeMatch.index).trim().toLowerCase();
             const startStr = timeMatch[1];
             const endStr = timeMatch[2];
 
@@ -914,8 +932,59 @@ class ClassManagement {
                 return h * 60 + m;
             };
 
+            // Parse days
+            const days = new Set();
+            
+            // Full names or 3-letter codes
+            if (daysPart.includes('mon')) days.add(1);
+            if (daysPart.includes('tue')) days.add(2);
+            if (daysPart.includes('wed')) days.add(3);
+            if (daysPart.includes('thu')) days.add(4);
+            if (daysPart.includes('fri')) days.add(5);
+            if (daysPart.includes('sat')) days.add(6);
+            if (daysPart.includes('sun')) days.add(0);
+
+            // Single letter codes (M, T, W, Th, F, S, Su) if no full names found
+            if (days.size === 0) {
+                // Check for Th first (Thursday)
+                if (daysPart.includes('th')) days.add(4);
+                
+                // Check for other letters
+                // Use regex to avoid partial matches inside other words if needed, 
+                // but usually these strings are short like "MWF"
+                if (daysPart.includes('m')) days.add(1);
+                // 'T' could be Tuesday or Thursday (if Th not used)
+                // If 'th' was present, we added 4. If 't' is present and NOT 'th' (or 'th' handled),
+                // we should add 2. But 'tth' contains 't'.
+                // Simple approach: if 't' is present, add 2 (Tuesday). 
+                // If 'th' is present, add 4 (Thursday).
+                // But "TTh" has both T and Th. So T=Tue, Th=Thu.
+                // But wait, "T" in "TTh" matches.
+                // Does "T" match "Th"? Yes.
+                // We need to be careful.
+                
+                // Better approach: Tokenize or specific patterns
+                if (/mon|m\b|mw/.test(daysPart)) days.add(1);
+                if (/tue|t\b|tth/.test(daysPart)) days.add(2); // T or TTh (implies Tue & Thu)
+                if (/wed|w\b|mw/.test(daysPart)) days.add(3);
+                if (/thu|th\b|tth/.test(daysPart)) days.add(4);
+                if (/fri|f\b/.test(daysPart)) days.add(5);
+                if (/sat|s\b/.test(daysPart)) days.add(6);
+                if (/sun|su\b/.test(daysPart)) days.add(0);
+                
+                // Handle "T" specifically for Tuesday if not TTh?
+                // If "T" appears but not followed by "h", it's Tuesday.
+                // Regex: /t(?!h)/
+                if (/t(?!h)/.test(daysPart)) days.add(2);
+            }
+
+            // Fallback for "Daily" or "Everyday"
+            if (daysPart.includes('daily') || daysPart.includes('every')) {
+                [1,2,3,4,5].forEach(d => days.add(d));
+            }
+
             return {
-                days: daysPart, // Keep string for now
+                days: days,
                 start: toMins(startStr),
                 end: toMins(endStr)
             };
@@ -926,41 +995,18 @@ class ClassManagement {
 
         if (s1 && s2) {
             // Check day overlap
-            // If one has no days specified, assume it applies to the other's days? Or conflict?
-            // Assume if days are present in BOTH, we check overlap.
-            // If missing in one, maybe it's a specific date or "Everyday"?
-            // Let's assume if days are missing, it might conflict with anything on those times.
+            let daysOverlap = false;
             
-            let daysOverlap = true;
-            if (s1.days && s2.days) {
-                // Simple day intersection check
-                const d1 = s1.days;
-                const d2 = s2.days;
-                // Check for common tokens
-                const tokens = ['m', 't', 'w', 'th', 'f', 's', 'su', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-                // This is still tricky. Let's do a basic substring check.
-                // If "Mon" is in "Mon/Wed", it overlaps.
-                // If "M" is in "MWF", it overlaps.
-                
-                // Construct normalized day sets
-                const getDaySet = (str) => {
-                    const set = new Set();
-                    if (/mon|m\b|mw/.test(str)) set.add(1);
-                    if (/tue|t\b|tth/.test(str)) set.add(2);
-                    if (/wed|w\b|mw/.test(str)) set.add(3);
-                    if (/thu|th\b|tth/.test(str)) set.add(4);
-                    if (/fri|f\b/.test(str)) set.add(5);
-                    if (/sat|s\b/.test(str)) set.add(6);
-                    if (/sun|su\b/.test(str)) set.add(0);
-                    return set;
-                };
-                
-                const set1 = getDaySet(d1);
-                const set2 = getDaySet(d2);
-                
-                // Intersection
-                const intersection = new Set([...set1].filter(x => set2.has(x)));
-                daysOverlap = intersection.size > 0;
+            // If either has no days (e.g. just time), assume daily/conflict
+            if (s1.days.size === 0 || s2.days.size === 0) {
+                daysOverlap = true;
+            } else {
+                for (let day of s1.days) {
+                    if (s2.days.has(day)) {
+                        daysOverlap = true;
+                        break;
+                    }
+                }
             }
 
             if (daysOverlap) {
@@ -1003,6 +1049,28 @@ class ClassManagement {
             });
 
             // Validate conflicts before saving
+            // 0. Check for UI errors or missing fields
+            const hasUIErrors = Array.from(document.querySelectorAll('.time-input')).some(input => input.classList.contains('border-red-500'));
+            if (hasUIErrors) {
+                alert('Please resolve the schedule conflicts highlighted in red before saving.');
+                return;
+            }
+
+            // 1. Check for internal conflicts within the new schedule items
+            for (let i = 0; i < scheduleItems.length; i++) {
+                for (let j = i + 1; j < scheduleItems.length; j++) {
+                    const item1 = scheduleItems[i];
+                    const item2 = scheduleItems[j];
+                    if (item1.teacher_id === item2.teacher_id) {
+                        if (this.isTimeOverlap(item1.schedule_text, item2.schedule_text)) {
+                            const teacherName = this.getTeacherName(item1.teacher_id);
+                            alert(`Internal Conflict detected!\n\nTeacher: ${teacherName}\nTime overlap between: ${item1.subject} and ${item2.subject}.`);
+                            return;
+                        }
+                    }
+                }
+            }
+
             for (const item of scheduleItems) {
                 // Check conflicts with other classes
                 const { data: existingSchedules, error: conflictError } = await window.supabaseClient

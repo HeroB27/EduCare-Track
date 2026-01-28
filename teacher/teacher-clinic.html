@@ -62,11 +62,16 @@
             <!-- Active Clinic Visits -->
             <div class="lg:col-span-2">
                 <div class="bg-white rounded-lg shadow mb-6">
-                    <div class="p-4 border-b">
+                    <div class="p-4 border-b flex justify-between items-center">
                         <h2 class="text-xl font-bold flex items-center">
                             <i class="fas fa-list mr-2 text-blue-600"></i>
                             Active Clinic Visits
                         </h2>
+                        <button onclick="window.clinicDashboard.openCreatePassModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-sm text-sm font-medium transition flex items-center">
+                            <i class="fas fa-plus mr-2"></i> Create Pass
+                        </button>
+                    </div>
+                    <div class="p-4 border-b">
                         <p class="text-gray-500 text-sm">Students currently in the clinic requiring your attention</p>
                     </div>
                     <div id="activeVisitsList" class="p-4">

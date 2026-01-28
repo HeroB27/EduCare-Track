@@ -77,6 +77,102 @@ class CalendarManager {
             e.preventDefault();
             this.saveEvent();
         });
+
+        // Level Checkboxes
+        document.querySelectorAll('.level-checkbox').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const all = document.getElementById('level_all');
+                const checkboxes = document.querySelectorAll('.level-checkbox');
+                const allChecked = Array.from(checkboxes).every(c => c.checked);
+                all.checked = allChecked;
+            });
+        });
+    }
+
+    toggleLevelSelection() {
+        const type = document.getElementById('eventType').value;
+        const container = document.getElementById('affectedLevelsContainer');
+        if (type === 'suspension' || type === 'holiday') {
+            container.classList.remove('hidden');
+        } else {
+            container.classList.add('hidden');
+        }
+    }
+
+    toggleAllLevels(source) {
+        const checkboxes = document.querySelectorAll('.level-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = source.checked;
+        });
+    }
+
+    async syncHolidays() {
+        if (!confirm('This will import standard Philippine holidays for 2026. Continue?')) return;
+        
+        this.showLoading();
+        try {
+            const holidays = [
+                { date: '2026-01-01', title: "New Year's Day", type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-02-25', title: 'EDSA Revolution Anniversary', type: 'holiday', notes: 'Special Non-Working Holiday' },
+                { date: '2026-04-02', title: 'Maundy Thursday', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-04-03', title: 'Good Friday', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-04-09', title: 'Araw ng Kagitingan', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-05-01', title: 'Labor Day', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-06-12', title: 'Independence Day', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-08-31', title: 'National Heroes Day', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-11-01', title: "All Saints' Day", type: 'holiday', notes: 'Special Non-Working Holiday' },
+                { date: '2026-11-02', title: "All Souls' Day", type: 'holiday', notes: 'Special Working Holiday' },
+                { date: '2026-11-30', title: 'Bonifacio Day', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-12-08', title: 'Feast of the Immaculate Conception', type: 'holiday', notes: 'Special Non-Working Holiday' },
+                { date: '2026-12-25', title: 'Christmas Day', type: 'holiday', notes: 'Regular Holiday' },
+                { date: '2026-12-30', title: 'Rizal Day', type: 'holiday', notes: 'Regular Holiday' }
+            ];
+
+            const newEvents = [];
+            
+            for (const h of holidays) {
+                // Check if exists
+                const exists = this.events.some(e => e.date === h.date && (e.type === 'holiday' || e.title === h.title));
+                if (!exists) {
+                    newEvents.push({
+                        title: h.title,
+                        start_date: new Date(h.date).toISOString(),
+                        end_date: new Date(h.date + 'T23:59:59').toISOString(),
+                        type: h.type,
+                        notes: h.notes,
+                        created_at: new Date().toISOString()
+                    });
+                }
+            }
+
+            if (newEvents.length > 0) {
+                const { error } = await window.supabaseClient
+                    .from('school_calendar')
+                    .insert(newEvents);
+                
+                if (error) throw error;
+                alert(`Successfully added ${newEvents.length} holidays.`);
+                await this.loadEvents();
+            } else {
+                alert('All holidays are already synced.');
+            }
+
+        } catch (error) {
+            console.error('Error syncing holidays:', error);
+            alert('Error syncing holidays: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    declareEmergency() {
+        this.openAddEventModal(new Date().toISOString().split('T')[0]);
+        document.getElementById('eventType').value = 'suspension';
+        document.getElementById('eventTitle').value = 'Emergency Suspension';
+        this.toggleLevelSelection();
+        // Default to All Levels
+        document.getElementById('level_all').checked = true;
+        this.toggleAllLevels(document.getElementById('level_all'));
     }
 
     toggleSidebar() {
@@ -236,6 +332,11 @@ class CalendarManager {
         document.getElementById('eventId').value = '';
         if (date) document.getElementById('eventDate').value = date;
         
+        // Reset levels
+        document.getElementById('level_all').checked = true;
+        this.toggleAllLevels(document.getElementById('level_all'));
+        this.toggleLevelSelection();
+
         const modal = document.getElementById('eventModal');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
@@ -247,7 +348,28 @@ class CalendarManager {
         document.getElementById('eventDate').value = event.date;
         document.getElementById('eventTitle').value = event.title;
         document.getElementById('eventType').value = event.type;
-        document.getElementById('eventDescription').value = event.description || '';
+        
+        // Parse description and levels
+        let description = event.description || '';
+        const levelMatch = description.match(/{{LEVELS:(.*?)}}/);
+        
+        if (levelMatch) {
+            // Specific levels
+            const levels = levelMatch[1].split(',');
+            document.getElementById('level_all').checked = false;
+            document.querySelectorAll('.level-checkbox').forEach(cb => {
+                cb.checked = levels.includes(cb.value);
+            });
+            // Remove the tag from description for display
+            description = description.replace(/{{LEVELS:.*?}}/, '').trim();
+        } else {
+            // All levels (default)
+            document.getElementById('level_all').checked = true;
+            this.toggleAllLevels(document.getElementById('level_all'));
+        }
+        
+        document.getElementById('eventDescription').value = description;
+        this.toggleLevelSelection();
         
         const modal = document.getElementById('eventModal');
         modal.classList.remove('hidden');
@@ -269,12 +391,25 @@ class CalendarManager {
         const endDate = new Date(dateStr);
         endDate.setHours(23, 59, 59, 999); // End of day
 
+        let notes = document.getElementById('eventDescription').value;
+        const type = document.getElementById('eventType').value;
+        
+        // Handle Levels for Suspension/Holiday
+        if (type === 'suspension' || type === 'holiday') {
+            const allChecked = document.getElementById('level_all').checked;
+            if (!allChecked) {
+                const checkedLevels = Array.from(document.querySelectorAll('.level-checkbox:checked'))
+                    .map(cb => cb.value);
+                notes = `${notes} {{LEVELS:${checkedLevels.join(',')}}}`;
+            }
+        }
+
         const eventData = {
             start_date: startDate.toISOString(),
             end_date: endDate.toISOString(),
             title: document.getElementById('eventTitle').value,
-            type: document.getElementById('eventType').value,
-            notes: document.getElementById('eventDescription').value,
+            type: type,
+            notes: notes,
             // updated_at is handled by trigger usually, but we can set it if needed, or rely on default
         };
 

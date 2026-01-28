@@ -39,6 +39,9 @@ class ParentExcuse {
             await this.loadExcuseLetters();
             this.initEventListeners();
             
+            // Check for deep links
+            this.checkUrlParams();
+            
             this.hideLoading();
         } catch (error) {
             console.error('Parent excuse initialization failed:', error);
@@ -553,6 +556,33 @@ async loadChildren() {
         if (error) throw error;
         console.log('Excuse letter saved with ID:', result.id);
 
+        // Fetch adviser_id to notify teacher
+        if (teacherClassId) {
+            try {
+                const { data: classData, error: classError } = await window.supabaseClient
+                    .from('classes')
+                    .select('adviser_id')
+                    .eq('id', teacherClassId)
+                    .single();
+                
+                if (!classError && classData && classData.adviser_id) {
+                    await EducareTrack.createNotification({
+                        type: 'excuse',
+                        title: 'New Excuse Letter',
+                        message: `${student.name} submitted an excuse letter for ${dates.length > 0 ? new Date(dates[0]).toLocaleDateString() : 'absence'}.`,
+                        targetUsers: [classData.adviser_id],
+                        studentId: childId,
+                        studentName: student.name,
+                        relatedRecord: result.id,
+                        isUrgent: false
+                    });
+                }
+            } catch (notifyError) {
+                console.error('Error notifying teacher:', notifyError);
+                // Don't fail the submission if notification fails
+            }
+        }
+
         // Success
         this.showNotification('Excuse letter submitted successfully!', 'success');
         this.closeNewExcuseModal();
@@ -805,6 +835,52 @@ async loadNotificationCount() {
         }
     }
 }
+
+    async checkUrlParams() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const excuseId = urlParams.get('excuseId');
+        
+        if (excuseId) {
+            await this.handleDeepLink(excuseId);
+        }
+    }
+
+    async handleDeepLink(excuseId) {
+        let letter = this.excuseLetters.find(l => l.id === excuseId);
+        
+        // If not found in current list (should be there as we load all), try to fetch it specifically
+        if (!letter) {
+            try {
+                const { data, error } = await window.supabaseClient
+                    .from('excuse_letters')
+                    .select('*')
+                    .eq('id', excuseId)
+                    .single();
+                    
+                if (data && !error) {
+                    letter = {
+                        ...data,
+                        studentId: data.student_id,
+                        submittedAt: data.created_at ? { toDate: () => new Date(data.created_at) } : null,
+                        absenceDate: data.dates && data.dates.length > 0 ? { toDate: () => new Date(data.dates[0]) } : null,
+                        reviewedBy: data.reviewed_by,
+                        reviewedByName: null,
+                        reviewedAt: data.reviewed_at ? { toDate: () => new Date(data.reviewed_at) } : null
+                    };
+                    // Add to list if valid
+                    this.excuseLetters.unshift(letter);
+                    this.updateExcuseTable();
+                }
+            } catch (e) {
+                console.error('Error fetching deep linked excuse:', e);
+            }
+        }
+        
+        if (letter) {
+            // Slight delay to ensure DOM is ready and modal transitions work smoothly
+            setTimeout(() => this.viewExcuseDetails(excuseId), 500);
+        }
+    }
 
     initEventListeners() {
         // Sidebar toggle

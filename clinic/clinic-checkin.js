@@ -739,8 +739,13 @@ class ClinicCheckin {
                     reason: reason,
                     visit_time: timestamp.toISOString(),
                     notes: notes || '',
-                    treated_by: this.currentUser.id, // Send UUID as required by NEW schema
-                    outcome: checkIn ? 'checked_in' : 'checked_out'
+                    treated_by: this.currentUser.id,
+                    outcome: checkIn ? 'checked_in' : 'checked_out',
+                    medical_findings: medicalData.medicalFindings || null,
+                    treatment_given: medicalData.treatmentGiven || null,
+                    recommendations: medicalData.recommendations || null,
+                    additional_notes: medicalData.additionalNotes || null,
+                    status: checkIn ? 'in_clinic' : 'discharged'
                 };
                 const { data: inserted, error } = await window.supabaseClient
                     .from('clinic_visits')
@@ -762,7 +767,8 @@ class ClinicCheckin {
                     reason,
                     notes,
                     medicalData,
-                    timeStr
+                    timeStr,
+                    inserted.id
                 );
                 return inserted.id;
             } else {
@@ -799,7 +805,7 @@ class ClinicCheckin {
                     currentStatus: checkIn ? 'in_clinic' : 'in_school',
                     lastClinicVisit: new Date().toISOString()
                 });
-                await this.sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData, clinicData.time);
+                await this.sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData, clinicData.time, clinicRef.id);
                 return clinicRef.id;
             }
         } catch (error) {
@@ -808,7 +814,7 @@ class ClinicCheckin {
         }
     }
 
-    async sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData = {}, timeStr = '') {
+    async sendEnhancedClinicNotifications(student, checkIn, reason, notes, medicalData = {}, timeStr = '', visitId = null) {
         try {
             const parentId = student.parentId || student.parent_id;
             let teacherId = null;
@@ -912,13 +918,25 @@ class ClinicCheckin {
                 type: 'clinic',
                 title: notificationTitle,
                 message: message,
-                target_users: targetUsers
+                target_users: targetUsers,
+                student_id: student.id,
+                student_name: student.name || student.full_name || 'Unknown',
+                related_record: visitId,
+                is_urgent: medicalData.recommendations === 'fetch_child' || 
+                          medicalData.recommendations === 'immediate_pickup' ||
+                          medicalData.recommendations === 'medical_attention'
             };
             
             console.log('Sending clinic notification to:', targetUsers);
             
             if (window.EducareTrack && typeof window.EducareTrack.createNotification === 'function') {
-                await window.EducareTrack.createNotification(notificationData);
+                await window.EducareTrack.createNotification({
+                    ...notificationData,
+                    targetUsers: targetUsers,
+                    studentId: student.id,
+                    studentName: student.name || student.full_name || 'Unknown',
+                    relatedRecord: visitId
+                });
             } else if (window.USE_SUPABASE && window.supabaseClient) {
                 // Supabase notification
                 await window.supabaseClient.from('notifications').insert({
@@ -926,6 +944,10 @@ class ClinicCheckin {
                     title: notificationTitle,
                     message: message,
                     type: 'clinic',
+                    student_id: student.id,
+                    student_name: student.name || student.full_name || 'Unknown',
+                    related_record: visitId,
+                    is_urgent: notificationData.is_urgent,
                     read_by: [], // Initialize as empty array
                     created_at: new Date().toISOString()
                 });

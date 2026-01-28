@@ -343,6 +343,7 @@ class TeacherAttendance {
 
     attachAttendanceEventListeners() {
         // Mark present buttons
+        // Note: These selectors might need to be scoped if used in both tabs
         document.querySelectorAll('.mark-present').forEach(button => {
             button.addEventListener('click', (e) => {
                 const btn = e.target.closest('button');
@@ -456,6 +457,16 @@ class TeacherAttendance {
     async markAllPresent() {
         try {
             this.showLoading();
+
+            // Check if today is a school day
+            const today = new Date();
+            const isSchoolDay = window.EducareTrack ? window.EducareTrack.isSchoolDay(today) : true;
+            if (!isSchoolDay) {
+                if (!confirm('Today is marked as a non-school day (Holiday/Weekend/Break). Are you sure you want to mark all present?')) {
+                    this.hideLoading();
+                    return;
+                }
+            }
             
             const absentStudents = this.classStudents.filter(student => {
                 const hasEntry = this.todayAttendance.some(record => 

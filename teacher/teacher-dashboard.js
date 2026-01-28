@@ -39,6 +39,12 @@ class TeacherDashboard {
                 return;
             }
 
+            // Hide Gatekeeper Link if not authorized
+            const gatekeeperLink = document.getElementById('navGatekeeperLink');
+            if (gatekeeperLink && !this.currentUser.is_gatekeeper) {
+                gatekeeperLink.style.display = 'none';
+            }
+
             this.updateUI();
             await this.loadTeacherData();
             this.initEventListeners();

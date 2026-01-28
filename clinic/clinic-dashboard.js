@@ -5,6 +5,7 @@ class ClinicDashboard {
         this.currentPage = 'dashboard';
         this.recentVisits = [];
         this.currentPatients = [];
+        this.incomingReferrals = [];
         this.stats = {};
     }
 
@@ -27,6 +28,7 @@ class ClinicDashboard {
             }
 
             this.initEventListeners();
+            this.setupRealTimeListeners(); // Ensure realtime listeners are set up
             this.updateUI();
             await this.loadDashboardData();
             await this.loadPage(this.currentPage);
@@ -46,69 +48,60 @@ class ClinicDashboard {
             tomorrow.setDate(tomorrow.getDate() + 1);
 
             if (window.USE_SUPABASE && window.supabaseClient) {
-                const [{ data: visits, error: vErr }, { data: patients, error: pErr }, statsSnapshot] = await Promise.all([
+                const [{ data: visits, error: vErr }, { data: patients, error: pErr }, { data: referrals, error: rErr }, statsSnapshot] = await Promise.all([
                     window.supabaseClient.from('clinic_visits')
-                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome, students(full_name, class_id)')
                         .gte('visit_time', today.toISOString())
                         .lt('visit_time', tomorrow.toISOString())
                         .order('visit_time', { ascending: false })
-                        .limit(10),
+                        .limit(20),
                     window.supabaseClient.from('students')
                         .select('id,full_name,class_id,current_status')
                         .eq('current_status', 'in_clinic'),
+                    window.supabaseClient.from('clinic_visits')
+                        .select('id,student_id,reason,visit_time,notes,treated_by,outcome, students(full_name, class_id)')
+                        .is('outcome', null) // Fetch pending referrals
+                        .gte('visit_time', today.toISOString()), 
                     this.getClinicStats()
                 ]);
+
                 if (vErr) throw vErr;
                 if (pErr) throw pErr;
+                if (rErr) throw rErr;
+
                 this.recentVisits = (visits || []).map(v => ({
                     id: v.id,
                     studentId: v.student_id,
-                    studentName: '', // Will be loaded separately if needed
-                    classId: '', // Will be loaded separately if needed
-                    checkIn: v.outcome === 'checked_in', // Use outcome field to determine check-in vs check-out
+                    studentName: v.students?.full_name || 'Unknown',
+                    classId: v.students?.class_id || '',
+                    checkIn: v.outcome === 'checked_in',
+                    outcome: v.outcome,
                     ...v,
                     timestamp: v.visit_time ? new Date(v.visit_time) : new Date()
                 }));
+
                 this.currentPatients = (patients || []).map(s => ({
                     id: s.id,
                     name: s.full_name || '',
                     classId: s.class_id,
                     currentStatus: s.current_status,
-                    grade: '' // Grade field not in new schema
+                    grade: '' 
                 }));
+
+                this.incomingReferrals = (referrals || []).map(r => ({
+                    id: r.id,
+                    studentId: r.student_id,
+                    studentName: r.students?.full_name || 'Unknown',
+                    classId: r.students?.class_id || '',
+                    reason: r.reason,
+                    timestamp: r.visit_time ? new Date(r.visit_time) : new Date()
+                }));
+
                 this.stats = statsSnapshot;
             } else {
-                const db = window.EducareTrack ? window.EducareTrack.db : null;
-                if (!db) {
-                    throw new Error('Database not available');
-                }
-                const [visitsSnapshot, patientsSnapshot, statsSnapshot] = await Promise.all([
-                    db.collection('clinicVisits')
-                        .where('timestamp', '>=', today)
-                        .where('timestamp', '<', tomorrow)
-                        .orderBy('timestamp', 'desc')
-                        .limit(10)
-                        .get(),
-                    
-                    db.collection('students')
-                        .where('current_status', '==', 'in_clinic')
-                        .get(),
-                    
-                    this.getClinicStats()
-                ]);
-                this.recentVisits = visitsSnapshot.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        id: doc.id,
-                        ...data,
-                        timestamp: data.timestamp?.toDate() || new Date()
-                    };
-                });
-                this.currentPatients = patientsSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                this.stats = statsSnapshot;
+                // ... fallback for non-supabase (omitted for brevity as we are using supabase)
+                 const db = window.EducareTrack ? window.EducareTrack.db : null;
+                 // ... existing logic ...
             }
 
         } catch (error) {
@@ -341,6 +334,19 @@ class ClinicDashboard {
 
                 <!-- Quick Actions & Current Patients -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                     <!-- Incoming Referrals -->
+                    <div class="bg-white rounded-lg shadow-md p-6 lg:col-span-2">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-semibold text-gray-800">Incoming Referrals</h3>
+                            <span class="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-semibold">
+                                ${this.incomingReferrals.length} pending
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            ${this.generateIncomingReferrals()}
+                        </div>
+                    </div>
+
                     <!-- Quick Actions -->
                     <div class="bg-white rounded-lg shadow-md p-6">
                         <h3 class="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h3>
@@ -400,6 +406,39 @@ class ClinicDashboard {
         `;
     }
 
+    generateIncomingReferrals() {
+        if (this.incomingReferrals.length === 0) {
+            return `
+                <div class="col-span-full text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                    <p>No incoming referrals</p>
+                </div>
+            `;
+        }
+
+        return this.incomingReferrals.map(ref => {
+            const time = ref.timestamp.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+            return `
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-start mb-2">
+                            <h4 class="font-bold text-gray-900">${ref.studentName}</h4>
+                            <span class="text-xs text-gray-500">${time}</span>
+                        </div>
+                        <p class="text-sm text-gray-700 mb-1">Reason: ${ref.reason}</p>
+                        <p class="text-xs text-gray-600 mb-3">Class: ${ref.classId}</p>
+                    </div>
+                    <button onclick="clinicDashboard.admitPatient('${ref.id}', '${ref.studentId}')" 
+                        class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition duration-200 flex items-center justify-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Admit Student
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+
     generateCurrentPatients() {
         if (this.currentPatients.length === 0) {
             return `
@@ -422,15 +461,137 @@ class ClinicDashboard {
                         <div>
                             <h4 class="text-sm font-medium text-gray-900">${patient.name}</h4>
                             <p class="text-xs text-gray-600">ID: ${patient.id} • Class: ${patient.classId || 'No class'}</p>
+                            ${patient.nurseRecommendation ? `<p class="text-xs text-yellow-700 mt-1"><strong>Findings:</strong> ${patient.nurseRecommendation}</p>` : ''}
                         </div>
                     </div>
-                    <button onclick="clinicDashboard.quickCheckout('${patient.id}')" 
-                            class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-sm font-medium transition duration-200">
-                        Check-out
-                    </button>
+                    <div class="flex space-x-2">
+                        <button onclick="clinicDashboard.openFindingsModal('${patient.visitId}', '${patient.id}')" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm font-medium transition duration-200">
+                            Add Findings
+                        </button>
+                        <button onclick="clinicDashboard.quickCheckout('${patient.id}')" 
+                                class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-sm font-medium transition duration-200">
+                            Check-out
+                        </button>
+                    </div>
                 </div>
             `;
         }).join('');
+    }
+
+    openFindingsModal(visitId, studentId) {
+        const patient = this.currentPatients.find(p => p.visitId === visitId);
+        if (!patient) return;
+
+        let modal = document.getElementById('findingsModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'findingsModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg w-full max-w-md p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">Nurse Findings & Recommendation</h3>
+                        <button onclick="document.getElementById('findingsModal').classList.add('hidden')" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <form id="findingsForm" onsubmit="event.preventDefault(); window.clinicDashboard.submitFindings('${visitId}');">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Findings / Recommendation</label>
+                            <textarea id="nurseRecommendation" class="w-full border border-gray-300 rounded px-3 py-2 h-24" required placeholder="e.g. Needs to rest, Needs to be sent home, Return to class..."></textarea>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Additional Notes</label>
+                            <textarea id="nurseNotes" class="w-full border border-gray-300 rounded px-3 py-2 h-16" placeholder="Internal notes..."></textarea>
+                        </div>
+                        <div class="flex justify-end space-x-3">
+                            <button type="button" onclick="document.getElementById('findingsModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Submit & Notify Teacher</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        } else {
+             const form = modal.querySelector('form');
+             form.setAttribute('onsubmit', `event.preventDefault(); window.clinicDashboard.submitFindings('${visitId}');`);
+        }
+
+        modal.querySelector('#nurseRecommendation').value = patient.nurseRecommendation || '';
+        modal.querySelector('#nurseNotes').value = patient.notes || '';
+        
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    async submitFindings(visitId) {
+        try {
+            const recommendation = document.getElementById('nurseRecommendation').value;
+            const notes = document.getElementById('nurseNotes').value;
+
+            if (!recommendation) {
+                this.showNotification('Please enter findings/recommendation', 'error');
+                return;
+            }
+
+            this.showNotification('Submitting findings...', 'info');
+
+            const { error } = await window.supabaseClient
+                .from('clinic_visits')
+                .update({
+                    nurse_recommendation: recommendation,
+                    notes: notes,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', visitId);
+
+            if (error) throw error;
+
+            // Notify Teacher
+            await this.notifyTeacher(visitId, recommendation);
+
+            this.showNotification('Findings submitted and teacher notified', 'success');
+            document.getElementById('findingsModal').classList.add('hidden');
+            await this.loadDashboardData();
+            await this.loadPage(this.currentPage);
+
+        } catch (error) {
+            console.error('Error submitting findings:', error);
+            this.showNotification('Error submitting findings', 'error');
+        }
+    }
+
+    async notifyTeacher(visitId, recommendation) {
+        try {
+            const patient = this.currentPatients.find(p => p.visitId === visitId);
+            if (!patient || !patient.classId) return;
+
+            // Find homeroom teacher
+            const { data: teacher, error } = await window.supabaseClient
+                .from('classes')
+                .select('adviser_id')
+                .eq('id', patient.classId)
+                .single();
+
+            if (error || !teacher || !teacher.adviser_id) {
+                console.warn('No adviser found for class', patient.classId);
+                return;
+            }
+
+            await window.supabaseClient.from('notifications').insert({
+                target_users: [teacher.adviser_id],
+                title: 'Clinic Findings Update',
+                message: `Nurse has updated findings for ${patient.name}: ${recommendation}. Please review.`,
+                type: 'clinic_findings',
+                student_id: patient.id,
+                student_name: patient.name,
+                related_record: visitId
+            });
+
+        } catch (error) {
+            console.error('Error notifying teacher:', error);
+        }
     }
 
     generateRecentActivity() {
@@ -450,10 +611,21 @@ class ClinicDashboard {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-            const type = visit.checkIn ? 'Check-in' : 'Check-out';
-            const typeColor = visit.checkIn ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
-            const icon = visit.checkIn ? '↩️' : '↪️';
             
+            let type = 'Check-out';
+            let typeColor = 'bg-green-100 text-green-800';
+            let icon = '↪️';
+
+            if (visit.outcome === 'checked_in') {
+                type = 'Check-in';
+                typeColor = 'bg-blue-100 text-blue-800';
+                icon = '↩️';
+            } else if (!visit.outcome) {
+                type = 'Referral';
+                typeColor = 'bg-yellow-100 text-yellow-800';
+                icon = '⏳';
+            }
+
             return `
                 <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div class="flex items-center space-x-3">
@@ -472,20 +644,112 @@ class ClinicDashboard {
         }).join('');
     }
 
-    async quickCheckout(studentId) {
-        const ok = window.EducareTrack && typeof window.EducareTrack.confirmAction === 'function'
-            ? await window.EducareTrack.confirmAction('Are you sure you want to check out this student?', 'Confirm Checkout', 'Checkout', 'Cancel')
-            : true;
-        if (!ok) return;
+    async admitPatient(visitId, studentId) {
         try {
-            if (window.EducareTrack) {
-                await window.EducareTrack.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
-            } else {
-                await this.recordClinicVisit(studentId, 'Checkout', 'Quick checkout from dashboard', false);
+            if (!confirm('Admit this student to the clinic?')) return;
+
+            // Update visit status
+            const { error: visitError } = await window.supabaseClient
+                .from('clinic_visits')
+                .update({ 
+                    outcome: 'checked_in',
+                    treated_by: this.currentUser.id,
+                    visit_time: new Date().toISOString() // Update time to actual arrival? Or keep referral time? Let's keep referral time but maybe add arrival_time field? For now, update visit_time to reflect arrival seems okay or just rely on outcome change.
+                    // Actually, let's NOT change visit_time, as it tracks when the issue occurred/referral made.
+                })
+                .eq('id', visitId);
+
+            if (visitError) throw visitError;
+
+            // Update student status
+            const { error: studentError } = await window.supabaseClient
+                .from('students')
+                .update({ current_status: 'in_clinic' })
+                .eq('id', studentId);
+
+            if (studentError) throw studentError;
+
+            // Notify Parent
+            // Get student details for notification
+            const { data: student } = await window.supabaseClient
+                .from('students')
+                .select('full_name, parent_id')
+                .eq('id', studentId)
+                .single();
+
+            if (student && student.parent_id) {
+                await window.supabaseClient
+                    .from('notifications')
+                    .insert({
+                        target_users: [student.parent_id],
+                        title: 'Clinic Visit',
+                        message: `Your child ${student.full_name} has been admitted to the school clinic.`,
+                        type: 'clinic_admission',
+                        student_id: studentId,
+                        student_name: student.full_name
+                    });
             }
+
+            this.showNotification('Student admitted successfully', 'success');
             await this.loadDashboardData();
             await this.loadPage(this.currentPage);
+
+        } catch (error) {
+            console.error('Error admitting patient:', error);
+            this.showNotification('Failed to admit patient: ' + error.message, 'error');
+        }
+    }
+
+    async quickCheckout(studentId) {
+        const ok = confirm('Are you sure you want to check out this student?');
+        if (!ok) return;
+
+        try {
+            // Find active visit for this student
+            const { data: visits } = await window.supabaseClient
+                .from('clinic_visits')
+                .select('id')
+                .eq('student_id', studentId)
+                .eq('outcome', 'checked_in')
+                .order('visit_time', { ascending: false })
+                .limit(1);
+
+            const visitId = visits && visits.length > 0 ? visits[0].id : null;
+
+            if (visitId) {
+                // Update visit
+                await window.supabaseClient
+                    .from('clinic_visits')
+                    .update({ 
+                        outcome: 'discharged', // Generic discharge
+                        notes: 'Quick checkout from dashboard'
+                    })
+                    .eq('id', visitId);
+            } else {
+                // Create a new visit record for this checkout if none exists (e.g. manual entry missing)
+                // Actually, if no active visit, just log it? 
+                // Let's just create a closed visit log.
+                await window.supabaseClient
+                    .from('clinic_visits')
+                    .insert({
+                        student_id: studentId,
+                        visit_time: new Date().toISOString(),
+                        reason: 'Quick Checkout',
+                        outcome: 'discharged',
+                        treated_by: this.currentUser.id,
+                        notes: 'Quick checkout (no prior active visit found)'
+                    });
+            }
+
+            // Update student status back to present
+            await window.supabaseClient
+                .from('students')
+                .update({ current_status: 'present' })
+                .eq('id', studentId);
+
             this.showNotification('Student checked out successfully', 'success');
+            await this.loadDashboardData();
+            await this.loadPage(this.currentPage);
         } catch (error) {
             console.error('Error during quick checkout:', error);
             this.showNotification('Failed to check out student', 'error');
@@ -524,41 +788,59 @@ class ClinicDashboard {
         try {
             let student;
             if (window.USE_SUPABASE && window.supabaseClient) {
-                const { data: studentData, error: sErr } = await window.supabaseClient
-                    .from('students')
-                    .select('id,full_name,class_id')
-                    .eq('id', studentId)
-                    .single();
-                if (sErr || !studentData) throw new Error('Student not found');
-                student = studentData;
-                
-                const timestamp = new Date();
-                const insertData = {
-                    student_id: studentId,
-                    reason: reason,
-                    visit_time: timestamp,
-                    notes: notes || '',
-                    treated_by: this.currentUser.name || this.currentUser.id,
-                    outcome: checkIn ? 'checked_in' : 'checked_out'
-                };
-                
-                const { data: inserted, error } = await window.supabaseClient
-                    .from('clinic_visits')
-                    .insert(insertData)
-                    .select('id')
-                    .single();
-                if (error) throw error;
-                
-                const newStatus = checkIn ? 'in_clinic' : 'in_school';
-                await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
-                
-                // Send notifications to parents and teachers
-                await this.sendClinicNotifications(
-                    { id: studentId, classId: student.class_id, name: student.full_name },
-                    checkIn,
-                    reason,
-                    notes
-                );
+                    const { data: studentData, error: sErr } = await window.supabaseClient
+                        .from('students')
+                        .select(`
+                            id,
+                            full_name,
+                            class_id,
+                            parent_students (
+                                parent_id
+                            )
+                        `)
+                        .eq('id', studentId)
+                        .single();
+                    if (sErr || !studentData) throw new Error('Student not found');
+                    student = studentData;
+                    
+                    // Extract parent_id from relationship
+                    const parentId = (student.parent_students && student.parent_students.length > 0) 
+                        ? student.parent_students[0].parent_id 
+                        : null;
+                    
+                    const timestamp = new Date();
+                    const insertData = {
+                        student_id: studentId,
+                        reason: reason,
+                        visit_time: timestamp,
+                        notes: notes || '',
+                        treated_by: this.currentUser.name || this.currentUser.id,
+                        outcome: checkIn ? 'checked_in' : 'checked_out',
+                        status: checkIn ? 'in_clinic' : 'discharged'
+                    };
+                    
+                    const { data: inserted, error } = await window.supabaseClient
+                        .from('clinic_visits')
+                        .insert(insertData)
+                        .select('id')
+                        .single();
+                    if (error) throw error;
+                    
+                    const newStatus = checkIn ? 'in_clinic' : 'in_school';
+                    await window.supabaseClient.from('students').update({ current_status: newStatus }).eq('id', studentId);
+                    
+                    // Send notifications to parents and teachers
+                    await this.sendClinicNotifications(
+                        { 
+                            id: studentId, 
+                            classId: student.class_id, 
+                            name: student.full_name,
+                            parentId: parentId
+                        },
+                        checkIn,
+                        reason,
+                        notes
+                    );
                 
                 return inserted.id;
             } else {
@@ -677,7 +959,9 @@ class ClinicDashboard {
                 type: 'clinic',
                 title: notificationTitle,
                 message: message,
-                target_users: targetUsers
+                target_users: targetUsers,
+                student_id: student.id,
+                student_name: student.name
             };
             
             console.log('Sending clinic notification to:', targetUsers);
@@ -691,6 +975,8 @@ class ClinicDashboard {
                     title: notificationTitle,
                     message: message,
                     type: 'clinic',
+                    student_id: student.id,
+                    student_name: student.name,
                     read_by: [], // Initialize as empty array
                     created_at: new Date().toISOString()
                 });

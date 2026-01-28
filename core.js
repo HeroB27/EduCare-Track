@@ -338,6 +338,79 @@ const EducareTrack = {
     },
 
     // Notifications Helper
+    handleNotificationAction(notification) {
+        if (!notification) return;
+        
+        console.log('Handling notification action:', notification);
+        const { type, student_id, studentId, related_record, relatedRecord } = notification;
+        const sId = student_id || studentId;
+        const rId = related_record || relatedRecord;
+
+        if (type === 'clinic') {
+            const event = new CustomEvent('educareTrack:navigateToClinic', {
+                detail: { studentId: sId, visitId: rId }
+            });
+            window.dispatchEvent(event);
+        } else if (type === 'excuse') {
+            const event = new CustomEvent('educareTrack:navigateToExcuses', {
+                detail: { studentId: sId, excuseId: rId }
+            });
+            window.dispatchEvent(event);
+        } else if (type === 'announcement') {
+            const event = new CustomEvent('educareTrack:navigateToAnnouncements', {
+                detail: { announcementId: rId }
+            });
+            window.dispatchEvent(event);
+        } else if (type === 'attendance') {
+             const event = new CustomEvent('educareTrack:navigateToStudent', {
+                detail: { studentId: sId }
+            });
+            window.dispatchEvent(event);
+        }
+    },
+
+    async createNotification(data) {
+        try {
+            // Normalize keys to snake_case for Supabase
+            const notification = {
+                title: data.title,
+                message: data.message,
+                type: data.type || 'info',
+                target_users: data.target_users || data.targetUsers || [],
+                student_id: data.student_id || data.studentId || null,
+                student_name: data.student_name || data.studentName || null,
+                related_record: data.related_record || data.relatedRecord || null,
+                is_urgent: data.is_urgent || data.isUrgent || false,
+                read_by: [],
+                created_at: new Date().toISOString(),
+                is_active: true
+            };
+
+            if (!notification.target_users || notification.target_users.length === 0) {
+                console.warn('Notification has no target users', notification);
+                return null;
+            }
+
+            if (window.supabaseClient) {
+                const { data: inserted, error } = await window.supabaseClient
+                    .from('notifications')
+                    .insert(notification)
+                    .select()
+                    .single();
+                
+                if (error) throw error;
+                return inserted;
+            } else {
+                console.warn('Supabase client not available for notification');
+                return null;
+            }
+        } catch (error) {
+            console.error('Error creating notification:', error);
+            // Don't throw to prevent blocking main flows
+            return null;
+        }
+    },
+
     async getNotificationsForUser(userId, unreadOnly = false, limit = 20) {
         try {
             let query = this.db.client
@@ -3063,7 +3136,7 @@ const EducareTrack = {
             case this.NOTIFICATION_TYPES.CLINIC:
                 // Navigate to clinic visits or student profile
                 if (notification.studentId) {
-                    this.navigateToClinicVisits(notification.studentId);
+                    this.navigateToClinicVisits(notification.studentId, notification.relatedRecord || notification.related_record);
                 }
                 break;
             case this.NOTIFICATION_TYPES.ANNOUNCEMENT:
@@ -3072,7 +3145,7 @@ const EducareTrack = {
                 break;
             case this.NOTIFICATION_TYPES.EXCUSE:
                 // Navigate to excuses
-                this.navigateToExcuses();
+                this.navigateToExcuses(notification.relatedRecord || notification.related_record);
                 break;
             default:
                 // Open notifications panel
@@ -3100,10 +3173,10 @@ const EducareTrack = {
         }
     },
 
-    navigateToClinicVisits(studentId) {
+    navigateToClinicVisits(studentId, visitId = null) {
         if (window.dispatchEvent) {
             window.dispatchEvent(new CustomEvent('educareTrack:navigateToClinic', {
-                detail: { studentId }
+                detail: { studentId, visitId }
             }));
         }
     },
@@ -3114,9 +3187,11 @@ const EducareTrack = {
         }
     },
 
-    navigateToExcuses() {
+    navigateToExcuses(excuseId = null) {
         if (window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('educareTrack:navigateToExcuses'));
+            window.dispatchEvent(new CustomEvent('educareTrack:navigateToExcuses', {
+                detail: { excuseId }
+            }));
         }
     },
 

@@ -9,11 +9,16 @@ class AttendanceLogic {
             jhs_in: '07:30', jhs_out: '16:00',
             shs_in: '07:30', shs_out: '16:30'
         };
-        this.loadSettings();
+        // Initialize with default settings immediately
+        this.settings = { ...this.defaultSchedule };
+        // Then try to load from server
+        this.settingsLoaded = this.loadSettings();
     }
 
     async loadSettings() {
         try {
+            if (!window.supabaseClient) return;
+            
             const { data, error } = await window.supabaseClient
                 .from('system_settings')
                 .select('value')
@@ -22,11 +27,13 @@ class AttendanceLogic {
             
             if (!error && data) {
                 this.settings = data.value;
+                console.log('Attendance settings loaded:', this.settings);
             }
         } catch (e) {
             console.error('Error loading settings', e);
         }
-        if (!this.settings) this.settings = this.defaultSchedule;
+        // Ensure settings are set (fallback to default if still null)
+        if (!this.settings) this.settings = { ...this.defaultSchedule };
     }
 
     getScheduleForStudent(level, grade) {
@@ -153,6 +160,12 @@ class AttendanceLogic {
         const isMorningOver = currentTime >= new Date(date.toDateString() + ' ' + morningEnd);
         const isAfternoonOver = currentTime >= new Date(date.toDateString() + ' ' + afternoonEnd);
 
+        // Check if schedule implies half-day (dismissal before afternoon start)
+        // Parse hours to compare
+        const dismissalHour = parseInt(afternoonEnd.split(':')[0]);
+        const afternoonStartHour = parseInt(afternoonStart.split(':')[0]);
+        const isHalfDaySchedule = dismissalHour < afternoonStartHour;
+
         let status = 'present';
         let remarks = [];
         let sessionStatus = {
@@ -176,36 +189,51 @@ class AttendanceLogic {
         }
 
         // Afternoon session analysis
-        if (afternoonEntry) {
-            if (afternoonEntry.time > afternoonStart) {
-                sessionStatus.afternoon = 'late';
-                remarks.push('Late afternoon arrival');
-            }
-            
-            // Check if student left for lunch and returned late
-            if (morningExit && !afternoonEntry) {
+        if (isHalfDaySchedule) {
+            sessionStatus.afternoon = 'exempt'; // Or 'not_applicable'
+            // For half-day students (Kinder), we don't expect afternoon entry.
+            // But we should check if they exited properly? 
+            // If they have morning entry but no morning exit/entry in afternoon?
+            // Usually they exit around 11:30.
+            // If we have morningEntry but NO exit, it's weird but not "absent afternoon".
+        } else {
+            if (afternoonEntry) {
+                if (afternoonEntry.time > afternoonStart) {
+                    sessionStatus.afternoon = 'late';
+                    remarks.push('Late afternoon arrival');
+                }
+                
+                // Check if student left for lunch and returned late
+                if (morningExit && !afternoonEntry) {
+                    if (isAfternoonOver) {
+                        sessionStatus.afternoon = 'absent';
+                        remarks.push('Did not return after lunch');
+                    }
+                }
+            } else {
                 if (isAfternoonOver) {
                     sessionStatus.afternoon = 'absent';
-                    remarks.push('Did not return after lunch');
+                    remarks.push('Absent afternoon');
+                } else {
+                    sessionStatus.afternoon = 'not_arrived';
                 }
-            }
-        } else {
-            if (isAfternoonOver) {
-                sessionStatus.afternoon = 'absent';
-                remarks.push('Absent afternoon');
-            } else {
-                sessionStatus.afternoon = 'not_arrived';
             }
         }
 
         // Determine overall status
-        if (sessionStatus.morning === 'absent' && sessionStatus.afternoon === 'absent') {
-            status = 'absent';
-            remarks.push('Full day absence');
-        } else if (sessionStatus.morning === 'absent' || sessionStatus.afternoon === 'absent') {
-            status = 'half_day';
-            remarks.push('Half day absence');
-        } else if (sessionStatus.morning === 'late' || sessionStatus.afternoon === 'late') {
+        if (sessionStatus.morning === 'absent' && (sessionStatus.afternoon === 'absent' || (isHalfDaySchedule && sessionStatus.morning === 'absent'))) {
+             // If half day and absent morning -> Full absent
+             status = 'absent';
+             remarks.push('Full day absence');
+        } else if (sessionStatus.morning === 'absent' && !isHalfDaySchedule && sessionStatus.afternoon !== 'absent') {
+             // Absent morning only
+             status = 'half_day'; 
+             remarks.push('Morning absence');
+        } else if (!isHalfDaySchedule && sessionStatus.afternoon === 'absent' && sessionStatus.morning !== 'absent') {
+             // Absent afternoon only
+             status = 'half_day';
+             remarks.push('Afternoon absence');
+        } else if (sessionStatus.morning === 'late' || (sessionStatus.afternoon === 'late' && !isHalfDaySchedule)) {
             status = 'late';
         }
 
@@ -220,6 +248,22 @@ class AttendanceLogic {
     // Get students who are absent for a specific date
     async getAbsentStudents(date = new Date()) {
         try {
+            // First check if it's a school day
+            if (window.EducareTrack && typeof window.EducareTrack.isSchoolDay === 'function') {
+                // We don't have level info for all students yet, so we do a general check or check per student later
+                // For efficiency, check general first (no level passed)
+                // If isSchoolDay(date) returns false (meaning NO levels have school), we return empty
+                // But isSchoolDay logic might depend on level. 
+                // Let's assume if it returns false without level, it means school-wide holiday/weekend
+                if (!window.EducareTrack.isSchoolDay(date)) {
+                    // Check if it's a level-specific holiday? 
+                    // The current implementation of isSchoolDay(date) without level checks for general holidays.
+                    // If it returns true, we still need to check per student level.
+                } else {
+                    // It IS a school day generally, but might be specific level suspension
+                }
+            }
+
             const startOfDay = new Date(date);
             startOfDay.setHours(0, 0, 0, 0);
             const endOfDay = new Date(date);
@@ -256,10 +300,14 @@ class AttendanceLogic {
             for (const student of allStudents) {
                 if (!presentStudentIds.has(student.id)) {
                     const status = await this.calculateStudentStatus(student.id, date, student);
-                    absentStudents.push({
-                        ...student,
-                        attendance_status: status
-                    });
+                    
+                    // Only include if it was actually a school day for them (not 'no_class')
+                    if (status.status !== 'no_class') {
+                        absentStudents.push({
+                            ...student,
+                            attendance_status: status
+                        });
+                    }
                 }
             }
 
@@ -442,8 +490,38 @@ class AttendanceLogic {
         return 'general';
     }
 
-    isLate(time) {
-        return time > '7:30';
+    isLate(time, grade = null, level = null) {
+        const s = this.settings || this.defaultSchedule;
+        let threshold = null;
+
+        if (grade || level) {
+            const g = (grade || '').toString().toLowerCase();
+            const l = (level || '').toString().toLowerCase();
+            
+            if (g.includes('kinder') || l.includes('kinder')) threshold = s.kinder_in;
+            else if (l === 'elementary' || l === 'elem') {
+                 // Check grade numbers if available
+                 if (['1','2','3'].some(num => g.includes(num))) threshold = s.g1_3_in;
+                 else if (['4','5','6'].some(num => g.includes(num))) threshold = s.g4_6_in;
+                 else threshold = s.g1_3_in; // Default elem
+            }
+            else if (l === 'jhs' || l.includes('junior')) threshold = s.jhs_in;
+            else if (l === 'shs' || l.includes('senior')) threshold = s.shs_in;
+            else {
+                // Try to guess from grade string if level not precise
+                 if (['1','2','3'].some(num => g === num || g === 'grade ' + num)) threshold = s.g1_3_in;
+                 else if (['4','5','6'].some(num => g === num || g === 'grade ' + num)) threshold = s.g4_6_in;
+                 else if (['7','8','9','10'].some(num => g === num || g === 'grade ' + num)) threshold = s.jhs_in;
+                 else if (['11','12'].some(num => g === num || g === 'grade ' + num)) threshold = s.shs_in;
+            }
+        }
+
+        if (!threshold) {
+             // Fallback to earliest time to be safe/strict
+             threshold = [s.kinder_in, s.g1_3_in, s.g4_6_in, s.jhs_in, s.shs_in].sort()[0];
+        }
+        
+        return time > threshold;
     }
 }
 

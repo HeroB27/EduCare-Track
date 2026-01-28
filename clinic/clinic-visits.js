@@ -332,14 +332,44 @@ class ClinicVisits {
         }
         const body = document.getElementById('clinicVisitDetailsBody');
         body.innerHTML = `
-            <div class="space-y-2">
-                <div><span class="font-semibold">Student:</span> ${visit.studentName}</div>
-                <div><span class="font-semibold">Date:</span> ${date}</div>
-                <div><span class="font-semibold">Time:</span> ${time}</div>
-                <div><span class="font-semibold">Type:</span> ${visit.checkIn ? 'Check-in' : 'Check-out'}</div>
-                <div><span class="font-semibold">Reason:</span> ${visit.reason}</div>
-                <div><span class="font-semibold">Notes:</span> ${visit.notes || 'None'}</div>
-                <div><span class="font-semibold">Staff:</span> ${visit.staffName || 'N/A'}</div>
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-4">
+                    <div><span class="font-semibold text-gray-600">Student:</span> <div class="font-medium">${visit.studentName}</div></div>
+                    <div><span class="font-semibold text-gray-600">Date:</span> <div class="font-medium">${date}</div></div>
+                    <div><span class="font-semibold text-gray-600">Time:</span> <div class="font-medium">${time}</div></div>
+                    <div><span class="font-semibold text-gray-600">Type:</span> <div class="font-medium">${visit.checkIn ? 'Check-in' : 'Check-out'}</div></div>
+                    <div><span class="font-semibold text-gray-600">Staff:</span> <div class="font-medium">${visit.staffName || 'N/A'}</div></div>
+                    <div><span class="font-semibold text-gray-600">Status:</span> <div class="font-medium">${visit.status || 'N/A'}</div></div>
+                </div>
+                <hr class="my-2">
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Reason:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.reason}</div>
+                </div>
+                ${visit.medicalFindings ? `
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Medical Findings:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.medicalFindings}</div>
+                </div>` : ''}
+                ${visit.treatmentGiven ? `
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Treatment Given:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.treatmentGiven}</div>
+                </div>` : ''}
+                ${visit.recommendations ? `
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Recommendations:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.recommendations}</div>
+                </div>` : ''}
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Notes:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.notes || 'None'}</div>
+                </div>
+                ${visit.additionalNotes ? `
+                <div>
+                    <span class="font-semibold text-gray-600 block mb-1">Additional Notes:</span>
+                    <div class="bg-gray-50 p-2 rounded text-gray-800">${visit.additionalNotes}</div>
+                </div>` : ''}
             </div>`;
         overlay.classList.remove('hidden');
     }
