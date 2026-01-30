@@ -30,12 +30,74 @@ class TeacherNotifications {
             this.updateUI();
             await this.loadNotificationCount();
             await this.loadNotifications();
+            this.setupRealtimeSubscription();
             this.initEventListeners();
             this.hideLoading();
         } catch (error) {
             console.error('Teacher notifications initialization failed:', error);
             this.hideLoading();
         }
+    }
+
+    setupRealtimeSubscription() {
+        if (!window.supabaseClient) return;
+
+        // Subscribe to notifications
+        const notifChannel = window.supabaseClient.channel('teacher_notifications_global')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'notifications'
+                },
+                (payload) => {
+                    const notification = payload.new;
+                    if (notification.target_users && notification.target_users.includes(this.currentUser.id)) {
+                        this.showNotification('New notification: ' + notification.title, 'info');
+                        this.loadNotificationCount();
+                        this.loadNotifications();
+                        // Dispatch event for other components
+                        window.dispatchEvent(new CustomEvent('educareTrack:newNotifications'));
+                    }
+                }
+            )
+            .subscribe();
+
+        // Subscribe to announcements (for global alerts)
+        const announceChannel = window.supabaseClient.channel('teacher_announcements_global')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'announcements'
+                },
+                (payload) => {
+                    const announcement = payload.new;
+                    const audience = announcement.audience || [];
+                    const isRelevant = 
+                        audience.includes('all') || 
+                        audience.includes('teachers') || 
+                        (this.currentUser.classId && (
+                            audience.includes(this.currentUser.classId) || 
+                            audience.some(a => typeof a === 'string' && a.includes(this.currentUser.classId))
+                        ));
+
+                    if (isRelevant && announcement.created_by !== this.currentUser.id) {
+                        this.showNotification('New Announcement: ' + announcement.title, 'info');
+                        // We don't reload notifications here because announcements aren't in the notifications table
+                        // But we could trigger a refresh if we had a combined view
+                    }
+                }
+            )
+            .subscribe();
+            
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            window.supabaseClient.removeChannel(notifChannel);
+            window.supabaseClient.removeChannel(announceChannel);
+        });
     }
 
     updateUI() {
@@ -124,42 +186,19 @@ class TeacherNotifications {
         const container = document.getElementById('notificationsList');
         if (!container) return;
 
-        if (!this.notifications || this.notifications.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-8 text-gray-500">
-                    <i class="fas fa-bell-slash text-2xl mb-2"></i>
-                    <p>No notifications found</p>
+        if (this.notifications.length === 0) {
+            container.innerHTML = '<div class="p-4 text-center text-gray-500">No notifications</div>';
+        } else {
+            container.innerHTML = this.notifications.map(n => `
+                <div class="p-4 border-b hover:bg-gray-50 ${(!n.read_by || !n.read_by.includes(this.currentUser.id)) ? 'bg-blue-50' : ''}">
+                    <div class="flex justify-between items-start">
+                        <h4 class="font-semibold text-gray-800">${n.title}</h4>
+                        <span class="text-xs text-gray-500">${new Date(n.created_at || n.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <p class="text-sm text-gray-600 mt-1">${n.message}</p>
                 </div>
-            `;
-            return;
+            `).join('');
         }
-
-        container.innerHTML = this.notifications.map(n => {
-            const unread = !n.readBy || !n.readBy.includes(this.currentUser.id);
-            const typeIcon = this.getTypeIcon(n.type, n.isUrgent);
-            const bg = unread ? 'bg-blue-50' : 'bg-white';
-            return `
-                <div class="${bg} p-4 flex items-start justify-between notification-item" data-id="${n.id}">
-                    <div class="flex items-start space-x-3">
-                        <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                            <i class="${typeIcon} text-gray-700"></i>
-                        </div>
-                        <div>
-                            <p class="text-sm font-semibold text-gray-800">${n.title || 'Notification'}</p>
-                            <p class="text-sm text-gray-600">${n.message || ''}</p>
-                            <p class="text-xs text-gray-500 mt-1">${(n.formattedDate || '')} ${(n.formattedTime || '')}</p>
-                        </div>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        ${unread ? `<button class="mark-read text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded" data-id="${n.id}">Mark read</button>`
-                                 : `<span class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded">Read</span>`}
-                        <button class="delete-notification text-xs px-2 py-1 bg-red-100 text-red-700 rounded" data-id="${n.id}">Delete</button>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        this.attachItemEvents();
     }
 
     attachItemEvents() {

@@ -28,6 +28,10 @@ class AdminDashboard {
             }
 
             this.updateUI();
+            
+            // Pre-fetch calendar data for analytics
+            await EducareTrack.fetchCalendarData();
+            
             await this.loadDashboardData();
             this.initEventListeners();
             

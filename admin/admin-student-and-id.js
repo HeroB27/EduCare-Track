@@ -449,10 +449,12 @@ class StudentAndIDManagement {
                 if (inputId) {
                     studentData.id = inputId;
                 } else {
-                     // Generate ID if not provided: Year-XXXX
+                     // Generate ID if not provided: EDU-YEAR-LLLL-XXXX
                      const year = new Date().getFullYear();
+                     const lrn = studentData.lrn || '0000';
+                     const last4LRN = lrn.length >= 4 ? lrn.slice(-4) : lrn.padStart(4, '0');
                      const random = Math.floor(1000 + Math.random() * 9000);
-                     studentData.id = `${year}-${random}`;
+                     studentData.id = `EDU-${year}-${last4LRN}-${random}`;
                 }
 
                 const { data, error } = await window.supabaseClient

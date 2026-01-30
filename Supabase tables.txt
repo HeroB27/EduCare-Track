@@ -1,79 +1,76 @@
--- =========================================
--- ICLC CONNECT – COMPLETE DATABASE SCHEMA
--- (FULL NAME VERSION)
--- =========================================
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- =========================================
--- PROFILES (BASE USER TABLE)
--- =========================================
+-- public.profiles
 CREATE TABLE public.profiles (
-  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  role text NOT NULL CHECK (role IN ('admin','teacher','parent','guard','clinic')),
-  full_name text NOT NULL,
-  email text NULL,
-  username text NOT NULL,
-  password text NOT NULL,
+  id uuid,
+  role text CHECK (role = ANY (ARRAY['admin','teacher','parent','guard','clinic'])),
+  full_name text,
   phone text,
   photo_url text,
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
+  updated_at timestamptz DEFAULT now(),
+  username text,
+  password text,
+  email text,
+  PRIMARY KEY (id)
 );
 
--- =========================================
--- ROLE TABLES
--- =========================================
-
--- TEACHERS
+-- public.teachers
 CREATE TABLE public.teachers (
-  id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  id uuid,
   employee_no text UNIQUE,
   is_homeroom boolean DEFAULT false,
+  is_gatekeeper boolean DEFAULT false,
   assigned_subjects text[],
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (id) REFERENCES public.profiles(id)
 );
 
--- PARENTS
+-- public.parents
 CREATE TABLE public.parents (
-  id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  id uuid,
   address text,
   occupation text,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (id) REFERENCES public.profiles(id)
 );
 
--- GUARDS
+-- public.guards
 CREATE TABLE public.guards (
-  id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  id uuid,
   shift text,
   assigned_gate text,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (id) REFERENCES public.profiles(id)
 );
 
--- CLINIC STAFF
+-- public.clinic_staff
 CREATE TABLE public.clinic_staff (
-  id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  id uuid,
   license_no text,
   position text,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (id) REFERENCES public.profiles(id)
 );
 
--- ADMIN STAFF
+-- public.admin_staff
 CREATE TABLE public.admin_staff (
-  id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  id uuid,
   position text,
-  permissions jsonb DEFAULT '[]',
-  created_at timestamptz DEFAULT now()
+  permissions jsonb DEFAULT '[]'::jsonb,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (id) REFERENCES public.profiles(id)
 );
 
--- =========================================
--- STUDENTS
--- =========================================
+-- public.students
 CREATE TABLE public.students (
-  id text PRIMARY KEY,
+  id text,
   lrn text UNIQUE,
-  full_name text NOT NULL,
+  full_name text,
   gender text,
   birth_date date,
   address text,
@@ -82,149 +79,182 @@ CREATE TABLE public.students (
   current_status text,
   photo_url text,
   created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
+  updated_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id)
 );
 
--- PARENT ↔ STUDENT RELATIONSHIP
+-- public.parent_students
 CREATE TABLE public.parent_students (
-  parent_id uuid REFERENCES parents(id) ON DELETE CASCADE,
-  student_id text REFERENCES students(id) ON DELETE CASCADE,
+  parent_id uuid,
+  student_id text,
   relationship text,
-  PRIMARY KEY (parent_id, student_id)
+  PRIMARY KEY (parent_id, student_id),
+  FOREIGN KEY (parent_id) REFERENCES public.parents(id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id)
 );
 
--- =========================================
--- CLASSES
--- =========================================
+-- public.classes
 CREATE TABLE public.classes (
-  id text PRIMARY KEY,
-  grade text NOT NULL,
-  level text NOT NULL,
-  adviser_id uuid REFERENCES teachers(id),
+  id text,
+  grade text,
+  adviser_id uuid,
   strand text,
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
-  UNIQUE (grade, section)
+  level text,
+  room text,
+  PRIMARY KEY (id),
+  FOREIGN KEY (adviser_id) REFERENCES public.teachers(id)
 );
 
--- =========================================
--- CLASS SCHEDULES
--- =========================================
-CREATE TABLE public.class_schedules (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  class_id text REFERENCES classes(id) ON DELETE CASCADE,
-  subject text NOT NULL,
-  teacher_id uuid REFERENCES teachers(id),
-  schedule_text text,
-  day_of_week text,
-  start_time time,
-  end_time time,
-  created_at timestamptz DEFAULT now()
-);
-
--- =========================================
--- ATTENDANCE (DAILY)
--- =========================================
+-- public.attendance
 CREATE TABLE public.attendance (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  student_id text REFERENCES students(id),
-  class_id text REFERENCES classes(id),
-  session text CHECK (session IN ('AM','PM')),
-  status text CHECK (status IN ('present','late','absent')),
-  method text CHECK (method IN ('qr','manual')),
+  id uuid DEFAULT uuid_generate_v4(),
+  student_id text,
+  class_id text,
+  session text CHECK (session = ANY (ARRAY['AM','PM'])),
+  status text CHECK (status = ANY (ARRAY['present','late','absent'])),
+  method text CHECK (method = ANY (ARRAY['qr','manual'])),
   timestamp timestamptz DEFAULT now(),
-  recorded_by uuid REFERENCES profiles(id),
-  remarks text
+  recorded_by uuid,
+  remarks text,
+  PRIMARY KEY (id),
+  FOREIGN KEY (class_id) REFERENCES public.classes(id),
+  FOREIGN KEY (recorded_by) REFERENCES public.profiles(id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id)
 );
 
--- =========================================
--- SUBJECT ATTENDANCE
--- =========================================
-CREATE TABLE public.subject_attendance (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  schedule_id uuid REFERENCES class_schedules(id),
-  student_id text REFERENCES students(id),
-  status text CHECK (status IN ('present','late','absent')),
-  date date DEFAULT CURRENT_DATE,
-  timestamp timestamptz DEFAULT now(),
-  recorded_by uuid REFERENCES profiles(id)
-);
-
--- =========================================
--- QR CODES
--- =========================================
+-- public.qr_codes
 CREATE TABLE public.qr_codes (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  student_id text REFERENCES students(id),
-  qr_hash text UNIQUE NOT NULL,
+  id uuid DEFAULT uuid_generate_v4(),
+  student_id text,
+  qr_hash text UNIQUE,
   issued_at timestamptz DEFAULT now(),
   expires_at timestamptz,
   is_active boolean DEFAULT true,
-  created_by uuid REFERENCES profiles(id)
+  created_by uuid,
+  PRIMARY KEY (id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id),
+  FOREIGN KEY (created_by) REFERENCES public.profiles(id)
 );
 
--- =========================================
--- CLINIC VISITS
--- =========================================
+-- public.clinic_visits
 CREATE TABLE public.clinic_visits (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  student_id text REFERENCES students(id),
+  id uuid DEFAULT uuid_generate_v4(),
+  student_id text,
   reason text,
   notes text,
-  treated_by uuid REFERENCES clinic_staff(id),
-  referred_by uuid REFERENCES profiles(id),
-  status text DEFAULT 'referred' CHECK (status IN ('referred','in_clinic','discharged')),
+  treated_by uuid,
   outcome text,
-  visit_time timestamptz DEFAULT now()
+  visit_time timestamptz DEFAULT now(),
+  medical_findings text,
+  treatment_given text,
+  recommendations text,
+  additional_notes text,
+  status text,
+  PRIMARY KEY (id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id),
+  FOREIGN KEY (treated_by) REFERENCES public.clinic_staff(id)
 );
 
--- =========================================
--- EXCUSE LETTERS
--- =========================================
+-- public.excuse_letters
 CREATE TABLE public.excuse_letters (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  student_id text REFERENCES students(id),
-  parent_id uuid REFERENCES parents(id),
+  id uuid DEFAULT uuid_generate_v4(),
+  student_id text,
+  parent_id uuid,
   reason text,
   dates jsonb,
-  status text CHECK (status IN ('pending','approved','rejected')),
-  reviewed_by uuid REFERENCES profiles(id),
+  status text CHECK (status = ANY (ARRAY['pending','approved','rejected'])),
+  reviewed_by uuid,
   reviewed_at timestamptz,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  reviewer_notes text,
+  PRIMARY KEY (id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id),
+  FOREIGN KEY (parent_id) REFERENCES public.parents(id),
+  FOREIGN KEY (reviewed_by) REFERENCES public.profiles(id)
 );
 
--- =========================================
--- ANNOUNCEMENTS
--- =========================================
+-- public.announcements
 CREATE TABLE public.announcements (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid DEFAULT uuid_generate_v4(),
   title text,
   message text,
   audience text[],
   priority text,
-  created_by uuid REFERENCES profiles(id),
+  created_by uuid,
   is_active boolean DEFAULT true,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (created_by) REFERENCES public.profiles(id)
 );
 
--- =========================================
--- NOTIFICATIONS
--- =========================================
+-- public.notifications
 CREATE TABLE public.notifications (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid DEFAULT uuid_generate_v4(),
   target_users uuid[],
   title text,
   message text,
   type text,
-  is_read boolean DEFAULT false,
-  created_at timestamptz DEFAULT now()
+  read_by uuid[],
+  created_at timestamptz DEFAULT now(),
+  related_record text,
+  is_urgent boolean DEFAULT false,
+  student_id text,
+  PRIMARY KEY (id)
 );
 
--- =========================================
--- SYSTEM SETTINGS
--- =========================================
+-- public.school_calendar
+CREATE TABLE public.school_calendar (
+  id uuid DEFAULT uuid_generate_v4(),
+  title text,
+  type text,
+  start_date timestamptz,
+  end_date timestamptz,
+  notes text,
+  created_by uuid,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (created_by) REFERENCES public.profiles(id)
+);
+
+-- public.system_settings
 CREATE TABLE public.system_settings (
-  key text PRIMARY KEY,
+  key text,
   value jsonb,
-  updated_at timestamptz DEFAULT now()
+  updated_at timestamptz DEFAULT now(),
+  PRIMARY KEY (key)
+);
+
+-- public.class_schedules
+CREATE TABLE public.class_schedules (
+  id uuid DEFAULT uuid_generate_v4(),
+  class_id text,
+  subject text,
+  teacher_id uuid,
+  schedule_text text,
+  day_of_week text,
+  start_time time,
+  end_time time,
+  period_number integer,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (class_id) REFERENCES public.classes(id),
+  FOREIGN KEY (teacher_id) REFERENCES public.teachers(id)
+);
+
+-- public.subject_attendance
+CREATE TABLE public.subject_attendance (
+  id uuid DEFAULT uuid_generate_v4(),
+  schedule_id uuid,
+  student_id text,
+  status text CHECK (status = ANY (ARRAY['present','late','absent'])),
+  date date,
+  recorded_by uuid,
+  remarks text,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (schedule_id) REFERENCES public.class_schedules(id),
+  FOREIGN KEY (student_id) REFERENCES public.students(id),
+  FOREIGN KEY (recorded_by) REFERENCES public.profiles(id)
 );

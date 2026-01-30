@@ -1,0 +1,1 @@
+always look into the Supabase table.txt file to see the schema of the table you are working with.

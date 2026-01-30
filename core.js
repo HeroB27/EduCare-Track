@@ -501,6 +501,12 @@ const EducareTrack = {
             // Generate date labels
             let curr = new Date(startDate);
             while (curr <= endDate) {
+                // Check if it's a school day
+                if (!this.isSchoolDay(curr)) {
+                    curr.setDate(curr.getDate() + 1);
+                    continue;
+                }
+
                 const dateStr = curr.toISOString().split('T')[0];
                 labels.push(curr.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
                 
@@ -2308,9 +2314,17 @@ const EducareTrack = {
                 console.warn('No classId provided to getStudentsByClass');
                 return [];
             }
+
+            // Validate UUID format to prevent 400 Bad Request
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (!uuidRegex.test(classId)) {
+                console.warn('Invalid UUID provided to getStudentsByClass:', classId);
+                return [];
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('students')
-                .select('id,full_name,lrn,class_id,strand,current_status,photo_url,created_at,updated_at')
+                .select('*, classes:class_id(grade, level, strand)')
                 .eq('class_id', classId);
             if (error || !data) return [];
             return data.map(s => ({
@@ -2325,8 +2339,9 @@ const EducareTrack = {
                 updated_at: s.updated_at,
                 // Add backward compatibility fields
                 parent_id: null, // Field doesn't exist in new schema
-                level: null, // Field doesn't exist in new schema  
-                grade: null // Field doesn't exist in new schema
+                level: s.classes ? s.classes.level : null, 
+                grade: s.classes ? s.classes.grade : null,
+                section: s.classes ? s.classes.strand : null // Map strand to section for backward compat
             }));
         } catch (error) {
             console.error('Error getting students by class:', error);
@@ -3323,7 +3338,7 @@ const EducareTrack = {
             // 1. (studentId, entry_type, timestamp)
             // 2. ({ studentId, status, date, notes, recordedBy, entry_type, ... })
             
-            let studentId, entry_type, timestamp, status, notes, recordedBy, recordedByName;
+            let studentId, entry_type, timestamp, status, notes, recordedBy, recordedByName, method;
             let isObjectArg = false;
 
             if (typeof arg1 === 'object' && arg1 !== null && arg1.studentId) {
@@ -3337,11 +3352,13 @@ const EducareTrack = {
                 notes = opts.notes || opts.remarks || '';
                 recordedBy = opts.recordedBy; // ID or Name depending on caller, but usually ID
                 recordedByName = opts.recordedByName || opts.recordedBy; // Fallback
+                method = opts.method || 'manual';
             } else {
                 // Positional signature
                 studentId = arg1;
                 entry_type = arg2 || 'entry';
                 timestamp = arg3 || new Date();
+                method = 'qr'; // Default for positional (scanner)
             }
 
             const timeString = timestamp.toTimeString().split(' ')[0].substring(0, 5);
@@ -3366,22 +3383,12 @@ const EducareTrack = {
             const insertData = {
                 student_id: studentId,
                 class_id: student.class_id || '',
-                // entry_type removed - mapped to session
                 timestamp: timestamp,
-                // time: timeString, // time column might not exist or is redundant with timestamp? keeping for now if schema has it, but based on prev fix it seemed fine. checking schema...
-                // Actually schema has `visit_time` in clinic, but attendance table? 
-                // Let's assume `time` column might be there or not. User said "missing columns... clinic_visits.check_in".
-                // I'll keep `time` if it was there, but remove known bad ones.
-                // Wait, previous grep showed `time` in attendance select in `generateAttendanceReport`? No.
-                // Let's assume `time` column exists for now or check tables.txt if possible.
-                // Safest is to rely on timestamp.
-                // But `recordGuardAttendance` used `method` and `remarks`.
                 session: entry_type === 'exit' ? 'PM' : 'AM', // Map entry/exit to AM/PM
                 status: status,
                 remarks: notes || '',
                 recorded_by: recordedBy || this.currentUser.id,
-                // recorded_by_name removed
-                method: isObjectArg || manual_entry ? 'manual' : 'qr' // manual_entry -> method
+                method: method
             };
 
             const { data: inserted, error } = await window.supabaseClient.from('attendance').insert(insertData).select('id').single();
@@ -3962,7 +3969,7 @@ const EducareTrack = {
                 title: announcementData.title,
                 message: announcementData.message,
                 audience: audienceArray,
-                priority: announcementData.priority,
+                priority: announcementData.priority || (announcementData.isUrgent || announcementData.is_urgent ? 'high' : 'normal'),
                 created_by: this.currentUser.id,
                 created_by_name: this.currentUser.name || this.currentUser.full_name || 'Admin',
                 created_at: new Date().toISOString(),

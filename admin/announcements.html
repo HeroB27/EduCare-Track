@@ -561,6 +561,23 @@
                     'teachers': 'Teachers Only',
                     'students': 'Students Only'
                 };
+                
+                if (Array.isArray(audience)) {
+                    // If it contains specific class IDs or mix of roles
+                    const roles = audience.filter(a => ['all', 'parents', 'teachers', 'students'].includes(a));
+                    const classes = audience.filter(a => !['all', 'parents', 'teachers', 'students', 'class', 'both'].includes(a));
+                    
+                    let textParts = [];
+                    if (roles.length > 0) {
+                        textParts.push(roles.map(r => audienceMap[r] || r).join(', '));
+                    }
+                    if (classes.length > 0) {
+                        textParts.push(`${classes.length} Class${classes.length > 1 ? 'es' : ''}`);
+                    }
+                    
+                    return textParts.join(' + ') || 'Custom Audience';
+                }
+                
                 return audienceMap[audience] || audience;
             }
 

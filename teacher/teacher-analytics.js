@@ -1,7 +1,18 @@
+const PERIOD_MAP = {
+    '07:30': 1,
+    '08:30': 2,
+    '09:45': 3,
+    '10:45': 4,
+    '13:00': 5,
+    '14:00': 6,
+    '15:00': 7
+};
+
 class TeacherAnalytics {
     constructor() {
         this.currentUser = null;
         this.classId = null;
+        this.students = [];
         this.charts = {};
         this.init();
     }
@@ -39,9 +50,12 @@ class TeacherAnalytics {
             schema: 'public', 
             table: 'clinic_visits'
         }, (payload) => {
-            // Check if relevant to this class if possible, or just reload
-            if (payload.new?.class_id == this.classId || payload.old?.class_id == this.classId) {
-                console.log('Realtime clinic update received');
+            // Check if relevant to this class (by student_id)
+            const studentId = payload.new?.student_id || payload.old?.student_id;
+            const isRelevant = this.students.some(s => s.id === studentId);
+            
+            if (isRelevant) {
+                console.log('Realtime clinic update received for student in class');
                 this.loadAnalytics();
             }
         });
@@ -79,16 +93,26 @@ class TeacherAnalytics {
         try {
             this.showLoading();
             
+            // Fetch students first
+            const { data: students, error: sErr } = await window.supabaseClient
+                .from('students')
+                .select('id, full_name, photo_url')
+                .eq('class_id', this.classId);
+
+            if (sErr) throw sErr;
+            this.students = students || [];
+            const studentIds = this.students.map(s => s.id);
+
             // Parallel fetch
-            const [attendanceStats, studentStats, clinicStats] = await Promise.all([
+            const [attendanceStats, clinicStats, excuseStats] = await Promise.all([
                 this.getAttendanceStats(),
-                this.getStudentStats(),
-                this.getClinicStats()
+                this.getClinicStats(studentIds),
+                this.getExcuseStats(studentIds)
             ]);
 
-            this.renderAttendanceChart(attendanceStats);
-            this.renderStudentTable(studentStats, clinicStats);
-            this.renderSummaryCards(attendanceStats, clinicStats);
+            this.renderAttendanceChart(attendanceStats, clinicStats, excuseStats);
+            this.renderStudentTable(attendanceStats, clinicStats, excuseStats);
+            this.renderSummaryCards(attendanceStats, clinicStats, excuseStats);
 
             this.hideLoading();
         } catch (error) {
@@ -97,21 +121,12 @@ class TeacherAnalytics {
         }
     }
 
-    async getClinicStats() {
+    async getClinicStats(studentIds) {
         const endDate = new Date();
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 30);
         startDate.setHours(0, 0, 0, 0);
         endDate.setHours(23, 59, 59, 999);
-
-        // Get students in class first to filter clinic visits
-        const { data: students, error: sErr } = await window.supabaseClient
-            .from('students')
-            .select('id')
-            .eq('class_id', this.classId);
-
-        if (sErr) throw sErr;
-        const studentIds = students.map(s => s.id);
 
         if (studentIds.length === 0) return { dailyStats: {}, total: 0, byStudent: {} };
 
@@ -129,13 +144,50 @@ class TeacherAnalytics {
         const byStudent = {};
         
         data.forEach(visit => {
-            const date = visit.visit_time.split('T')[0];
+            const date = new Date(visit.visit_time).toISOString().split('T')[0];
             dailyStats[date] = (dailyStats[date] || 0) + 1;
-            
             byStudent[visit.student_id] = (byStudent[visit.student_id] || 0) + 1;
         });
 
         return { dailyStats, total: data.length, byStudent };
+    }
+
+    async getExcuseStats(studentIds) {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+
+        if (studentIds.length === 0) return { dailyStats: {}, total: 0, byStudent: {} };
+
+        const { data, error } = await window.supabaseClient
+            .from('excuse_letters')
+            .select('*')
+            .in('student_id', studentIds)
+            .eq('status', 'approved');
+
+        if (error) throw error;
+
+        const dailyStats = {};
+        const byStudent = {};
+        let total = 0;
+
+        if (data) {
+             data.forEach(excuse => {
+                const dates = excuse.dates || (excuse.absenceDate ? [excuse.absenceDate] : []);
+                dates.forEach(dateStr => {
+                    const date = new Date(dateStr);
+                    if (date >= startDate && date <= endDate) {
+                         const dKey = date.toISOString().split('T')[0];
+                         dailyStats[dKey] = (dailyStats[dKey] || 0) + 1;
+                         byStudent[excuse.student_id] = (byStudent[excuse.student_id] || 0) + 1;
+                         total++;
+                    }
+                });
+             });
+        }
+        return { dailyStats, total, byStudent };
     }
 
     async getAttendanceStats() {
@@ -145,17 +197,48 @@ class TeacherAnalytics {
         startDate.setHours(0, 0, 0, 0);
         endDate.setHours(23, 59, 59, 999);
 
-        const { data, error } = await window.supabaseClient
+        // 1. Fetch Homeroom (Period 1) from 'attendance'
+        const { data: homeroomData, error: hrError } = await window.supabaseClient
             .from('attendance')
-            .select('status, timestamp')
+            .select('student_id, status, timestamp')
             .eq('class_id', this.classId)
             .gte('timestamp', startDate.toISOString())
             .lte('timestamp', endDate.toISOString());
 
-        if (error) throw error;
+        if (hrError) throw hrError;
+
+        // 2. Fetch Subject Attendance (Periods 2-7)
+        // First get schedules for this class to map IDs and filter
+        const { data: schedules } = await window.supabaseClient
+            .from('class_schedules')
+            .select('id, period_number, start_time')
+            .eq('class_id', this.classId);
+            
+        const scheduleIds = (schedules || []).map(s => s.id);
+        const schedulePeriodMap = {};
+        (schedules || []).forEach(s => {
+            // Robustness: Use period_number if available, otherwise derive from start_time
+            const startTime = s.start_time ? s.start_time.slice(0, 5) : null;
+            const derivedPeriod = PERIOD_MAP[startTime];
+            schedulePeriodMap[s.id] = s.period_number || derivedPeriod;
+        });
+
+        let subjectData = [];
+        if (scheduleIds.length > 0) {
+             const { data: subjData, error: subjError } = await window.supabaseClient
+                .from('subject_attendance')
+                .select('student_id, status, date, schedule_id')
+                .in('schedule_id', scheduleIds)
+                .gte('date', startDate.toISOString().split('T')[0])
+                .lte('date', endDate.toISOString().split('T')[0]);
+             
+             if (subjError) throw subjError;
+             subjectData = subjData || [];
+        }
 
         // Group by date
         const dailyStats = {};
+        const byStudent = {};
         const dateRange = [];
         let currentDate = new Date(startDate);
         while (currentDate <= endDate) {
@@ -164,100 +247,95 @@ class TeacherAnalytics {
         }
 
         dateRange.forEach(date => {
-            dailyStats[date] = { present: 0, late: 0, absent: 0, excused: 0, half_day: 0, clinic: 0 };
+            dailyStats[date] = { present: 0, late: 0, absent: 0 };
         });
 
-        data.forEach(record => {
-            const date = record.timestamp.split('T')[0];
-            if (dailyStats[date]) {
-                if (record.status === 'present') dailyStats[date].present++;
-                else if (record.status === 'late') dailyStats[date].late++;
-                else if (record.status === 'absent') dailyStats[date].absent++;
-                else if (record.status === 'excused') dailyStats[date].excused++;
-                else if (record.status === 'half_day') dailyStats[date].half_day++;
-                else if (record.status === 'clinic') dailyStats[date].clinic++;
-            }
+        // Initialize Student Stats
+        this.students.forEach(s => {
+             byStudent[s.id] = { present: 0, late: 0, absent: 0, total: 0 };
         });
 
-        return { dailyStats, dateRange, totalRecords: data.length };
+        // Helper to process record
+        const processRecord = (studentId, status, dateStr) => {
+            if (!dailyStats[dateStr]) return;
+
+            // Daily Stats
+            if (status === 'present') dailyStats[dateStr].present++;
+            else if (status === 'late') dailyStats[dateStr].late++;
+            else if (status === 'absent') dailyStats[dateStr].absent++;
+
+            // Student Stats
+            if (!byStudent[studentId]) byStudent[studentId] = { present: 0, late: 0, absent: 0, total: 0 };
+            
+            if (status === 'present') byStudent[studentId].present++;
+            else if (status === 'late') byStudent[studentId].late++;
+            else if (status === 'absent') byStudent[studentId].absent++;
+            
+            byStudent[studentId].total++;
+        };
+
+        // Process Homeroom (Period 1)
+        homeroomData.forEach(record => {
+            const date = new Date(record.timestamp).toISOString().split('T')[0];
+            processRecord(record.student_id, record.status, date);
+        });
+
+        // Process Subject Attendance
+        subjectData.forEach(record => {
+            const pNum = schedulePeriodMap[record.schedule_id];
+            // Skip Period 1 if it exists in subject_attendance (to avoid double counting with homeroom)
+            // Assuming Period 1 is handled by 'attendance' table
+            if (pNum === 1) return; 
+
+            processRecord(record.student_id, record.status, record.date);
+        });
+
+        return { dailyStats, dateRange, totalRecords: homeroomData.length + subjectData.length, byStudent };
     }
 
-    async getStudentStats() {
-        // Get all students in class
-        const { data: students, error: sErr } = await window.supabaseClient
-            .from('students')
-            .select('id, full_name, photo_url')
-            .eq('class_id', this.classId)
-            .eq('is_active', true);
-
-        if (sErr) throw sErr;
-
-        // Get attendance counts for each student (last 30 days)
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 30);
-
-        const { data: attendance, error: aErr } = await window.supabaseClient
-            .from('attendance')
-            .select('student_id, status')
-            .eq('class_id', this.classId)
-            .gte('timestamp', startDate.toISOString());
-
-        if (aErr) throw aErr;
-
-        const studentMap = {};
-        students.forEach(s => {
-            studentMap[s.id] = { ...s, present: 0, late: 0, absent: 0, total: 0 };
-        });
-
-        attendance.forEach(r => {
-            if (studentMap[r.student_id]) {
-                if (r.status === 'present') studentMap[r.student_id].present++;
-                else if (r.status === 'late') studentMap[r.student_id].late++;
-                else if (r.status === 'absent') studentMap[r.student_id].absent++;
-                studentMap[r.student_id].total++;
-            }
-        });
-
-        return Object.values(studentMap);
-    }
-
-    renderSummaryCards(stats) {
-        let totalPresent = 0, totalLate = 0, totalAbsent = 0, totalExcused = 0, totalHalfDay = 0;
-        Object.values(stats.dailyStats).forEach(day => {
+    renderSummaryCards(attendanceStats, clinicStats, excuseStats) {
+        let totalPresent = 0, totalLate = 0, totalAbsent = 0;
+        
+        // Sum from attendanceStats
+        Object.values(attendanceStats.dailyStats).forEach(day => {
             totalPresent += day.present;
             totalLate += day.late;
             totalAbsent += day.absent;
-            totalExcused += day.excused;
-            totalHalfDay += day.half_day;
         });
 
-        // Treat Half Day as present for general attendance rate, or partial? 
-        // Simple approach: Present + Late + Half Day
-        const total = totalPresent + totalLate + totalAbsent + totalExcused + totalHalfDay;
-        const rate = total > 0 ? Math.round(((totalPresent + totalLate + totalHalfDay) / total) * 100) : 0;
+        // Use clinic and excuse totals
+        const totalClinic = clinicStats.total;
+        const totalExcused = excuseStats.total;
+
+        const total = totalPresent + totalLate + totalAbsent; 
+        // Note: excused and clinic might overlap with absent/present in attendance table depending on how they are recorded.
+        // Assuming they are recorded as 'absent' in attendance table, or not recorded.
+        // For rate calculation, we usually do (Present + Late) / Total Days.
+        
+        const rate = total > 0 ? Math.round(((totalPresent + totalLate) / total) * 100) : 0;
 
         document.getElementById('analyticsAttendanceRate').textContent = `${rate}%`;
-        document.getElementById('analyticsTotalPresent').textContent = totalPresent + totalHalfDay; // Combine for simplicity in summary card
+        document.getElementById('analyticsTotalPresent').textContent = totalPresent;
         document.getElementById('analyticsTotalLate').textContent = totalLate;
-        document.getElementById('analyticsTotalAbsent').textContent = totalAbsent + totalExcused; // Combine for simplicity
+        document.getElementById('analyticsTotalAbsent').textContent = totalAbsent; // Raw absent
+        // We might want to show excused/clinic in UI if there are slots for them, but existing UI only has these IDs.
+        // If we want to show "Excused" instead of "Absent", we need to subtract excused from absent?
+        // Let's keep it simple and just show raw counts for now, or update if UI allows.
+        // The previous code combined them.
+        
+        // If the user wants to see "Excused" breakdown, they can see the chart.
     }
 
-    renderAttendanceChart(stats, clinicStats) {
+    renderAttendanceChart(attendanceStats, clinicStats, excuseStats) {
         const ctx = document.getElementById('homeroomAttendanceChart').getContext('2d');
-        const labels = stats.dateRange.map(d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+        const labels = attendanceStats.dateRange.map(d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
         
-        const presentData = stats.dateRange.map(d => stats.dailyStats[d].present);
-        const lateData = stats.dateRange.map(d => stats.dailyStats[d].late);
-        const absentData = stats.dateRange.map(d => stats.dailyStats[d].absent);
-        const excusedData = stats.dateRange.map(d => stats.dailyStats[d].excused);
-        const halfDayData = stats.dateRange.map(d => stats.dailyStats[d].half_day);
-
-        // Use clinic stats if available, otherwise fall back to attendance record status
-        const clinicData = stats.dateRange.map(d => {
-            const clinicCount = clinicStats && clinicStats.dailyStats ? (clinicStats.dailyStats[d] || 0) : 0;
-            return clinicCount > 0 ? clinicCount : stats.dailyStats[d].clinic;
-        });
+        const presentData = attendanceStats.dateRange.map(d => attendanceStats.dailyStats[d].present);
+        const lateData = attendanceStats.dateRange.map(d => attendanceStats.dailyStats[d].late);
+        const absentData = attendanceStats.dateRange.map(d => attendanceStats.dailyStats[d].absent);
+        
+        const clinicData = attendanceStats.dateRange.map(d => clinicStats.dailyStats[d] || 0);
+        const excusedData = attendanceStats.dateRange.map(d => excuseStats.dailyStats[d] || 0);
 
         if (this.charts.attendance) {
             this.charts.attendance.destroy();
@@ -279,24 +357,19 @@ class TeacherAnalytics {
                         backgroundColor: '#F59E0B'
                     },
                     {
-                        label: 'Half Day',
-                        data: halfDayData,
-                        backgroundColor: '#8B5CF6' // Purple for Half Day
-                    },
-                    {
                         label: 'In Clinic',
                         data: clinicData,
-                        backgroundColor: '#3B82F6' // Blue for Clinic
+                        backgroundColor: '#3B82F6'
+                    },
+                    {
+                        label: 'Excused',
+                        data: excusedData,
+                        backgroundColor: '#6B7280'
                     },
                     {
                         label: 'Absent',
                         data: absentData,
                         backgroundColor: '#EF4444'
-                    },
-                    {
-                        label: 'Excused',
-                        data: excusedData,
-                        backgroundColor: '#6B7280' // Gray for Excused (changed from Blue to avoid conflict)
                     }
                 ]
             },
@@ -310,14 +383,27 @@ class TeacherAnalytics {
         });
     }
 
-    renderStudentTable(students, clinicStats) {
-        // Merge clinic stats into students
-        students.forEach(s => {
-            s.clinic = clinicStats.byStudent[s.id] || 0;
+    renderStudentTable(attendanceStats, clinicStats, excuseStats) {
+        const tbody = document.getElementById('studentAnalyticsTable');
+        
+        // Merge stats for each student
+        const studentsWithStats = this.students.map(s => {
+            const att = attendanceStats.byStudent[s.id] || { present: 0, late: 0, absent: 0, total: 0 };
+            const clinic = clinicStats.byStudent[s.id] || 0;
+            const excused = excuseStats.byStudent[s.id] || 0;
+            
+            return {
+                ...s,
+                present: att.present,
+                late: att.late,
+                absent: att.absent,
+                total: att.total,
+                clinic,
+                excused
+            };
         });
 
-        const tbody = document.getElementById('studentAnalyticsTable');
-        tbody.innerHTML = students.map(s => {
+        tbody.innerHTML = studentsWithStats.map(s => {
             const rate = s.total > 0 ? Math.round(((s.present + s.late) / s.total) * 100) : 0;
             let statusClass = 'bg-green-100 text-green-800';
             if (rate < 80) statusClass = 'bg-yellow-100 text-yellow-800';
@@ -353,10 +439,13 @@ class TeacherAnalytics {
 
     showLoading() {
         // Implementation depends on UI framework
+        const spinner = document.getElementById('loadingSpinner');
+        if (spinner) spinner.classList.remove('hidden');
     }
 
     hideLoading() {
-        // Implementation depends on UI framework
+        const spinner = document.getElementById('loadingSpinner');
+        if (spinner) spinner.classList.add('hidden');
     }
 }
 

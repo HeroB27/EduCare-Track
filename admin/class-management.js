@@ -1,3 +1,13 @@
+const PERIOD_MAP = {
+    '07:30': 1,
+    '08:30': 2,
+    '09:45': 3,
+    '10:45': 4,
+    '13:00': 5,
+    '14:00': 6,
+    '15:00': 7
+};
+
 class ClassManagement {
     constructor() {
         this.currentUser = null;
@@ -241,14 +251,40 @@ class ClassManagement {
 
     async updatePerformanceRates() {
         try {
-            // Fetch all attendance records with timestamp for validation
-            const { data, error } = await window.supabaseClient
+            // 1. Fetch Homeroom Attendance (Period 1)
+            const { data: hrData, error: hrError } = await window.supabaseClient
                 .from('attendance')
                 .select('class_id, status, timestamp');
 
-            if (error) {
-                console.warn('Could not fetch attendance for performance rates:', error);
+            if (hrError) {
+                console.warn('Could not fetch attendance for performance rates:', hrError);
                 return;
+            }
+
+            // 2. Fetch Schedules (to map subject attendance to class)
+            const { data: schedules } = await window.supabaseClient
+                .from('class_schedules')
+                .select('id, class_id, period_number, start_time');
+                
+            const scheduleMap = {}; // id -> { class_id, period_number }
+            const scheduleIds = [];
+            (schedules || []).forEach(s => {
+                // Robustness: Use period_number if available, otherwise derive from start_time
+                const startTime = s.start_time ? s.start_time.slice(0, 5) : null;
+                const derivedPeriod = PERIOD_MAP[startTime];
+                s.period_number = s.period_number || derivedPeriod;
+                
+                scheduleMap[s.id] = s;
+                scheduleIds.push(s.id);
+            });
+
+            // 3. Fetch Subject Attendance (Periods 2-7)
+            let subjData = [];
+            if (scheduleIds.length > 0) {
+                 const { data, error: subjError } = await window.supabaseClient
+                    .from('subject_attendance')
+                    .select('schedule_id, status, date');
+                 if (!subjError) subjData = data || [];
             }
 
             // Map class levels for school day checking
@@ -266,22 +302,38 @@ class ClassManagement {
             // date -> classId -> { present, total }
             const dateMap = {};
 
-            (data || []).forEach(r => {
-                if (!r.class_id || !r.timestamp) return;
+            // Helper to process stats
+            const addStats = (dateStr, classId, status) => {
+                if (!dateMap[dateStr]) dateMap[dateStr] = {};
+                if (!dateMap[dateStr][classId]) dateMap[dateStr][classId] = { present: 0, total: 0 };
                 
-                const dateKey = new Date(r.timestamp).toDateString(); // Normalize to local date string
+                const stats = dateMap[dateStr][classId];
                 
-                if (!dateMap[dateKey]) dateMap[dateKey] = {};
-                if (!dateMap[dateKey][r.class_id]) dateMap[dateKey][r.class_id] = { present: 0, total: 0 };
-                
-                const stats = dateMap[dateKey][r.class_id];
-                
-                if (r.status === 'present' || r.status === 'late') {
+                if (status === 'present' || status === 'late') {
                     stats.present++;
                 }
-                if (r.status === 'present' || r.status === 'late' || r.status === 'absent') {
+                if (status === 'present' || status === 'late' || status === 'absent') {
                     stats.total++;
                 }
+            };
+
+            // Process Homeroom
+            (hrData || []).forEach(r => {
+                if (!r.class_id || !r.timestamp) return;
+                const dateKey = new Date(r.timestamp).toDateString();
+                addStats(dateKey, r.class_id, r.status);
+            });
+
+            // Process Subject Attendance
+            (subjData || []).forEach(r => {
+                const sched = scheduleMap[r.schedule_id];
+                if (!sched || !sched.class_id) return;
+                
+                // Skip Period 1 if present in subject_attendance (handled by Homeroom)
+                if (sched.period_number === 1) return;
+
+                const dateKey = new Date(r.date).toDateString();
+                addStats(dateKey, sched.class_id, r.status);
             });
 
             // Aggregate valid school day stats
@@ -663,23 +715,62 @@ class ClassManagement {
             const { data: scheduleData, error } = await window.supabaseClient
                 .from('class_schedules')
                 .select('*')
-                .eq('class_id', classId);
+                .eq('class_id', classId)
+                .order('schedule_text', { ascending: true }); // Try to order by time
             
             if (error) {
                 console.warn('Error fetching schedules (might be empty/new table):', error);
-                // Fallback to local schedule if any (for migration) or empty
             }
 
             const schedule = scheduleData || cls.schedule || [];
             
             if (schedule.length === 0) {
-                // Pre-populate with all available subjects for the grade level
-                this.currentClassSubjects.forEach(subj => {
-                    this.addSubjectRow(subj, '', '');
+                // Initialize 7 Periods
+                const periods = [
+                    { p: 1, time: '07:30 - 08:30', isHr: true },
+                    { p: 2, time: '08:30 - 09:30' },
+                    { p: 3, time: '09:45 - 10:45' },
+                    { p: 4, time: '10:45 - 11:45' },
+                    { p: 5, time: '13:00 - 14:00' },
+                    { p: 6, time: '14:00 - 15:00' },
+                    { p: 7, time: '15:00 - 16:00' }
+                ];
+
+                periods.forEach(p => {
+                    let subject = '';
+                    let teacherId = '';
+                    if (p.isHr) {
+                        subject = 'Homeroom Guidance'; // Default?
+                        teacherId = cls.teacher_id || cls.teacherId || '';
+                    }
+                    this.addSubjectRow(subject, teacherId, p.time, p.p);
                 });
             } else {
-                schedule.forEach(item => {
-                    this.addSubjectRow(item.subject, item.teacher_id, item.day_of_week ? `${item.day_of_week} ${item.start_time || ''}-${item.end_time || ''}` : (item.time || ''));
+                // Map existing schedules
+                // If they have period_number, use it. Else assume order or try to map.
+                // For now, let's just list them. But we want to enforce 7 periods.
+                // If the number of items != 7, we might have issues.
+                // Let's try to fill the slots.
+                
+                const periods = [1, 2, 3, 4, 5, 6, 7];
+                const filledPeriods = {}; // Map p -> item
+
+                schedule.forEach((item, index) => {
+                    // If item has period_number, use it.
+                    // If not, use index + 1 (if < 8).
+                    let p = item.period_number || (index + 1);
+                    if (p > 7) p = 7; // Cap at 7?
+                    filledPeriods[p] = item;
+                });
+
+                periods.forEach(p => {
+                    const item = filledPeriods[p];
+                    if (item) {
+                         this.addSubjectRow(item.subject, item.teacher_id, item.schedule_text || (item.day_of_week ? `${item.day_of_week} ${item.start_time}-${item.end_time}` : ''), p);
+                    } else {
+                        // Empty slot
+                        this.addSubjectRow('', '', '', p);
+                    }
                 });
             }
         } catch (err) {
@@ -758,7 +849,7 @@ class ClassManagement {
         return subjects.sort();
     }
 
-    addSubjectRow(subject = '', teacherId = '', time = '') {
+    addSubjectRow(subject = '', teacherId = '', time = '', period = null) {
         const tbody = document.getElementById('scheduleTableBody');
         const tr = document.createElement('tr');
         
@@ -766,8 +857,7 @@ class ClassManagement {
         const subjectOptions = '<option value="">Select Subject</option>' +
             this.currentClassSubjects.map(s => `<option value="${s}" ${s === subject ? 'selected' : ''}>${s}</option>`).join('');
 
-        // Initial Teacher Options (Filtered if subject exists, otherwise all or none)
-        // We'll populate this dynamically, but for initial render:
+        // Initial Teacher Options
         let teacherOptions = '<option value="">Select Teacher</option>';
         const qualifiedTeachers = subject ? this.getQualifiedTeachers(subject) : this.teachers;
         
@@ -775,7 +865,29 @@ class ClassManagement {
             `<option value="${t.id}" ${t.id === teacherId ? 'selected' : ''}>${t.name}</option>`
         ).join('');
 
+        // Period Cell Content
+        let periodCell = '';
+        let rowClass = '';
+        if (period) {
+            periodCell = `<span class="font-semibold text-gray-700">Period ${period}</span>
+                          <input type="hidden" class="period-input" value="${period}">`;
+            if (period === 1) {
+                rowClass = 'bg-blue-50'; // Highlight Homeroom
+                // Force Homeroom Subject if not set? User said: "First Subject = Homeroom"
+                // But actually "The first period of the day is always handled by the homeroom teacher."
+                // The subject might be "Homeroom Guidance" or similar.
+            }
+        } else {
+            // Allow manual entry or auto-increment? 
+            // For now, let's assume we always use fixed 7 periods via openScheduleModal
+            periodCell = `<span class="text-gray-400">-</span>`;
+        }
+
+        tr.className = rowClass;
         tr.innerHTML = `
+            <td class="px-3 py-2 text-center border-r border-gray-100">
+                ${periodCell}
+            </td>
             <td class="px-3 py-2">
                 <select class="w-full border border-gray-300 rounded px-2 py-1 subject-select" onchange="classManagement.onSubjectSelectChange(this)">
                     ${subjectOptions}
@@ -788,16 +900,14 @@ class ClassManagement {
             </td>
             <td class="px-3 py-2 relative">
                 <input type="text" class="w-full border border-gray-300 rounded px-2 py-1 time-input" 
-                       value="${time}" placeholder="e.g. M/W/F 9:00-10:00"
+                       value="${time}" placeholder="e.g. 07:30 - 08:30"
                        onchange="classManagement.checkConflict(this)">
                 <div class="conflict-warning hidden absolute right-0 top-0 -mt-2 -mr-2 text-red-600 bg-white rounded-full p-1 shadow-md" title="Schedule Conflict!">
                     <i class="fas fa-exclamation-circle"></i>
                 </div>
             </td>
             <td class="px-3 py-2 text-center">
-                <button onclick="this.closest('tr').remove()" class="text-red-600 hover:text-red-800">
-                    <i class="fas fa-trash"></i>
-                </button>
+                ${period ? '' : `<button onclick="this.closest('tr').remove()" class="text-red-600 hover:text-red-800"><i class="fas fa-trash"></i></button>`}
             </td>
         `;
         tbody.appendChild(tr);
@@ -1037,13 +1147,16 @@ class ClassManagement {
                 
                 const teacher_id = row.querySelector('.teacher-select').value;
                 const time = row.querySelector('.time-input').value.trim();
+                const periodInput = row.querySelector('.period-input');
+                const period = periodInput ? parseInt(periodInput.value) : null;
                 
                 if (subject && teacher_id) {
                     scheduleItems.push({ 
                         class_id: this.selectedClassId,
                         subject: subject, 
                         teacher_id: teacher_id, 
-                        schedule_text: time 
+                        schedule_text: time,
+                        period_number: period
                     });
                 }
             });

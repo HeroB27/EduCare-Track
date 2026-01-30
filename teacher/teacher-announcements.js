@@ -49,6 +49,7 @@ class TeacherAnnouncements {
 
             await this.loadClassStudents();
             await this.loadAnnouncements();
+            this.setupRealtimeSubscription();
             this.initEventListeners();
             
             this.hideLoading();
@@ -56,6 +57,46 @@ class TeacherAnnouncements {
             console.error('Teacher announcements initialization failed:', error);
             this.hideLoading();
         }
+    }
+
+    setupRealtimeSubscription() {
+        if (!window.supabaseClient) return;
+
+        const channel = window.supabaseClient.channel('teacher_announcements')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'announcements'
+                },
+                (payload) => {
+                    if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                        const announcement = payload.new;
+                        // Check if relevant to this teacher
+                        // Logic must match the load query: audience contains classId, 'all', 'teachers', or created_by is self
+                        const audience = announcement.audience || [];
+                        const isRelevant = 
+                            audience.includes('all') || 
+                            audience.includes('teachers') || 
+                            audience.includes(this.currentUser.classId) || 
+                            audience.some(a => typeof a === 'string' && a.includes(this.currentUser.classId)) ||
+                            announcement.created_by === this.currentUser.id;
+                        
+                        if (isRelevant) {
+                            this.loadAnnouncements();
+                            if (payload.eventType === 'INSERT' && announcement.created_by !== this.currentUser.id) {
+                                this.showNotification('New announcement: ' + announcement.title, 'info');
+                            }
+                        }
+                    }
+                }
+            )
+            .subscribe();
+        
+        window.addEventListener('beforeunload', () => {
+            window.supabaseClient.removeChannel(channel);
+        });
     }
 
     updateUI() {
@@ -99,14 +140,20 @@ class TeacherAnnouncements {
     async loadAnnouncements() {
         try {
             // Build query to fetch announcements that:
-            // 1. Target this class specifically
+            // 1. Target this class specifically (if teacher has a class)
             // 2. Target 'all'
-            // 3. Were created by this teacher (so they can see their own posts even if for parents)
+            // 3. Target 'teachers'
+            // 4. Were created by this teacher
             
+            let orQuery = `audience.cs.{all},audience.cs.{teachers},created_by.eq.${this.currentUser.id}`;
+            if (this.currentUser.classId) {
+                orQuery += `,audience.cs.{${this.currentUser.classId}}`;
+            }
+
             const { data, error } = await window.supabaseClient
                 .from('announcements')
                 .select('id,title,message,audience,priority,created_by,created_at,is_active')
-                .or(`audience.cs.{${this.currentUser.classId}},audience.cs.{all},created_by.eq.${this.currentUser.id}`)
+                .or(orQuery)
                 .eq('is_active', true)
                 .order('created_at', { ascending: false })
                 .limit(20);
@@ -119,10 +166,10 @@ class TeacherAnnouncements {
             if (creatorIds.length > 0) {
                 const { data: profiles } = await window.supabaseClient
                     .from('profiles')
-                    .select('id, full_name')
+                    .select('id, full_name, role')
                     .in('id', creatorIds);
                 if (profiles) {
-                    profiles.forEach(p => creators[p.id] = p.full_name);
+                    profiles.forEach(p => creators[p.id] = { name: p.full_name, role: p.role });
                 }
             }
 
@@ -130,7 +177,8 @@ class TeacherAnnouncements {
                 id: a.id,
                 ...a,
                 createdBy: a.created_by,
-                createdByName: creators[a.created_by] || 'Unknown',
+                createdByName: creators[a.created_by]?.name || 'Unknown',
+                createdByRole: creators[a.created_by]?.role || '',
                 createdAt: a.created_at,
                 isActive: a.is_active
             }));
@@ -158,6 +206,7 @@ class TeacherAnnouncements {
         container.innerHTML = this.announcements.map(announcement => {
             const priorityClass = this.getPriorityClass(announcement.priority);
             const audienceText = this.getAudienceText(announcement.audience);
+            const isNew = new Date(announcement.createdAt) > new Date(Date.now() - 24 * 60 * 60 * 1000);
             
             return `
                 <div class="p-6 hover:bg-gray-50 cursor-pointer announcement-item" data-announcement-id="${announcement.id}">
@@ -168,10 +217,11 @@ class TeacherAnnouncements {
                                 <span class="px-2 py-1 rounded-full text-xs font-medium ${priorityClass}">
                                     ${announcement.priority || 'normal'}
                                 </span>
+                                ${isNew ? '<span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">New</span>' : ''}
                             </div>
                             <p class="text-gray-600 mb-3 line-clamp-2">${announcement.message}</p>
                             <div class="flex items-center space-x-4 text-sm text-gray-500">
-                                <span><i class="fas fa-user mr-1"></i> ${announcement.createdByName}</span>
+                                <span><i class="fas fa-user mr-1"></i> ${announcement.createdByName} <span class="text-xs text-gray-400">(${announcement.createdByRole || 'Admin'})</span></span>
                                 <span><i class="fas fa-clock mr-1"></i> ${this.formatDateTime(announcement.createdAt)}</span>
                                 <span><i class="fas fa-users mr-1"></i> ${audienceText}</span>
                             </div>
@@ -189,177 +239,6 @@ class TeacherAnnouncements {
         this.attachAnnouncementEventListeners();
     }
 
-    attachAnnouncementEventListeners() {
-        // View Announcement
-        document.querySelectorAll('.view-announcement, .announcement-item').forEach(el => {
-            el.addEventListener('click', (e) => {
-                const id = el.dataset.announcementId;
-                // Prevent double triggering if clicking button inside item
-                if (e.target.closest('.view-announcement') && el.classList.contains('announcement-item')) return;
-                this.viewAnnouncement(id);
-            });
-        });
-    }
-
-    initEventListeners() {
-        // Create Announcement Modal
-        const createBtn = document.getElementById('createAnnouncementBtn');
-        const closeBtn = document.getElementById('closeCreateModal');
-        const modal = document.getElementById('createAnnouncementModal');
-        const form = document.getElementById('announcementForm');
-
-        if (createBtn) {
-            createBtn.addEventListener('click', () => {
-                modal.classList.remove('hidden');
-                modal.classList.add('flex');
-            });
-        }
-
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-                form.reset();
-            });
-        }
-
-        // Close on outside click
-        if (modal) {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.classList.add('hidden');
-                    modal.classList.remove('flex');
-                    form.reset();
-                }
-            });
-        }
-
-        // Submit Announcement
-        const saveBtn = document.getElementById('saveAnnouncementBtn');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => this.createAnnouncement());
-        }
-    }
-
-    async createAnnouncement() {
-        try {
-            const title = document.getElementById('announcementTitle').value;
-            const message = document.getElementById('announcementMessage').value;
-            const audienceType = document.getElementById('announcementAudience').value;
-            const priority = document.getElementById('announcementPriority').value;
-            const sendNotification = document.getElementById('sendNotification').checked;
-
-            if (!title || !message) {
-                this.showNotification('Please fill in all required fields', 'error');
-                return;
-            }
-
-            this.showLoading();
-
-            // Determine audience array based on selection
-            let audience = [];
-            if (audienceType === 'class') {
-                audience = [this.currentUser.classId];
-            } else if (audienceType === 'parents') {
-                audience = ['parents_' + this.currentUser.classId];
-            } else if (audienceType === 'both') {
-                audience = [this.currentUser.classId, 'parents_' + this.currentUser.classId];
-            }
-
-            const newAnnouncement = {
-                title,
-                message,
-                audience,
-                priority,
-                created_by: this.currentUser.id,
-                created_by_name: this.currentUser.name,
-                is_active: true
-            };
-
-            const { data, error } = await window.supabaseClient
-                .from('announcements')
-                .insert([newAnnouncement])
-                .select()
-                .single();
-
-            if (error) throw error;
-
-            // Send notification if requested
-            if (sendNotification) {
-                await this.sendAnnouncementNotification(newAnnouncement, data.id);
-            }
-
-            this.showNotification('Announcement created successfully', 'success');
-            
-            // Close modal and refresh
-            document.getElementById('createAnnouncementModal').classList.add('hidden');
-            document.getElementById('createAnnouncementModal').classList.remove('flex');
-            document.getElementById('announcementForm').reset();
-            
-            await this.loadAnnouncements();
-
-        } catch (error) {
-            console.error('Error creating announcement:', error);
-            this.showNotification('Error creating announcement', 'error');
-        } finally {
-            this.hideLoading();
-        }
-    }
-
-    async sendAnnouncementNotification(announcement, announcementId) {
-        try {
-            // Get target users based on audience
-            let targetUsers = [];
-            
-            if (announcement.audience.includes('parents_' + this.currentUser.classId)) {
-                // Fetch parents of the class
-                // First get students of the class
-                const { data: students } = await window.supabaseClient
-                    .from('students')
-                    .select('id')
-                    .eq('class_id', this.currentUser.classId);
-                
-                if (students && students.length > 0) {
-                    const studentIds = students.map(s => s.id);
-                    // Get parents
-                    const { data: relations } = await window.supabaseClient
-                        .from('parent_students')
-                        .select('parent_id')
-                        .in('student_id', studentIds);
-                    
-                    if (relations) {
-                        targetUsers = [...new Set(relations.map(r => r.parent_id))];
-                    }
-                }
-            }
-
-            if (targetUsers.length === 0) return;
-
-            const { error } = await window.supabaseClient
-                .from('notifications')
-                .insert({
-                    target_users: targetUsers,
-                    title: 'New Class Announcement: ' + announcement.title,
-                    message: announcement.message.substring(0, 100) + (announcement.message.length > 100 ? '...' : ''),
-                    type: 'announcement',
-                    related_record: announcementId,
-                    is_urgent: announcement.priority === 'urgent'
-                });
-
-            if (error) console.error('Error sending notification:', error);
-
-        } catch (error) {
-            console.error('Error processing notification:', error);
-        }
-    }
-
-    viewAnnouncement(id) {
-        const announcement = this.announcements.find(a => a.id === id);
-        if (!announcement) return;
-        
-        // Simple alert for now, could be a modal
-        alert(`Title: ${announcement.title}\n\n${announcement.message}`);
-    }
 
     getPriorityClass(priority) {
         const classes = {
@@ -373,8 +252,13 @@ class TeacherAnnouncements {
     getAudienceText(audience) {
         if (Array.isArray(audience)) {
             if (audience.includes('all')) return 'All Users';
-            if (audience.some(a => a === this.currentUser.classId)) return 'My Class';
-            return 'Custom Group';
+            if (audience.includes('teachers')) return 'Teachers';
+            
+            const parts = [];
+            if (audience.includes(this.currentUser.classId)) parts.push('My Class');
+            if (audience.some(a => typeof a === 'string' && a.startsWith('parents_'))) parts.push('Parents');
+            
+            return parts.length > 0 ? parts.join(' & ') : 'Custom Group';
         }
         const texts = {
             'class': 'Class Only',
@@ -487,6 +371,20 @@ class TeacherAnnouncements {
     }
 
     getTotalRecipients(audience) {
+        if (Array.isArray(audience)) {
+            let total = 0;
+            if (audience.includes('all')) return this.classStudents.length * 2; // Approximate
+            if (audience.includes('teachers')) return 0; // Don't count teachers here
+            
+            if (audience.includes(this.currentUser.classId)) {
+                total += this.classStudents.length;
+            }
+            if (audience.some(a => typeof a === 'string' && a.startsWith('parents_'))) {
+                total += this.getParentCount();
+            }
+            return total;
+        }
+        
         switch (audience) {
             case 'class':
                 return this.classStudents.length;
@@ -518,7 +416,7 @@ class TeacherAnnouncements {
             
             const title = document.getElementById('announcementTitle').value.trim();
             const message = document.getElementById('announcementMessage').value.trim();
-            const audience = document.getElementById('announcementAudience').value;
+            const audienceType = document.getElementById('announcementAudience').value;
             const priority = document.getElementById('announcementPriority').value;
             const sendNotification = document.getElementById('sendNotification').checked;
 
@@ -526,10 +424,20 @@ class TeacherAnnouncements {
                 throw new Error('Please fill in all required fields');
             }
 
+            // Determine audience array based on selection
+            let audience = [];
+            if (audienceType === 'class') {
+                audience = [this.currentUser.classId];
+            } else if (audienceType === 'parents') {
+                audience = ['parents_' + this.currentUser.classId];
+            } else if (audienceType === 'both') {
+                audience = [this.currentUser.classId, 'parents_' + this.currentUser.classId];
+            }
+
             const announcementRow = {
                 title,
                 message,
-                audience: [this.currentUser.classId],
+                audience,
                 priority,
                 created_by: this.currentUser.id,
                 created_at: new Date().toISOString(),
@@ -544,7 +452,7 @@ class TeacherAnnouncements {
             if (error) throw error;
 
             if (sendNotification) {
-                await this.sendAnnouncementNotifications(announcementRow, data.id, audience);
+                await this.sendAnnouncementNotifications(announcementRow, data.id, audienceType);
             }
 
             await this.loadAnnouncements();

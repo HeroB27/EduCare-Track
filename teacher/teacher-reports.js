@@ -1,3 +1,13 @@
+const PERIOD_MAP = {
+    '07:30': 1,
+    '08:30': 2,
+    '09:45': 3,
+    '10:45': 4,
+    '13:00': 5,
+    '14:00': 6,
+    '15:00': 7
+};
+
 class TeacherReports {
     constructor() {
         this.currentUser = null;
@@ -117,7 +127,7 @@ class TeacherReports {
         if (filter) {
             filter.innerHTML = '<option value="all">All Students</option>' +
                 this.classStudents.map(student => 
-                    `<option value="${student.id}">${student.name}</option>`
+                    `<option value="${student.id}">${student.name || student.full_name}</option>`
                 ).join('');
         }
     }
@@ -155,6 +165,7 @@ class TeacherReports {
                 const fetchAll = limit === 'all' || limit > 1000;
                 const maxRecords = fetchAll ? Number.MAX_SAFE_INTEGER : limit;
 
+                // 1. Fetch Attendance Records
                 while (more) {
                     const currentBatchSize = Math.min(batchSize, maxRecords - allData.length);
                     if (currentBatchSize <= 0) {
@@ -162,14 +173,14 @@ class TeacherReports {
                         break;
                     }
 
-                const { data, error } = await window.supabaseClient
-                    .from('attendance')
-                    .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
-                    .eq('class_id', this.currentUser.classId)
-                    .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
-                    .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
-                    .order('timestamp', { ascending: false })
-                    .range(from, from + currentBatchSize - 1);
+                    const { data, error } = await window.supabaseClient
+                        .from('attendance')
+                        .select('id,student_id,class_id,timestamp,session,status,remarks,recorded_by,method')
+                        .eq('class_id', this.currentUser.classId)
+                        .gte('timestamp', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                        .lte('timestamp', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString())
+                        .order('timestamp', { ascending: false })
+                        .range(from, from + currentBatchSize - 1);
 
                     if (error) {
                         console.error('Error fetching attendance batch:', error);
@@ -187,17 +198,155 @@ class TeacherReports {
                         more = false;
                     }
                 }
-                return allData.map(record => ({
-                    id: record.id,
-                    ...record,
-                    studentId: record.student_id,
-                    classId: record.class_id,
-                    entryType: 'entry', // Default since field doesn't exist in new schema
-                    timestamp: new Date(record.timestamp),
-                    time: new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-                    recordedBy: record.recorded_by,
-                    recordedByName: null // Field doesn't exist in new schema
-                }));
+
+                // Convert raw attendance to normalized format
+                let normalizedData = allData.map(record => {
+                    // Derive entryType from remarks if available, otherwise fall back to session
+                    let entryType = record.session === 'AM' ? 'entry' : 'exit';
+                    if (record.remarks) {
+                        const remarksLower = record.remarks.toLowerCase();
+                        if (remarksLower.includes('entry') || remarksLower.includes('arrival')) {
+                            entryType = 'entry';
+                        } else if (remarksLower.includes('exit') || remarksLower.includes('departure') || remarksLower.includes('out')) {
+                            entryType = 'exit';
+                        }
+                    }
+
+                    return {
+                        id: record.id,
+                        ...record,
+                        studentId: record.student_id,
+                        classId: record.class_id,
+                        entryType: entryType,
+                        timestamp: new Date(record.timestamp),
+                        time: new Date(record.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                        recordedBy: record.recorded_by,
+                        recordedByName: null,
+                        source: 'attendance'
+                    };
+                });
+
+                // 2. Fetch and Merge Approved Excuse Letters
+                // We fetch all approved excuses for the class students to ensure we catch dates in the range
+                // Optimally we'd filter by date, but since dates is JSONB, we'll fetch recent ones
+                const { data: excuses } = await window.supabaseClient
+                    .from('excuse_letters')
+                    .select('*')
+                    .in('student_id', this.classStudents.map(s => s.id))
+                    .eq('status', 'approved');
+
+                if (excuses && excuses.length > 0) {
+                    const start = new Date(startDate);
+                    const end = new Date(endDate);
+                    
+                    excuses.forEach(excuse => {
+                        const dates = excuse.dates || (excuse.absenceDate ? [excuse.absenceDate] : []);
+                        dates.forEach(dateStr => {
+                            const date = new Date(dateStr);
+                            // Check if date is within range
+                            if (date >= start && date <= end) {
+                                // Create synthetic record
+                                normalizedData.push({
+                                    id: `excuse_${excuse.id}_${dateStr}`,
+                                    studentId: excuse.student_id,
+                                    classId: this.currentUser.classId,
+                                    timestamp: date, // Use the excuse date (defaults to 00:00)
+                                    time: 'N/A',
+                                    session: 'AM', // Assumption
+                                    status: 'excused', // Synthetic status
+                                    remarks: excuse.reason,
+                                    entryType: 'entry',
+                                    source: 'excuse'
+                                });
+                            }
+                        });
+                    });
+                }
+
+                // 3. Fetch and Merge Clinic Visits
+                const { data: clinicVisits } = await window.supabaseClient
+                    .from('clinic_visits')
+                    .select('*')
+                    .in('student_id', this.classStudents.map(s => s.id))
+                    .gte('visit_time', startDate instanceof Date ? startDate.toISOString() : new Date(startDate).toISOString())
+                    .lte('visit_time', endDate instanceof Date ? endDate.toISOString() : new Date(endDate).toISOString());
+
+                if (clinicVisits && clinicVisits.length > 0) {
+                    clinicVisits.forEach(visit => {
+                        normalizedData.push({
+                            id: `clinic_${visit.id}`,
+                            studentId: visit.student_id,
+                            classId: this.currentUser.classId,
+                            timestamp: new Date(visit.visit_time),
+                            time: new Date(visit.visit_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                            session: 'AM',
+                            status: 'in_clinic', // Synthetic status
+                            remarks: visit.reason,
+                            entryType: 'entry',
+                            source: 'clinic'
+                        });
+                    });
+                }
+
+                // 4. Fetch and Merge Subject Attendance (Cell-based)
+                const { data: schedules } = await window.supabaseClient
+                    .from('class_schedules')
+                    .select('id, subject, period_number, start_time')
+                    .eq('class_id', this.currentUser.classId);
+
+                const scheduleMap = {};
+                const scheduleIds = [];
+                if (schedules) {
+                    schedules.forEach(s => {
+                        scheduleMap[s.id] = s;
+                        scheduleIds.push(s.id);
+                    });
+                }
+
+                if (scheduleIds.length > 0) {
+                    const { data: subjData } = await window.supabaseClient
+                        .from('subject_attendance')
+                        .select('*')
+                        .in('schedule_id', scheduleIds)
+                        .gte('date', startDate instanceof Date ? startDate.toISOString().split('T')[0] : new Date(startDate).toISOString().split('T')[0])
+                        .lte('date', endDate instanceof Date ? endDate.toISOString().split('T')[0] : new Date(endDate).toISOString().split('T')[0])
+                        .limit(maxRecords); // Apply limit to prevent overload
+
+                    if (subjData) {
+                        subjData.forEach(r => {
+                            const sched = scheduleMap[r.schedule_id];
+                            
+                            // Robustness: Ensure period_number is set
+                            if (sched) {
+                                const startTime = sched.start_time ? sched.start_time.slice(0, 5) : null;
+                                const derivedPeriod = PERIOD_MAP[startTime];
+                                sched.period_number = sched.period_number || derivedPeriod;
+                            }
+
+                            // Skip Homeroom (Period 1) if it exists in subject_attendance to avoid double counting
+                            // as it is already fetched from 'attendance' table
+                            if (sched && sched.period_number === 1) return;
+
+                            normalizedData.push({
+                                id: `subj_${r.id}`,
+                                studentId: r.student_id,
+                                classId: this.currentUser.classId,
+                                timestamp: new Date(`${r.date}T${sched?.start_time || '00:00:00'}`),
+                                time: sched?.start_time ? sched.start_time.slice(0,5) : '00:00',
+                                session: 'AM',
+                                status: r.status,
+                                remarks: r.remarks || `${sched?.subject || 'Subject'} (Period ${sched?.period_number || '?'})`,
+                                entryType: 'entry',
+                                source: 'subject'
+                            });
+                        });
+                    }
+                }
+
+                // Sort combined data by timestamp descending
+                normalizedData.sort((a, b) => b.timestamp - a.timestamp);
+
+                return normalizedData;
             }
         } catch (error) {
             console.error('Error getting attendance report:', error);

@@ -37,6 +37,23 @@ class TeacherGatekeeper {
             return false;
         }
 
+        // Verify gatekeeper assignment from DB (refresh status)
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('teachers')
+                .select('is_gatekeeper')
+                .eq('id', this.currentUser.id)
+                .single();
+            
+            if (!error && data) {
+                this.currentUser.is_gatekeeper = data.is_gatekeeper;
+                // Update local storage
+                localStorage.setItem('educareTrack_user', JSON.stringify(this.currentUser));
+            }
+        } catch (e) {
+            console.error('Error verifying gatekeeper status:', e);
+        }
+
         // Verify gatekeeper assignment
         if (!this.currentUser.is_gatekeeper) {
             alert('Access Denied: You are not assigned as a Gatekeeper.');

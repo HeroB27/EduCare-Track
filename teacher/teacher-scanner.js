@@ -24,7 +24,29 @@ class TeacherScanner {
         this.loadRecentScans().catch(error => console.error('Error loading recent scans:', error));
         this.checkAuth();
         this.loadAbsentStudents();
+        this.setupRealTimeListeners();
         this.updateModeDisplay();
+    }
+
+    setupRealTimeListeners() {
+        if (!window.supabaseClient) return;
+
+        // Listen for attendance changes
+        this.attendanceSubscription = window.supabaseClient
+            .channel('teacher_scanner_attendance_changes')
+            .on('postgres_changes', 
+                { event: '*', schema: 'public', table: 'attendance' },
+                (payload) => {
+                    console.log('Attendance change detected:', payload);
+                    // Reload absent students
+                    this.loadAbsentStudents();
+                    // Reload recent scans to show updates from other devices/users
+                    this.loadRecentScans();
+                }
+            )
+            .subscribe();
+            
+        console.log('Real-time listeners set up for Teacher Scanner');
     }
 
     async checkAuth() {
@@ -380,7 +402,7 @@ class TeacherScanner {
         try {
             const { data: student, error } = await window.supabaseClient
                 .from('students')
-                .select('id, full_name, lrn, class_id')
+                .select('id, full_name, lrn, class_id, photo_url')
                 .eq('id', candidate)
                 .single();
             
@@ -393,7 +415,8 @@ class TeacherScanner {
                     name: student.full_name,
                     lrn: student.lrn,
                     class_id: student.class_id,
-                    classId: student.class_id
+                    classId: student.class_id,
+                    photo_url: student.photo_url
                 };
             }
         } catch (_) {}
@@ -403,7 +426,7 @@ class TeacherScanner {
             try {
                 const { data: student, error } = await window.supabaseClient
                     .from('students')
-                    .select('id, full_name, lrn, class_id')
+                    .select('id, full_name, lrn, class_id, photo_url')
                     .eq('lrn', candidate)
                     .single();
                 
@@ -416,7 +439,8 @@ class TeacherScanner {
                         name: student.full_name,
                         lrn: student.lrn,
                         class_id: student.class_id,
-                        classId: student.class_id
+                        classId: student.class_id,
+                        photo_url: student.photo_url
                     };
                 }
             } catch (_) {}
@@ -426,7 +450,7 @@ class TeacherScanner {
         try {
             const { data: students, error } = await window.supabaseClient
                 .from('students')
-                .select('id, full_name, lrn, class_id')
+                .select('id, full_name, lrn, class_id, photo_url')
                 .eq('full_name', candidate)
                 .limit(1);
             
@@ -440,7 +464,8 @@ class TeacherScanner {
                     name: student.full_name,
                     lrn: student.lrn,
                     class_id: student.class_id,
-                    classId: student.class_id
+                    classId: student.class_id,
+                    photo_url: student.photo_url
                 };
             }
         } catch (_) {}
@@ -463,38 +488,46 @@ class TeacherScanner {
             // Use Attendance Logic for advanced status calculation
             let status = 'present';
             let remarks = '';
+            let uiStatus = 'present'; // For UI display only
             
             if (entryType === 'entry') {
                 // Time In logic
                 if (session === 'AM') {
                     if (timeString <= '07:30') {
                         status = 'present';
+                        uiStatus = 'present';
                         remarks = 'On time arrival';
                     } else {
                         status = 'late';
+                        uiStatus = 'late';
                         remarks = 'Late arrival';
                     }
                 } else if (session === 'PM') {
                     if (timeString <= '13:00') {
                         status = 'present';
+                        uiStatus = 'present';
                         remarks = 'On time after lunch';
                     } else {
                         status = 'late';
+                        uiStatus = 'late';
                         remarks = 'Late after lunch';
                     }
                 } else {
                     status = 'present';
+                    uiStatus = 'present';
                     remarks = 'Arrival recorded';
                 }
             } else {
                 // Time Out logic
-                status = 'out';
+                // Map 'out' to 'present' for DB constraint, but distinguish in remarks/UI
+                status = 'present'; 
+                uiStatus = 'out_school'; // Custom status for UI
                 
                 // Check if student was absent in morning but tapping out in afternoon
                 if (session === 'PM') {
                     const morningAttendance = await this.getStudentMorningAttendance(studentId);
                     if (!morningAttendance) {
-                        status = 'half_day';
+                        uiStatus = 'half_day';
                         remarks = 'Absent morning, present afternoon (Half day)';
                     } else {
                         remarks = 'Dismissal recorded';
@@ -514,7 +547,7 @@ class TeacherScanner {
                 student_id: studentId,
                 class_id: student.class_id || student.classId || null,
                 session: session,
-                status: status,
+                status: status, // Must be present, late, or absent
                 method: 'qr',
                 timestamp: timestamp.toISOString(),
                 recorded_by: this.currentUser.id,
@@ -530,7 +563,7 @@ class TeacherScanner {
             if (error) throw error;
             
             // Send enhanced notifications to both parent and teacher
-            await this.sendEnhancedNotifications(student, entryType, timeString, status, remarks, data[0].id);
+            await this.sendEnhancedNotifications(student, entryType, timeString, uiStatus, remarks, data[0].id);
             
             // Success
             const actionText = entryType === 'entry' ? 'Time In' : 'Time Out';
@@ -539,7 +572,8 @@ class TeacherScanner {
             this.showResult('success', 
                 `${actionText} Recorded`, 
                 `${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()} ${actionVerb} at ${timeString} (${remarks})`,
-                studentId
+                studentId,
+                student.photo_url
             );
             
             this.updateScannerStatus(`Recorded: ${student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim()}`);
@@ -548,8 +582,9 @@ class TeacherScanner {
             this.updateRecentScansUI({
                 name: student.name || `${student.first_name || ''} ${student.last_name || ''}`.trim(),
                 time: timeString,
-                status: status,
-                type: entryType
+                status: uiStatus, // Use UI status for display
+                type: entryType,
+                photoUrl: student.photo_url
             });
             
             // Reload absent students list
@@ -686,7 +721,7 @@ class TeacherScanner {
     }
 
     // Helper to show results
-    showResult(type, title, message, studentId = null) {
+    showResult(type, title, message, studentId = null, photoUrl = null) {
         const resultsDiv = document.getElementById('scanResults');
         const resultContent = document.getElementById('resultContent');
         
@@ -710,11 +745,17 @@ class TeacherScanner {
                 break;
         }
         
+        const photoHtml = photoUrl ? 
+            `<div class="flex-shrink-0 mr-3">
+                <img src="${photoUrl}" alt="Student" class="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm">
+             </div>` : '';
+
         resultContent.innerHTML = `
             <div class="${bgColor} border rounded-lg p-4">
                 <div class="flex items-center">
-                    ${icon}
-                    <div class="ml-3">
+                    ${photoHtml}
+                    ${!photoUrl ? icon : ''}
+                    <div class="${photoUrl ? '' : 'ml-3'}">
                         <h4 class="font-semibold ${textColor}">${title}</h4>
                         <p class="${textColor} text-sm">${message}</p>
                         ${studentId ? `<p class="text-gray-600 text-xs mt-1">Student ID: ${studentId}</p>` : ''}
@@ -736,12 +777,21 @@ class TeacherScanner {
         const recentScansDiv = document.getElementById('recentScans');
         const statusColor = this.getStatusColor(scanData.status);
         
+        const photoHtml = scanData.photoUrl ? 
+            `<img src="${scanData.photoUrl}" class="w-8 h-8 rounded-full object-cover mr-3 border border-gray-200">` : 
+            `<div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-3 text-gray-500 text-xs font-bold">
+                ${scanData.studentName.substring(0,2).toUpperCase()}
+             </div>`;
+
         const scanElement = document.createElement('div');
         scanElement.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg';
         scanElement.innerHTML = `
-            <div>
-                <h4 class="text-sm font-medium text-gray-900">${scanData.studentName}</h4>
-                <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType}</p>
+            <div class="flex items-center">
+                ${photoHtml}
+                <div>
+                    <h4 class="text-sm font-medium text-gray-900">${scanData.studentName}</h4>
+                    <p class="text-xs text-gray-600">${scanData.time} • ${scanData.entryType}</p>
+                </div>
             </div>
             <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusColor}">
                 ${this.getStatusText(scanData.status)}
@@ -763,7 +813,17 @@ class TeacherScanner {
         try {
             const { data: attendanceData, error } = await window.supabaseClient
                 .from('attendance')
-                .select('student_id, timestamp, session, status')
+                .select(`
+                    student_id, 
+                    timestamp, 
+                    session, 
+                    status,
+                    remarks,
+                    students (
+                        full_name,
+                        photo_url
+                    )
+                `)
                 .order('timestamp', { ascending: false })
                 .limit(10);
             
@@ -772,31 +832,21 @@ class TeacherScanner {
             // Process in reverse order to show newest first
             for (let i = attendanceData.length - 1; i >= 0; i--) {
                 const record = attendanceData[i];
-                let studentName = null;
+                const studentName = record.students ? record.students.full_name : 'Unknown Student';
+                const photoUrl = record.students ? record.students.photo_url : null;
+                const time = new Date(record.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 
-                // Fetch student name from students table
-                if (record.student_id) {
-                    try {
-                        const { data: studentData, error: studentError } = await window.supabaseClient
-                            .from('students')
-                            .select('full_name')
-                            .eq('id', record.student_id)
-                            .single();
-                        
-                        if (!studentError && studentData) {
-                            studentName = studentData.full_name;
-                        }
-                    } catch (error) {
-                        console.error('Error fetching student name:', error);
-                        studentName = 'Unknown Student';
-                    }
-                }
+                // Determine entry type from remarks if possible, or session
+                let entryType = 'entry';
+                if (record.remarks && record.remarks.includes('out')) entryType = 'exit';
+                else if (record.remarks && record.remarks.includes('Dismissal')) entryType = 'exit';
                 
                 this.addRecentScan({
-                    studentName: studentName || 'Unknown Student',
-                    time: new Date(record.timestamp).toTimeString().substring(0, 5),
-                    entryType: record.session === 'AM' ? 'entry' : 'exit',
-                    status: record.status || 'unknown'
+                    studentName: studentName,
+                    time: time,
+                    entryType: entryType,
+                    status: record.status,
+                    photoUrl: photoUrl
                 });
             }
         } catch (error) {
@@ -947,7 +997,8 @@ class TeacherScanner {
             studentName: scan.name,
             time: scan.time,
             entryType: scan.type === 'entry' ? 'entry' : 'exit',
-            status: scan.status
+            status: scan.status,
+            photoUrl: scan.photoUrl
         });
     }
 }

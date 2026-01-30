@@ -93,6 +93,7 @@ class TeacherClinicDashboard {
     }
 
     setupRealTimeListeners() {
+        // Keep polling as backup (every 60s instead of 15s)
         if (this.pollTimer) {
             clearInterval(this.pollTimer);
         }
@@ -102,7 +103,48 @@ class TeacherClinicDashboard {
             } catch (e) {
                 console.error('Polling error:', e);
             }
-        }, 15000);
+        }, 60000);
+
+        if (!window.supabaseClient) return;
+
+        // Clean up existing subscription
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('teacher_clinic_realtime');
+        
+        // Listen for Clinic Visit Changes
+        this.realtimeChannel.on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'clinic_visits'
+        }, (payload) => {
+            const record = payload.new;
+            // Check if relevant to this teacher's class
+            if (this.students.some(s => s.id === record.student_id)) {
+                console.log('Realtime clinic update received:', record);
+                this.loadInitialData(); // Reload data to reflect changes
+                
+                if (payload.eventType === 'UPDATE' && record.outcome) {
+                    const student = this.students.find(s => s.id === record.student_id);
+                    this.showToast(`Decision received for ${student ? student.name : 'student'}: ${record.outcome}`, 'info');
+                }
+            }
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Teacher clinic connected to realtime updates');
+            }
+        });
+        
+        // Add cleanup on unload
+        window.addEventListener('beforeunload', () => {
+            if (this.realtimeChannel) {
+                window.supabaseClient.removeChannel(this.realtimeChannel);
+            }
+        });
     }
 
     async loadInitialData() {
@@ -161,8 +203,8 @@ class TeacherClinicDashboard {
             ...visit,
             studentId: visit.student_id,
             teacherDecision: visit.outcome,
-            teacherNotes: visit.remarks,
-            isUrgent: visit.is_urgent,
+            teacherNotes: visit.notes || visit.additional_notes, // Mapped to notes/additional_notes
+            // isUrgent: visit.is_urgent, // Removed as column doesn't exist
             nurseRecommendation: visit.recommendations,
             staffId: visit.treated_by,
             timestamp: new Date(visit.visit_time)
@@ -180,8 +222,6 @@ class TeacherClinicDashboard {
                     title: 'Teacher Authorization Received',
                     message: `${this.teacher.name} has authorized ${student ? student.name : 'student'} to be ${decisionValue === 'send_home' ? 'sent home' : 'returned to class'}`,
                     target_users: [visit.staffId], // Assuming staffId is available from the visit record
-                    student_id: visit.studentId,
-                    student_name: student ? student.name : 'Unknown',
                     related_record: visit.id,
                     created_at: new Date().toISOString()
                 }]);
@@ -269,9 +309,8 @@ class TeacherClinicDashboard {
                     student_id: studentId,
                     visit_time: new Date().toISOString(),
                     reason: reason,
-                    status: 'active', // or 'en_route' if supported
-                    referred_by: this.teacher.id,
-                    remarks: 'Referred by teacher'
+                    status: 'in_clinic', // Aligned with teacher-dashboard.js
+                    notes: 'Referred by teacher' // Mapped remarks to notes
                 })
                 .select()
                 .single();
@@ -283,7 +322,7 @@ class TeacherClinicDashboard {
             const { data: clinicStaff } = await window.supabaseClient
                 .from('profiles')
                 .select('id')
-                .in('role', ['clinic', 'nurse']); // Assuming roles
+                .eq('role', 'clinic'); // Only 'clinic' role exists in schema
             
             const student = this.students.find(s => s.id === studentId);
 
@@ -298,7 +337,6 @@ class TeacherClinicDashboard {
                         message: `Teacher ${this.teacher.name} created a pass for ${student ? student.name : 'student'}. Reason: ${reason}`,
                         type: 'clinic_new_visit',
                         student_id: studentId,
-                        student_name: student ? student.name : 'Unknown',
                         related_record: data.id,
                         created_at: new Date().toISOString()
                     });
@@ -318,7 +356,6 @@ class TeacherClinicDashboard {
                     message: `Teacher ${this.teacher.name} has referred ${student ? student.name : 'your child'} to the clinic. Reason: ${reason}`,
                     type: 'clinic_new_visit',
                     student_id: studentId,
-                    student_name: student ? student.name : 'Unknown',
                     related_record: data.id,
                     is_urgent: false,
                     created_at: new Date().toISOString()
@@ -362,8 +399,7 @@ class TeacherClinicDashboard {
                 .from('clinic_visits')
                 .update({
                     outcome: disposition,
-                    remarks: notes,
-                    teacher_decision_time: new Date().toISOString()
+                    additional_notes: `${notes} (Decision by teacher at ${new Date().toISOString()})`
                 })
                 .eq('id', visitId);
 
@@ -713,8 +749,6 @@ class TeacherClinicDashboard {
                 title: 'Clinic Visit Update',
                 message: `Your child ${studentName} visited the clinic for ${visit.reason}. Outcome: ${visit.outcome}. Notes: ${visit.teacherNotes || 'None'}.`,
                 type: 'clinic',
-                student_id: visit.studentId,
-                student_name: studentName,
                 related_record: visit.id,
                 created_at: new Date().toISOString()
             });

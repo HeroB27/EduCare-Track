@@ -47,19 +47,82 @@
 
         <!-- Detail View (Hidden by default) -->
         <div id="subjectAttendanceView" class="hidden">
-            <header class="flex items-center mb-8">
-                <button onclick="window.teacherSubjects.backToList()" class="mr-4 text-gray-600 hover:text-blue-600">
-                    <i class="fas fa-arrow-left text-xl"></i>
-                </button>
-                <div>
-                    <h1 class="text-2xl font-bold text-gray-800" id="selectedSubjectTitle">Subject Name</h1>
-                    <p class="text-gray-600">Mark attendance for today</p>
+            <header class="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                <div class="flex items-center">
+                    <button onclick="window.teacherSubjects.backToList()" class="mr-4 text-gray-600 hover:text-blue-600 transition-colors">
+                        <i class="fas fa-arrow-left text-xl"></i>
+                    </button>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800" id="selectedSubjectTitle">Subject Name</h1>
+                        <p class="text-gray-600 text-sm" id="selectedSubjectSubtitle">Class Details</p>
+                    </div>
+                </div>
+                
+                <div class="flex items-center space-x-3 bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+                    <button onclick="window.teacherSubjects.changeDate(-1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <div class="flex items-center space-x-2">
+                        <i class="far fa-calendar-alt text-gray-500"></i>
+                        <input type="date" id="attendanceDate" class="border-none focus:ring-0 text-gray-700 font-medium bg-transparent cursor-pointer" onchange="window.teacherSubjects.onDateChange(this.value)">
+                    </div>
+                    <button onclick="window.teacherSubjects.changeDate(1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
                 </div>
             </header>
             
-            <div class="bg-white rounded-lg shadow overflow-hidden">
-                <div id="subjectStudentList">
-                    <!-- Student rows populated by JS -->
+            <!-- Canvas-style Roll Call Toolbar -->
+            <div class="bg-white rounded-t-lg border-b border-gray-200 p-4 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex space-x-2">
+                    <button onclick="window.teacherSubjects.markAll('present')" class="flex items-center px-4 py-2 bg-white border border-gray-300 rounded hover:bg-green-50 text-green-700 font-medium transition-colors text-sm shadow-sm">
+                        <i class="fas fa-check mr-2"></i> Mark All Present
+                    </button>
+                    <button onclick="window.teacherSubjects.unmarkAll()" class="flex items-center px-4 py-2 bg-white border border-gray-300 rounded hover:bg-gray-50 text-gray-600 font-medium transition-colors text-sm shadow-sm">
+                        <i class="fas fa-undo mr-2"></i> Unmark All
+                    </button>
+                </div>
+                
+                <div class="flex items-center space-x-3">
+                    <div class="text-sm text-gray-500 hidden md:block">
+                        <span class="inline-block w-3 h-3 bg-blue-100 border border-blue-300 rounded-full mr-1"></span> Changed
+                        <span class="inline-block w-3 h-3 bg-purple-100 border border-purple-300 rounded-full ml-2 mr-1"></span> Excused
+                    </div>
+                    <button onclick="window.teacherSubjects.saveAttendance()" id="saveAttendanceBtn" class="flex items-center px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fas fa-save mr-2"></i> Save Changes
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Student List -->
+            <div class="bg-white rounded-b-lg shadow overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left w-16">Photo</th>
+                                <th class="px-6 py-3 text-left w-1/3">Student Name</th>
+                                <th class="px-6 py-3 text-center">Status</th>
+                                <th class="px-6 py-3 text-left">Homeroom Status</th>
+                                <th class="px-6 py-3 text-right">Remarks</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subjectStudentList" class="divide-y divide-gray-100">
+                            <!-- Student rows populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Loading State -->
+                <div id="loadingState" class="hidden p-8 text-center text-gray-500">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                    <p>Loading class data...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="hidden p-12 text-center text-gray-400">
+                    <i class="fas fa-user-slash text-4xl mb-3"></i>
+                    <p>No students found in this class.</p>
                 </div>
             </div>
         </div>

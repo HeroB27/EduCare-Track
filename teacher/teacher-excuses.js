@@ -51,6 +51,7 @@ class TeacherExcuses {
             await this.loadClassStudents();
             await this.loadNotificationCount();
             await this.loadExcuseLetters();
+            this.setupRealTimeListeners();
             this.initEventListeners();
             
             this.hideLoading();
@@ -58,6 +59,24 @@ class TeacherExcuses {
             console.error('Teacher excuses initialization failed:', error);
             this.hideLoading();
         }
+    }
+
+    setupRealTimeListeners() {
+        if (!window.supabaseClient) return;
+
+        // Listen for excuse letter changes
+        this.excuseSubscription = window.supabaseClient
+            .channel('teacher_excuses_changes')
+            .on('postgres_changes', 
+                { event: '*', schema: 'public', table: 'excuse_letters' },
+                (payload) => {
+                    console.log('Excuse letter change detected:', payload);
+                    this.loadExcuseLetters();
+                }
+            )
+            .subscribe();
+            
+        console.log('Real-time listeners set up for Teacher Excuses');
     }
 
     updateUI() {
@@ -174,6 +193,23 @@ async loadNotificationCount() {
 
             if (error) throw error;
 
+            // Get unique reviewer IDs
+            const reviewerIds = [...new Set((data || []).map(e => e.reviewed_by).filter(id => id))];
+            let reviewerMap = {};
+            
+            if (reviewerIds.length > 0) {
+                const { data: profiles, error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .select('id, full_name')
+                    .in('id', reviewerIds);
+                    
+                if (!profileError && profiles) {
+                    profiles.forEach(p => {
+                        reviewerMap[p.id] = p.full_name;
+                    });
+                }
+            }
+
             this.excuseLetters = (data || []).map(excuse => ({
                 id: excuse.id,
                 ...excuse,
@@ -182,8 +218,9 @@ async loadNotificationCount() {
                 submittedAt: excuse.created_at,
                 reviewedAt: excuse.reviewed_at,
                 reviewedBy: excuse.reviewed_by,
-                reviewedByName: 'Administrator', // Placeholder as schema uses ID
-                reviewerNotes: excuse.reviewer_notes
+                reviewedByName: reviewerMap[excuse.reviewed_by] || 'Administrator',
+                reviewerNotes: excuse.reviewer_notes,
+                type: excuse.type || 'absence' // Default to absence if type is missing
             }));
             this.filteredExcuses = [...this.excuseLetters];
             this.updateStats();
@@ -451,15 +488,6 @@ async loadNotificationCount() {
                             </div>
                         </div>
 
-                        ${excuse.notes ? `
-                        <div>
-                            <p class="text-sm text-gray-600 mb-1">Additional Notes</p>
-                            <div class="bg-yellow-50 rounded-lg p-4 border border-yellow-100">
-                                <p class="text-gray-800 whitespace-pre-wrap">${excuse.notes}</p>
-                            </div>
-                        </div>
-                        ` : ''}
-
                         ${excuse.reviewerNotes ? `
                         <div>
                             <p class="text-sm text-gray-600 mb-1">Reviewer Feedback</p>
@@ -467,9 +495,7 @@ async loadNotificationCount() {
                                 <p class="text-blue-800 whitespace-pre-wrap"><i class="fas fa-comment-dots mr-2"></i>${excuse.reviewerNotes}</p>
                             </div>
                         </div>
-                        ` : ''}                            <div class="bg-gray-50 rounded-lg p-4">
-                                <p class="text-gray-800 whitespace-pre-wrap">${excuse.notes}</p>
-                            </div>
+                        ` : ''}
                         </div>
                         ` : ''}
 

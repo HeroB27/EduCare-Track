@@ -1450,6 +1450,7 @@ class UserManagement {
             this.showLoading();
 
             const hasAdvisory = document.getElementById('hasAdvisory').checked;
+            const isGatekeeper = document.getElementById('isGatekeeper').checked;
             let classId = null;
             let assignedClass = null;
             
@@ -1473,7 +1474,17 @@ class UserManagement {
 
             const name = document.getElementById('teacherName').value;
             const phone = document.getElementById('teacherPhone').value || '';
-            const username = document.getElementById('teacherUsername').value;
+            
+            let username = document.getElementById('teacherUsername').value;
+            
+            // Auto-generate ID/Username for new users if not editing
+            if (!this.currentEditingUser) {
+                const phoneLast4 = phone.replace(/\D/g, '').slice(-4).padStart(4, '0');
+                const year = new Date().getFullYear();
+                const random = Math.floor(1000 + Math.random() * 9000);
+                username = `TCH-${year}-${phoneLast4}-${random}`;
+            }
+
             // Generate a dummy email if not provided, for Auth purposes
             const emailInput = document.getElementById('teacherEmail').value;
             const email = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
@@ -1484,6 +1495,7 @@ class UserManagement {
             const teacherData = {
                 employee_no: username, // Mapping Username -> Employee No
                 is_homeroom: hasAdvisory,
+                is_gatekeeper: isGatekeeper,
                 assigned_subjects: this.teacherCapabilities.map(cap => cap.subject) // Flatten capabilities to subjects array
             };
 
@@ -1702,7 +1714,22 @@ class UserManagement {
             const name = document.getElementById('userName').value;
             const emailInput = document.getElementById('userEmail').value;
             const phone = document.getElementById('userPhone').value;
-            const username = document.getElementById('staffUsername').value;
+            let username = document.getElementById('staffUsername').value;
+
+            // Auto-generate ID/Username for new users if not editing
+            if (!this.currentEditingUser) {
+                const phoneLast4 = phone.replace(/\D/g, '').slice(-4).padStart(4, '0');
+                const year = new Date().getFullYear();
+                const random = Math.floor(1000 + Math.random() * 9000);
+                
+                let prefix = 'USR';
+                if (this.currentRole === 'guard') prefix = 'GRD';
+                else if (this.currentRole === 'clinic') prefix = 'CLC';
+                else if (this.currentRole === 'admin') prefix = 'ADM';
+                
+                username = `${prefix}-${year}-${phoneLast4}-${random}`;
+            }
+
             // Generate dummy email for Auth if not provided
             const authEmail = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
             const password = document.getElementById('staffPassword').value;
@@ -1820,7 +1847,16 @@ class UserManagement {
             const occupation = document.getElementById('parentOccupation').value || '';
             const address = document.getElementById('parentAddress').value || '';
             
-            const username = document.getElementById('parentUsername').value;
+            let username = document.getElementById('parentUsername').value;
+            
+            // Auto-generate ID/Username for new users
+            if (!this.currentEditingUser) {
+                const phoneLast4 = phone.replace(/\D/g, '').slice(-4).padStart(4, '0');
+                const year = new Date().getFullYear();
+                const random = Math.floor(1000 + Math.random() * 9000);
+                username = `PAR-${year}-${phoneLast4}-${random}`;
+            }
+
             // Generate dummy email for Auth if not provided
             const authEmail = emailInput || `${username.toLowerCase().replace(/\s+/g, '')}@educare.com`;
             

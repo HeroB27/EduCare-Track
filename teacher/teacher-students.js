@@ -69,6 +69,7 @@ class TeacherStudents {
 
             await this.loadNotificationCount();
             this.initEventListeners();
+            this.setupRealTimeListeners();
             
             this.hideLoading();
         } catch (error) {
@@ -86,6 +87,59 @@ class TeacherStudents {
             }
         } catch (error) {
             console.error('Error loading teacher class:', error);
+        }
+    }
+
+    setupRealTimeListeners() {
+        if (!window.supabaseClient || !this.currentUser.classId) return;
+
+        // Clean up existing subscription
+        if (this.realtimeChannel) {
+            window.supabaseClient.removeChannel(this.realtimeChannel);
+        }
+
+        this.realtimeChannel = window.supabaseClient.channel('teacher_students_realtime');
+        
+        // Listen for attendance changes
+        this.realtimeChannel.on('postgres_changes', { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'attendance',
+            filter: `class_id=eq.${this.currentUser.classId}`
+        }, (payload) => {
+            console.log('Attendance update received:', payload);
+            this.updateStudentStatus(payload.new.student_id, payload.new.status, payload.new.timestamp);
+        });
+
+        // Listen for clinic visits
+        this.realtimeChannel.on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'clinic_visits'
+        }, (payload) => {
+            const record = payload.new;
+            // We can't filter by class_id directly on clinic_visits as it might not have it or it's not efficient
+            // So we check if the student is in our list
+            if (record && this.classStudents.some(s => s.id === record.student_id)) {
+                console.log('Clinic update received:', record);
+                // Reload specific student data or just refresh all
+                this.loadClassStudents();
+            }
+        });
+
+        this.realtimeChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('Teacher students connected to realtime updates');
+            }
+        });
+    }
+
+    updateStudentStatus(studentId, status, timestamp) {
+        const student = this.classStudents.find(s => s.id === studentId);
+        if (student) {
+            student.currentStatus = status;
+            student.lastAttendance = timestamp;
+            this.renderStudents(); // Re-render to show updated status
         }
     }
 
@@ -151,20 +205,23 @@ class TeacherStudents {
                 try {
                     const { data, error } = await window.supabaseClient
                         .from('students')
-                        .select('*')
+                        .select('*, parent_students(parent_id, relationship)')
                         .eq('class_id', this.currentUser.classId);
 
                     if (error) throw error;
                     
-                    students = (data || []).map(s => ({
-                        id: s.id,
-                        ...s,
-                        classId: s.class_id,
-                        parentId: s.parent_id,
-                        emergencyContact: s.emergency_contact,
-                        grade: this.currentClass?.grade || s.grade || 'N/A',
-                        level: this.currentClass?.level || s.level || 'N/A'
-                    }));
+                    students = (data || []).map(s => {
+                        const parentRel = s.parent_students && s.parent_students.length > 0 ? s.parent_students[0] : null;
+                        return {
+                            id: s.id,
+                            ...s,
+                            classId: s.class_id,
+                            parentId: parentRel ? parentRel.parent_id : null,
+                            parentRelationship: parentRel ? parentRel.relationship : 'Parent',
+                            grade: this.currentClass?.grade || s.grade || 'N/A',
+                            level: this.currentClass?.level || s.level || 'N/A'
+                        };
+                    });
                     console.log('Loaded students via direct query (Supabase):', students);
                 } catch (error) {
                     console.log('Direct query failed:', error);
@@ -179,7 +236,7 @@ class TeacherStudents {
                 // Check if teacher should have Kindergarten students
                 if (this.currentClass && this.currentClass.grade === 'Kindergarten') {
                     students = allStudents.filter(student => 
-                        student.grade === 'Kindergarten' && student.isActive
+                        student.grade === 'Kindergarten'
                     );
                     console.log('Found Kindergarten students:', students);
                 } else {
@@ -255,11 +312,11 @@ class TeacherStudents {
                         <div class="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
                             ${student.photoUrl ? 
                                 `<img src="${student.photoUrl}" alt="${student.name}" class="w-16 h-16 rounded-full object-cover">` :
-                                `<span class="text-blue-600 font-semibold text-lg">${student.name.split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
+                                `<span class="text-blue-600 font-semibold text-lg">${(student.name || 'U').split(' ').map(n => n[0]).join('').substring(0, 2)}</span>`
                             }
                         </div>
                         <div class="flex-1">
-                            <h3 class="font-semibold text-gray-800 truncate">${student.name}</h3>
+                            <h3 class="font-semibold text-gray-800 truncate">${student.name || 'Unknown Student'}</h3>
                             <p class="text-sm text-gray-600">${student.grade}</p>
                             <p class="text-xs text-gray-500">LRN: ${student.lrn || 'N/A'}</p>
                         </div>
@@ -393,7 +450,7 @@ class TeacherStudents {
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Student ID:</span>
-                                <span class="font-medium">${student.studentId || 'N/A'}</span>
+                                <span class="font-medium">${student.id || 'N/A'}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-600">Class:</span>
@@ -413,7 +470,7 @@ class TeacherStudents {
                                 </div>
                                 <div>
                                     <p class="text-sm text-gray-600">Relationship</p>
-                                    <p class="font-medium">${parentInfo?.relationship || 'Parent'}</p>
+                                    <p class="font-medium">${student.parentRelationship || 'Parent'}</p>
                                 </div>
                                 <div>
                                     <p class="text-sm text-gray-600">Phone</p>
@@ -421,7 +478,7 @@ class TeacherStudents {
                                 </div>
                                 <div>
                                     <p class="text-sm text-gray-600">Emergency Contact</p>
-                                    <p class="font-medium">${parentInfo?.emergencyContact || parentInfo?.phone || 'N/A'}</p>
+                                    <p class="font-medium">${parentInfo?.phone || 'N/A'}</p>
                                 </div>
                             </div>
                         </div>
@@ -579,12 +636,12 @@ class TeacherStudents {
                 id: record.id,
                 ...record,
                 studentId: record.student_id,
-                entryType: record.status === 'out' ? 'exit' : 'entry', // Map status to entryType
-                time: new Date(record.timestamp).toTimeString().substring(0, 5), // Ensure time property exists
+                // Match logic with teacher-attendance.js: PM session implies exit, otherwise entry
+                entryType: record.session === 'PM' ? 'exit' : 'entry',
+                time: new Date(record.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
                 classId: record.class_id,
                 timestamp: new Date(record.timestamp),
                 recordedBy: record.recorded_by
-                // recordedByName removed
             }));
         } catch (error) {
             console.error('Error getting attendance by student:', error);
@@ -598,7 +655,7 @@ class TeacherStudents {
                 .from('clinic_visits')
                 .select('*')
                 .eq('student_id', studentId)
-                .order('timestamp', { ascending: false })
+                .order('visit_time', { ascending: false })
                 .limit(20);
 
             if (error) throw error;
@@ -607,10 +664,11 @@ class TeacherStudents {
                 id: record.id,
                 ...record,
                 studentId: record.student_id,
-                checkIn: record.check_in,
-                checkOut: record.check_out,
-                timestamp: new Date(record.timestamp),
-                treatedBy: record.treated_by
+                checkIn: true, // Legacy support for UI
+                checkOut: record.status === 'discharged' || record.outcome === 'send_home',
+                timestamp: new Date(record.visit_time), // Use visit_time
+                treatedBy: record.treated_by,
+                reason: record.reason || 'Medical Concern'
             }));
         } catch (error) {
             console.error('Error getting clinic visits by student:', error);

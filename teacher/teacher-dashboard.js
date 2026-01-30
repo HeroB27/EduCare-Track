@@ -111,6 +111,18 @@ class TeacherDashboard {
 
             // Load assigned class information from classes table where adviser_id = teacher id
             // Only if classId is not already set or we want to refresh it
+            
+            // Also fetch teacher profile to get is_gatekeeper status
+            const { data: teacherData, error: teacherError } = await window.supabaseClient
+                .from('teachers')
+                .select('is_gatekeeper')
+                .eq('id', this.currentUser.id)
+                .single();
+
+            if (!teacherError && teacherData) {
+                this.currentUser.is_gatekeeper = teacherData.is_gatekeeper;
+            }
+
             const { data: classData, error: classError } = await window.supabaseClient
                 .from('classes')
                 .select('*')
@@ -211,11 +223,21 @@ class TeacherDashboard {
             const presentEl = document.getElementById('presentStudents');
             const lateEl = document.getElementById('lateStudents');
             const clinicEl = document.getElementById('clinicStudents');
+            const rateEl = document.getElementById('attendanceRate');
 
             if (totalEl) totalEl.textContent = this.classStudents.length;
             if (presentEl) presentEl.textContent = presentStudents.size;
             if (lateEl) lateEl.textContent = lateStudents.size;
             if (clinicEl) clinicEl.textContent = clinicStudents.size;
+
+            if (rateEl) {
+                const totalCount = this.classStudents.length;
+                const totalPresent = presentStudents.size + lateStudents.size;
+                const rate = totalCount > 0 ? Math.round((totalPresent / totalCount) * 100) : 0;
+                
+                rateEl.textContent = `(${rate}%)`;
+                rateEl.className = 'text-xs font-semibold ml-1 ' + (rate >= 90 ? 'text-green-600' : (rate >= 75 ? 'text-yellow-600' : 'text-red-600'));
+            }
 
             // Load real-time status table which also updates the summary counts
             await this.loadRealTimeStudentStatus(attendanceData, clinicStudents);
@@ -537,9 +559,9 @@ class TeacherDashboard {
 
             const { error } = await window.supabaseClient.from('clinic_visits').insert({
                     student_id: studentId,
-                    teacher_id: this.currentUser.id,
+                    // teacher_id not in schema, adding to notes instead
                     reason: reason,
-                    notes: notes,
+                    notes: (notes || '') + ` (Referred by: ${this.currentUser.name})`,
                     outcome: 'referred', // Initial status
                     visit_time: new Date().toISOString()
                 });
@@ -587,7 +609,7 @@ class TeacherDashboard {
 
             const notifications = await EducareTrack.getNotificationsForUser(this.currentUser.id, true, 10);
             const unreadCount = notifications.filter(n => 
-                !n.readBy || !n.readBy.includes(this.currentUser.id)
+                !n.read_by || !n.read_by.includes(this.currentUser.id)
             ).length;
 
             const badge = document.getElementById('notificationCount');
@@ -615,10 +637,10 @@ class TeacherDashboard {
             list.innerHTML = '<div class="p-4 text-center text-gray-500">No notifications</div>';
         } else {
             list.innerHTML = this.notifications.map(n => `
-                <div class="p-4 border-b hover:bg-gray-50 ${(!n.readBy || !n.readBy.includes(this.currentUser.id)) ? 'bg-blue-50' : ''}">
+                <div class="p-4 border-b hover:bg-gray-50 ${(!n.read_by || !n.read_by.includes(this.currentUser.id)) ? 'bg-blue-50' : ''}">
                     <div class="flex justify-between items-start">
                         <h4 class="font-semibold text-gray-800">${n.title}</h4>
-                        <span class="text-xs text-gray-500">${new Date(n.timestamp).toLocaleDateString()}</span>
+                        <span class="text-xs text-gray-500">${new Date(n.created_at).toLocaleDateString()}</span>
                     </div>
                     <p class="text-sm text-gray-600 mt-1">${n.message}</p>
                 </div>
@@ -787,6 +809,24 @@ class TeacherDashboard {
 
             this.realtimeChannel = window.supabaseClient.channel('teacher_dashboard_realtime');
             
+            // Listen for Class Assignment Changes (classes table)
+            this.realtimeChannel.on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'classes'
+            }, async (payload) => {
+                const newRecord = payload.new;
+                const oldRecord = payload.old;
+                
+                // Check if this teacher was assigned or unassigned
+                if (newRecord.adviser_id === this.currentUser.id || (oldRecord && oldRecord.adviser_id === this.currentUser.id)) {
+                    console.log('Class assignment changed:', newRecord);
+                    this.showNotification('Class assignment updated. Reloading data...', 'info');
+                    // Reload teacher data (which loads class info and students)
+                    await this.loadTeacherData();
+                }
+            });
+
             // Listen for Attendance Changes (INSERT and UPDATE)
             this.realtimeChannel.on('postgres_changes', {
                 event: '*', 
@@ -827,6 +867,28 @@ class TeacherDashboard {
                     console.log('Realtime notification received:', notif);
                     this.loadNotifications();
                     this.showNotification(notif.title, 'info');
+                }
+            });
+
+            // Listen for Announcements
+            this.realtimeChannel.on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'announcements'
+            }, (payload) => {
+                const announcement = payload.new;
+                const audience = announcement.audience || [];
+                const isRelevant = 
+                    audience.includes('all') || 
+                    audience.includes('teachers') || 
+                    (this.currentUser.classId && (
+                        audience.includes(this.currentUser.classId) || 
+                        audience.some(a => typeof a === 'string' && a.includes(this.currentUser.classId))
+                    ));
+
+                if (isRelevant && announcement.created_by !== this.currentUser.id) {
+                    console.log('Realtime announcement received:', announcement);
+                    this.showNotification('New Announcement: ' + announcement.title, 'info');
                 }
             });
 
